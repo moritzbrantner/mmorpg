@@ -322,6 +322,7 @@ impl HandoffRegistry {
         if ticket.destination != *destination {
             return Err(ControlPlaneError::TransferLeaseMismatch(transfer_id));
         }
+        directory.ensure_current(&ticket.source)?;
 
         let record = self
             .transfers
@@ -349,6 +350,7 @@ impl HandoffRegistry {
         if ticket.source != *source {
             return Err(ControlPlaneError::TransferLeaseMismatch(transfer_id));
         }
+        directory.ensure_current(&ticket.destination)?;
 
         let record = self
             .transfers
@@ -435,6 +437,65 @@ mod tests {
                 .unwrap(),
             HandoffPhase::Committed
         );
+    }
+
+    #[test]
+    fn stale_source_epoch_cannot_accept_a_transfer() {
+        let mut directory = ZoneDirectory::default();
+        let source = directory.assign(ZoneId::new(1), host("host-a")).unwrap();
+        let destination = directory.assign(ZoneId::new(2), host("host-b")).unwrap();
+        let mut registry = HandoffRegistry::default();
+        registry
+            .prepare(
+                HandoffTicket {
+                    transfer_id: TransferId::new(3),
+                    entity_id: EntityId::new(5),
+                    source: source.clone(),
+                    destination: destination.clone(),
+                },
+                &directory,
+            )
+            .unwrap();
+
+        directory
+            .reassign(source.zone_id, source.epoch, host("host-c"))
+            .unwrap();
+
+        assert!(matches!(
+            registry.accept(TransferId::new(3), &destination, &directory),
+            Err(ControlPlaneError::StaleLease { .. })
+        ));
+    }
+
+    #[test]
+    fn stale_destination_epoch_cannot_commit_a_transfer() {
+        let mut directory = ZoneDirectory::default();
+        let source = directory.assign(ZoneId::new(1), host("host-a")).unwrap();
+        let destination = directory.assign(ZoneId::new(2), host("host-b")).unwrap();
+        let mut registry = HandoffRegistry::default();
+        registry
+            .prepare(
+                HandoffTicket {
+                    transfer_id: TransferId::new(4),
+                    entity_id: EntityId::new(5),
+                    source: source.clone(),
+                    destination: destination.clone(),
+                },
+                &directory,
+            )
+            .unwrap();
+        registry
+            .accept(TransferId::new(4), &destination, &directory)
+            .unwrap();
+
+        directory
+            .reassign(destination.zone_id, destination.epoch, host("host-c"))
+            .unwrap();
+
+        assert!(matches!(
+            registry.commit(TransferId::new(4), &source, &directory),
+            Err(ControlPlaneError::StaleLease { .. })
+        ));
     }
 
     #[test]
