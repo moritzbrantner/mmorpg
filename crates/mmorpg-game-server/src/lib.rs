@@ -151,8 +151,8 @@ mod tests {
             runtime.advance_tick().unwrap();
         }
 
-        let snapshot = decode_snapshot(&runtime.snapshot_for(lease.player_id).unwrap().payload)
-            .unwrap();
+        let snapshot =
+            decode_snapshot(&runtime.snapshot_for(lease.player_id).unwrap().payload).unwrap();
         assert_eq!(snapshot.zone_id, ZoneId::new(9));
         assert_eq!(snapshot.tick, 5);
         assert_eq!(snapshot.players.len(), 1);
