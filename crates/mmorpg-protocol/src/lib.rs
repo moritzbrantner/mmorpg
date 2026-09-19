@@ -4,7 +4,8 @@ use std::error::Error;
 use std::fmt;
 
 use mmorpg_core::{
-    MAX_PLAYERS_PER_ZONE, PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId, ZoneSnapshot,
+    MAX_PLAYERS_PER_ZONE, PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId,
+    ZoneSnapshot,
 };
 
 pub const COMMAND_WIRE_VERSION: u8 = 1;
