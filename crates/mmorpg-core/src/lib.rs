@@ -509,14 +509,21 @@ mod tests {
     #[test]
     fn player_snapshot_applies_zone_owned_interest_policy() {
         let mut zone = ZoneSimulation::new(ZoneId::new(1));
-        zone.add_player(1).unwrap();
-        zone.add_player(15).unwrap();
+        for player_id in 1..=12 {
+            zone.add_player(player_id).unwrap();
+        }
 
         let canonical = zone.snapshot().unwrap();
         let visible = zone.snapshot_for_player(1).unwrap();
 
-        assert_eq!(canonical.players.len(), 2);
-        assert_eq!(visible.players.len(), 1);
+        assert_eq!(canonical.players.len(), 12);
+        assert_eq!(visible.players.len(), 11);
         assert_eq!(visible.players[0].player_id, 1);
+        assert!(
+            visible
+                .players
+                .iter()
+                .all(|player| player.player_id != 12)
+        );
     }
 }

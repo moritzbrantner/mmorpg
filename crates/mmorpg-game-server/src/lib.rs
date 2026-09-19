@@ -123,8 +123,9 @@ mod tests {
     #[test]
     fn adapter_keeps_canonical_and_player_scoped_snapshots_separate() {
         let mut adapter = ZoneGameServerAdapter::new(ZoneId::new(7));
-        adapter.add_player(1).unwrap();
-        adapter.add_player(15).unwrap();
+        for player_id in 1..=12 {
+            adapter.add_player(player_id).unwrap();
+        }
         adapter
             .zone_mut()
             .apply_command(1, 9, ZoneCommand::SetMovement { x: 1, z: 0 })
@@ -134,11 +135,17 @@ mod tests {
         let projected = decode_snapshot(&adapter.snapshot_for(1).unwrap().payload).unwrap();
 
         assert_eq!(adapter.snapshot_scope(), SnapshotScope::PlayerScoped);
-        assert_eq!(canonical.players.len(), 2);
+        assert_eq!(canonical.players.len(), 12);
         assert_eq!(canonical.players[0].movement_x, 1);
         assert_eq!(canonical.players[0].last_sequence, 9);
-        assert_eq!(projected.players.len(), 1);
+        assert_eq!(projected.players.len(), 11);
         assert_eq!(projected.players[0].player_id, 1);
+        assert!(
+            projected
+                .players
+                .iter()
+                .all(|player| player.player_id != 12)
+        );
     }
 
     #[test]
