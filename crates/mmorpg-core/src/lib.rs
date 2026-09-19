@@ -306,6 +306,33 @@ mod tests {
     }
 
     #[test]
+    fn configured_capacity_has_unique_spawn_positions() {
+        use std::collections::BTreeSet;
+
+        let positions = (1..=MAX_PLAYERS_PER_ZONE)
+            .map(|index| {
+                let player_id = u32::try_from(index).expect("configured capacity fits player id");
+                let position = ZoneSimulation::spawn_position(player_id);
+                (position.x, position.z)
+            })
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(positions.len(), MAX_PLAYERS_PER_ZONE);
+    }
+
+    #[test]
+    fn player_projection_fails_closed_when_physics_state_is_incomplete() {
+        let mut zone = ZoneSimulation::new(ZoneId::new(1));
+        zone.add_player(1).unwrap();
+        zone.add_player(2).unwrap();
+        zone.world.remove_body(ZoneSimulation::body_id(2));
+
+        let error = zone.snapshot_for_player(1).unwrap_err();
+
+        assert_eq!(error.message(), "player physics body is missing");
+    }
+
+    #[test]
     fn stale_commands_fail_closed() {
         let mut zone = ZoneSimulation::new(ZoneId::new(1));
         zone.add_player(1).unwrap();
