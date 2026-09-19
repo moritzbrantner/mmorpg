@@ -3,9 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use mmorpg_core::{
-    PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId, ZoneSnapshot,
-};
+use mmorpg_core::{PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId, ZoneSnapshot};
 
 pub const COMMAND_WIRE_VERSION: u8 = 1;
 pub const SNAPSHOT_WIRE_VERSION: u8 = 1;
@@ -50,7 +48,9 @@ pub fn encode_command(command: ZoneCommand) -> Vec<u8> {
 
 pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
     if payload.len() != 4 {
-        return Err(ProtocolError::new("command payload must be exactly 4 bytes"));
+        return Err(ProtocolError::new(
+            "command payload must be exactly 4 bytes",
+        ));
     }
     if payload[0] != COMMAND_WIRE_VERSION {
         return Err(ProtocolError::new("unsupported command wire version"));
@@ -72,7 +72,9 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
 
 pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError> {
     if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
-        return Err(ProtocolError::new("unsupported core snapshot schema version"));
+        return Err(ProtocolError::new(
+            "unsupported core snapshot schema version",
+        ));
     }
     let player_count = u16::try_from(snapshot.players.len())
         .map_err(|_| ProtocolError::new("snapshot contains too many players"))?;
@@ -110,7 +112,9 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
 
     let schema_version = u16::from_be_bytes(take(payload, &mut offset)?);
     if schema_version != SNAPSHOT_SCHEMA_VERSION {
-        return Err(ProtocolError::new("unsupported core snapshot schema version"));
+        return Err(ProtocolError::new(
+            "unsupported core snapshot schema version",
+        ));
     }
 
     let zone_id = ZoneId::new(u32::from_be_bytes(take(payload, &mut offset)?));
