@@ -1,0 +1,27 @@
+[workspace]
+members = [
+  "crates/mmorpg-core",
+  "crates/mmorpg-protocol",
+  "crates/mmorpg-game-server",
+  "crates/mmorpg-control-plane",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+game-server = { git = "https://github.com/moritzbrantner/game-server.git", rev = "769de47005cc37891011fc76ae183c18b7c5e0ae" }
+physics-engine = { git = "https://github.com/moritzbrantner/physics-engine.git", rev = "c796ea382bdcb0276b9309e8a3cca34c8c28313b" }
+mmorpg-core = { path = "crates/mmorpg-core" }
+mmorpg-protocol = { path = "crates/mmorpg-protocol" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
