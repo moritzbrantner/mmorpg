@@ -3,7 +3,9 @@
 use std::error::Error;
 use std::fmt;
 
-use mmorpg_core::{PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId, ZoneSnapshot};
+use mmorpg_core::{
+    MAX_PLAYERS_PER_ZONE, PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId, ZoneSnapshot,
+};
 
 pub const COMMAND_WIRE_VERSION: u8 = 1;
 pub const SNAPSHOT_WIRE_VERSION: u8 = 1;
@@ -71,6 +73,11 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
 }
 
 pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError> {
+    if snapshot.players.len() > MAX_PLAYERS_PER_ZONE {
+        return Err(ProtocolError::new(
+            "snapshot exceeds configured zone player capacity",
+        ));
+    }
     if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
         return Err(ProtocolError::new(
             "unsupported core snapshot schema version",
@@ -120,6 +127,11 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     let zone_id = ZoneId::new(u32::from_be_bytes(take(payload, &mut offset)?));
     let tick = u64::from_be_bytes(take(payload, &mut offset)?);
     let player_count = usize::from(u16::from_be_bytes(take(payload, &mut offset)?));
+    if player_count > MAX_PLAYERS_PER_ZONE {
+        return Err(ProtocolError::new(
+            "snapshot exceeds configured zone player capacity",
+        ));
+    }
 
     let mut players = Vec::with_capacity(player_count);
     for _ in 0..player_count {
@@ -191,6 +203,27 @@ mod tests {
 
         let encoded = encode_snapshot(&snapshot).unwrap();
         assert_eq!(decode_snapshot(&encoded).unwrap(), snapshot);
+    }
+
+    #[test]
+    fn snapshot_decoder_rejects_counts_above_zone_capacity_before_allocation() {
+        let snapshot = ZoneSnapshot {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            zone_id: ZoneId::new(1),
+            tick: 1,
+            players: Vec::new(),
+        };
+        let mut encoded = encode_snapshot(&snapshot).unwrap();
+        let excessive_count =
+            u16::try_from(MAX_PLAYERS_PER_ZONE + 1).expect("configured capacity fits u16");
+        encoded[15..17].copy_from_slice(&excessive_count.to_be_bytes());
+
+        let error = decode_snapshot(&encoded).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "snapshot exceeds configured zone player capacity"
+        );
     }
 
     #[test]
