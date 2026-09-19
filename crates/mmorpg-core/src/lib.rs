@@ -17,7 +17,7 @@ const PLAYER_BODY_BASE: u64 = 1_000_000;
 const PLAYER_HALF_EXTENTS: Vec3i = Vec3i::new(30, 50, 30);
 const PLAYER_SPEED: i32 = 12;
 const PLAYER_DIAGONAL_SPEED: i32 = 8;
-const SPAWN_GRID_WIDTH: u32 = 16;
+const SPAWN_GRID_WIDTH: u32 = 32;
 const SPAWN_SPACING: i32 = 200;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -217,19 +217,17 @@ impl ZoneSimulation {
             .ok_or_else(|| ZoneError::new("player physics body is missing"))?
             .position();
 
-        let radius = i64::from(INTEREST_RADIUS_UNITS);
+        let radius = i128::from(INTEREST_RADIUS_UNITS);
         let radius_squared = radius * radius;
-        let players = self
-            .players
-            .keys()
-            .copied()
-            .filter_map(|candidate| {
-                let snapshot = self.player_snapshot(candidate).ok()?;
-                let dx = i64::from(snapshot.position[0]) - i64::from(center.x);
-                let dz = i64::from(snapshot.position[2]) - i64::from(center.z);
-                ((dx * dx) + (dz * dz) <= radius_squared).then_some(snapshot)
-            })
-            .collect();
+        let mut players = Vec::new();
+        for candidate in self.players.keys().copied() {
+            let snapshot = self.player_snapshot(candidate)?;
+            let dx = i128::from(snapshot.position[0]) - i128::from(center.x);
+            let dz = i128::from(snapshot.position[2]) - i128::from(center.z);
+            if (dx * dx) + (dz * dz) <= radius_squared {
+                players.push(snapshot);
+            }
+        }
 
         Ok(self.make_snapshot(players))
     }
