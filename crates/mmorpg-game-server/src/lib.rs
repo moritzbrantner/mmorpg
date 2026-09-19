@@ -4,7 +4,7 @@ use game_server::{
     GameSimulation, MatchId, MatchIdError, SimulationError, SimulationSnapshot, SnapshotScope,
 };
 use mmorpg_core::{MAX_PLAYERS_PER_ZONE, TICK_HZ, ZoneId, ZoneSimulation};
-use mmorpg_protocol::{decode_command, encode_snapshot};
+use mmorpg_protocol::{decode_command, encode_canonical_snapshot, encode_snapshot};
 
 pub const PINNED_GAME_SERVER_REVISION: &str = "769de47005cc37891011fc76ae183c18b7c5e0ae";
 pub const PINNED_PHYSICS_ENGINE_REVISION: &str = "c796ea382bdcb0276b9309e8a3cca34c8c28313b";
@@ -83,7 +83,7 @@ impl GameSimulation for ZoneGameServerAdapter {
 
     fn snapshot(&self) -> Result<SimulationSnapshot, SimulationError> {
         let snapshot = self.zone.snapshot().map_err(map_zone_error)?;
-        let payload = encode_snapshot(&snapshot).map_err(map_protocol_error)?;
+        let payload = encode_canonical_snapshot(&snapshot).map_err(map_protocol_error)?;
         Ok(SimulationSnapshot::new(snapshot.tick, payload))
     }
 
@@ -113,7 +113,7 @@ mod tests {
     use super::*;
     use game_server::{MatchRuntime, RECONNECT_TOKEN_BYTES, ReconnectToken};
     use mmorpg_core::ZoneCommand;
-    use mmorpg_protocol::{decode_snapshot, encode_command};
+    use mmorpg_protocol::{decode_canonical_snapshot, decode_snapshot, encode_command};
 
     #[test]
     fn zones_map_to_stable_route_safe_match_ids() {
@@ -125,12 +125,19 @@ mod tests {
         let mut adapter = ZoneGameServerAdapter::new(ZoneId::new(7));
         adapter.add_player(1).unwrap();
         adapter.add_player(15).unwrap();
+        adapter
+            .zone_mut()
+            .apply_command(1, 9, ZoneCommand::SetMovement { x: 1, z: 0 })
+            .unwrap();
 
-        let canonical = decode_snapshot(&adapter.snapshot().unwrap().payload).unwrap();
+        let canonical =
+            decode_canonical_snapshot(&adapter.snapshot().unwrap().payload).unwrap();
         let projected = decode_snapshot(&adapter.snapshot_for(1).unwrap().payload).unwrap();
 
         assert_eq!(adapter.snapshot_scope(), SnapshotScope::PlayerScoped);
         assert_eq!(canonical.players.len(), 2);
+        assert_eq!(canonical.players[0].movement_x, 1);
+        assert_eq!(canonical.players[0].last_sequence, 9);
         assert_eq!(projected.players.len(), 1);
         assert_eq!(projected.players[0].player_id, 1);
     }

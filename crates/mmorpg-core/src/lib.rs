@@ -47,11 +47,29 @@ pub struct PlayerSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalPlayerSnapshot {
+    pub player_id: PlayerId,
+    pub position: [i32; 3],
+    pub movement_x: i8,
+    pub movement_z: i8,
+    pub last_sequence: u32,
+    pub spawn_slot: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZoneSnapshot {
     pub schema_version: u16,
     pub zone_id: ZoneId,
     pub tick: u64,
     pub players: Vec<PlayerSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalZoneSnapshot {
+    pub schema_version: u16,
+    pub zone_id: ZoneId,
+    pub tick: u64,
+    pub players: Vec<CanonicalPlayerSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,6 +104,7 @@ struct PlayerState {
     movement_x: i8,
     movement_z: i8,
     last_sequence: u32,
+    spawn_slot: u16,
 }
 
 pub struct ZoneSimulation {
@@ -107,6 +126,59 @@ impl ZoneSimulation {
             }),
             players: BTreeMap::new(),
         }
+    }
+
+    pub fn from_snapshot(snapshot: CanonicalZoneSnapshot) -> Result<Self, ZoneError> {
+        if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
+            return Err(ZoneError::new("unsupported snapshot schema version"));
+        }
+        if snapshot.players.len() > MAX_PLAYERS_PER_ZONE {
+            return Err(ZoneError::new("zone player capacity reached"));
+        }
+
+        let mut zone = Self::new(snapshot.zone_id);
+        zone.tick = snapshot.tick;
+        for player in snapshot.players {
+            if !(-1..=1).contains(&player.movement_x)
+                || !(-1..=1).contains(&player.movement_z)
+            {
+                return Err(ZoneError::new(
+                    "movement components must be between -1 and 1",
+                ));
+            }
+            if usize::from(player.spawn_slot) >= MAX_PLAYERS_PER_ZONE {
+                return Err(ZoneError::new("player spawn slot is out of range"));
+            }
+            if zone.players.contains_key(&player.player_id) {
+                return Err(ZoneError::new("snapshot contains duplicate player"));
+            }
+            if zone
+                .players
+                .values()
+                .any(|state| state.spawn_slot == player.spawn_slot)
+            {
+                return Err(ZoneError::new("snapshot contains duplicate spawn slot"));
+            }
+
+            zone.world
+                .add_body(RigidBody::dynamic(
+                    Self::body_id(player.player_id),
+                    Vec3i::new(player.position[0], player.position[1], player.position[2]),
+                    Vec3i::ZERO,
+                    PLAYER_HALF_EXTENTS,
+                ))
+                .map_err(physics_error)?;
+            zone.players.insert(
+                player.player_id,
+                PlayerState {
+                    movement_x: player.movement_x,
+                    movement_z: player.movement_z,
+                    last_sequence: player.last_sequence,
+                    spawn_slot: player.spawn_slot,
+                },
+            );
+        }
+        Ok(zone)
     }
 
     #[must_use]
@@ -132,16 +204,26 @@ impl ZoneSimulation {
             return Err(ZoneError::new("zone player capacity reached"));
         }
 
+        let spawn_slot = self
+            .available_spawn_slot()
+            .ok_or_else(|| ZoneError::new("zone spawn capacity reached"))?;
+
         self.world
             .add_body(RigidBody::dynamic(
                 Self::body_id(player_id),
-                Self::spawn_position(player_id),
+                Self::spawn_position(spawn_slot),
                 Vec3i::ZERO,
                 PLAYER_HALF_EXTENTS,
             ))
             .map_err(physics_error)?;
 
-        self.players.insert(player_id, PlayerState::default());
+        self.players.insert(
+            player_id,
+            PlayerState {
+                spawn_slot,
+                ..PlayerState::default()
+            },
+        );
         Ok(())
     }
 
@@ -197,14 +279,18 @@ impl ZoneSimulation {
         Ok(())
     }
 
-    pub fn snapshot(&self) -> Result<ZoneSnapshot, ZoneError> {
+    pub fn snapshot(&self) -> Result<CanonicalZoneSnapshot, ZoneError> {
         let players = self
             .players
-            .keys()
-            .copied()
-            .map(|player_id| self.player_snapshot(player_id))
+            .iter()
+            .map(|(&player_id, &state)| self.canonical_player_snapshot(player_id, state))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(self.make_snapshot(players))
+        Ok(CanonicalZoneSnapshot {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            zone_id: self.zone_id,
+            tick: self.tick,
+            players,
+        })
     }
 
     pub fn snapshot_for_player(&self, player_id: PlayerId) -> Result<ZoneSnapshot, ZoneError> {
@@ -253,14 +339,45 @@ impl ZoneSimulation {
         })
     }
 
+    fn canonical_player_snapshot(
+        &self,
+        player_id: PlayerId,
+        state: PlayerState,
+    ) -> Result<CanonicalPlayerSnapshot, ZoneError> {
+        let position = self
+            .world
+            .body(Self::body_id(player_id))
+            .ok_or_else(|| ZoneError::new("player physics body is missing"))?
+            .position();
+        Ok(CanonicalPlayerSnapshot {
+            player_id,
+            position: [position.x, position.y, position.z],
+            movement_x: state.movement_x,
+            movement_z: state.movement_z,
+            last_sequence: state.last_sequence,
+            spawn_slot: state.spawn_slot,
+        })
+    }
+
     fn body_id(player_id: PlayerId) -> BodyId {
         BodyId(PLAYER_BODY_BASE + u64::from(player_id))
     }
 
-    fn spawn_position(player_id: PlayerId) -> Vec3i {
-        let column = i32::try_from(player_id % SPAWN_GRID_WIDTH)
+    fn available_spawn_slot(&self) -> Option<u16> {
+        (0..MAX_PLAYERS_PER_ZONE)
+            .find(|candidate| {
+                self.players
+                    .values()
+                    .all(|state| usize::from(state.spawn_slot) != *candidate)
+            })
+            .and_then(|slot| u16::try_from(slot).ok())
+    }
+
+    fn spawn_position(spawn_slot: u16) -> Vec3i {
+        let spawn_slot = u32::from(spawn_slot);
+        let column = i32::try_from(spawn_slot % SPAWN_GRID_WIDTH)
             .expect("spawn grid column always fits in i32");
-        let row = i32::try_from((player_id / SPAWN_GRID_WIDTH) % SPAWN_GRID_WIDTH)
+        let row = i32::try_from(spawn_slot / SPAWN_GRID_WIDTH)
             .expect("spawn grid row always fits in i32");
         Vec3i::new(column * SPAWN_SPACING, 50, row * SPAWN_SPACING)
     }
@@ -309,15 +426,60 @@ mod tests {
     fn configured_capacity_has_unique_spawn_positions() {
         use std::collections::BTreeSet;
 
-        let positions = (1..=MAX_PLAYERS_PER_ZONE)
-            .map(|index| {
-                let player_id = u32::try_from(index).expect("configured capacity fits player id");
-                let position = ZoneSimulation::spawn_position(player_id);
-                (position.x, position.z)
-            })
+        let mut zone = ZoneSimulation::new(ZoneId::new(1));
+        for index in 0..MAX_PLAYERS_PER_ZONE {
+            let player_id = u32::try_from(index)
+                .expect("configured capacity fits player id")
+                .checked_mul(1_024)
+                .and_then(|value| value.checked_add(1))
+                .expect("test player id fits u32");
+            zone.add_player(player_id).unwrap();
+        }
+
+        let positions = zone
+            .snapshot()
+            .unwrap()
+            .players
+            .into_iter()
+            .map(|player| (player.position[0], player.position[2]))
             .collect::<BTreeSet<_>>();
 
         assert_eq!(positions.len(), MAX_PLAYERS_PER_ZONE);
+    }
+
+    #[test]
+    fn canonical_snapshot_restores_movement_sequence_and_spawn_allocation() {
+        let mut original = ZoneSimulation::new(ZoneId::new(1));
+        original.add_player(1).unwrap();
+        original
+            .apply_command(1, 7, ZoneCommand::SetMovement { x: 1, z: -1 })
+            .unwrap();
+        original.advance_tick().unwrap();
+
+        let snapshot = original.snapshot().unwrap();
+        assert_eq!(snapshot.players[0].movement_x, 1);
+        assert_eq!(snapshot.players[0].movement_z, -1);
+        assert_eq!(snapshot.players[0].last_sequence, 7);
+
+        let mut recovered = ZoneSimulation::from_snapshot(snapshot).unwrap();
+        assert_eq!(
+            recovered
+                .apply_command(1, 7, ZoneCommand::SetMovement { x: 0, z: 0 })
+                .unwrap_err()
+                .message(),
+            "command sequence is stale"
+        );
+
+        original.advance_tick().unwrap();
+        recovered.advance_tick().unwrap();
+        assert_eq!(recovered.snapshot().unwrap(), original.snapshot().unwrap());
+
+        recovered.add_player(1_025).unwrap();
+        let recovered = recovered.snapshot().unwrap();
+        assert_ne!(
+            recovered.players[0].spawn_slot,
+            recovered.players[1].spawn_slot
+        );
     }
 
     #[test]

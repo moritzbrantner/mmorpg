@@ -4,16 +4,19 @@ use std::error::Error;
 use std::fmt;
 
 use mmorpg_core::{
-    MAX_PLAYERS_PER_ZONE, PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId,
-    ZoneSnapshot,
+    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, MAX_PLAYERS_PER_ZONE, PlayerSnapshot,
+    SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId, ZoneSnapshot,
 };
 
 pub const COMMAND_WIRE_VERSION: u8 = 1;
 pub const SNAPSHOT_WIRE_VERSION: u8 = 1;
 
 const SET_MOVEMENT_TAG: u8 = 1;
-const SNAPSHOT_HEADER_BYTES: usize = 17;
+const CANONICAL_SNAPSHOT_SCOPE: u8 = 1;
+const PLAYER_SNAPSHOT_SCOPE: u8 = 2;
+const SNAPSHOT_HEADER_BYTES: usize = 18;
 const PLAYER_SNAPSHOT_BYTES: usize = 16;
+const CANONICAL_PLAYER_SNAPSHOT_BYTES: usize = 24;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolError {
@@ -74,33 +77,14 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
 }
 
 pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError> {
-    if snapshot.players.len() > MAX_PLAYERS_PER_ZONE {
-        return Err(ProtocolError::new(
-            "snapshot exceeds configured zone player capacity",
-        ));
-    }
-    if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
-        return Err(ProtocolError::new(
-            "unsupported core snapshot schema version",
-        ));
-    }
-    let player_count = u16::try_from(snapshot.players.len())
-        .map_err(|_| ProtocolError::new("snapshot contains too many players"))?;
-    let player_bytes = snapshot
-        .players
-        .len()
-        .checked_mul(PLAYER_SNAPSHOT_BYTES)
-        .ok_or_else(|| ProtocolError::new("snapshot size overflow"))?;
-    let capacity = SNAPSHOT_HEADER_BYTES
-        .checked_add(player_bytes)
-        .ok_or_else(|| ProtocolError::new("snapshot size overflow"))?;
-
-    let mut payload = Vec::with_capacity(capacity);
-    payload.push(SNAPSHOT_WIRE_VERSION);
-    payload.extend_from_slice(&snapshot.schema_version.to_be_bytes());
-    payload.extend_from_slice(&snapshot.zone_id.get().to_be_bytes());
-    payload.extend_from_slice(&snapshot.tick.to_be_bytes());
-    payload.extend_from_slice(&player_count.to_be_bytes());
+    let mut payload = encode_snapshot_header(
+        PLAYER_SNAPSHOT_SCOPE,
+        snapshot.schema_version,
+        snapshot.zone_id,
+        snapshot.tick,
+        snapshot.players.len(),
+        PLAYER_SNAPSHOT_BYTES,
+    )?;
 
     for player in &snapshot.players {
         payload.extend_from_slice(&player.player_id.to_be_bytes());
@@ -111,11 +95,141 @@ pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError
     Ok(payload)
 }
 
+pub fn encode_canonical_snapshot(
+    snapshot: &CanonicalZoneSnapshot,
+) -> Result<Vec<u8>, ProtocolError> {
+    let mut payload = encode_snapshot_header(
+        CANONICAL_SNAPSHOT_SCOPE,
+        snapshot.schema_version,
+        snapshot.zone_id,
+        snapshot.tick,
+        snapshot.players.len(),
+        CANONICAL_PLAYER_SNAPSHOT_BYTES,
+    )?;
+
+    for player in &snapshot.players {
+        payload.extend_from_slice(&player.player_id.to_be_bytes());
+        for component in player.position {
+            payload.extend_from_slice(&component.to_be_bytes());
+        }
+        payload.extend_from_slice(&player.movement_x.to_be_bytes());
+        payload.extend_from_slice(&player.movement_z.to_be_bytes());
+        payload.extend_from_slice(&player.last_sequence.to_be_bytes());
+        payload.extend_from_slice(&player.spawn_slot.to_be_bytes());
+    }
+    Ok(payload)
+}
+
 pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
+    let (schema_version, zone_id, tick, player_count, mut offset) =
+        decode_snapshot_header(payload, PLAYER_SNAPSHOT_SCOPE)?;
+
+    let mut players = Vec::with_capacity(player_count);
+    for _ in 0..player_count {
+        let player_id = u32::from_be_bytes(take(payload, &mut offset)?);
+        let x = i32::from_be_bytes(take(payload, &mut offset)?);
+        let y = i32::from_be_bytes(take(payload, &mut offset)?);
+        let z = i32::from_be_bytes(take(payload, &mut offset)?);
+        players.push(PlayerSnapshot {
+            player_id,
+            position: [x, y, z],
+        });
+    }
+
+    ensure_fully_consumed(payload, offset)?;
+
+    Ok(ZoneSnapshot {
+        schema_version,
+        zone_id,
+        tick,
+        players,
+    })
+}
+
+pub fn decode_canonical_snapshot(
+    payload: &[u8],
+) -> Result<CanonicalZoneSnapshot, ProtocolError> {
+    let (schema_version, zone_id, tick, player_count, mut offset) =
+        decode_snapshot_header(payload, CANONICAL_SNAPSHOT_SCOPE)?;
+
+    let mut players = Vec::with_capacity(player_count);
+    for _ in 0..player_count {
+        let player_id = u32::from_be_bytes(take(payload, &mut offset)?);
+        let x = i32::from_be_bytes(take(payload, &mut offset)?);
+        let y = i32::from_be_bytes(take(payload, &mut offset)?);
+        let z = i32::from_be_bytes(take(payload, &mut offset)?);
+        let movement_x = i8::from_be_bytes(take(payload, &mut offset)?);
+        let movement_z = i8::from_be_bytes(take(payload, &mut offset)?);
+        let last_sequence = u32::from_be_bytes(take(payload, &mut offset)?);
+        let spawn_slot = u16::from_be_bytes(take(payload, &mut offset)?);
+        players.push(CanonicalPlayerSnapshot {
+            player_id,
+            position: [x, y, z],
+            movement_x,
+            movement_z,
+            last_sequence,
+            spawn_slot,
+        });
+    }
+
+    ensure_fully_consumed(payload, offset)?;
+
+    Ok(CanonicalZoneSnapshot {
+        schema_version,
+        zone_id,
+        tick,
+        players,
+    })
+}
+
+fn encode_snapshot_header(
+    scope: u8,
+    schema_version: u16,
+    zone_id: ZoneId,
+    tick: u64,
+    player_count: usize,
+    player_snapshot_bytes: usize,
+) -> Result<Vec<u8>, ProtocolError> {
+    if player_count > MAX_PLAYERS_PER_ZONE {
+        return Err(ProtocolError::new(
+            "snapshot exceeds configured zone player capacity",
+        ));
+    }
+    if schema_version != SNAPSHOT_SCHEMA_VERSION {
+        return Err(ProtocolError::new(
+            "unsupported core snapshot schema version",
+        ));
+    }
+    let encoded_player_count = u16::try_from(player_count)
+        .map_err(|_| ProtocolError::new("snapshot contains too many players"))?;
+    let player_bytes = player_count
+        .checked_mul(player_snapshot_bytes)
+        .ok_or_else(|| ProtocolError::new("snapshot size overflow"))?;
+    let capacity = SNAPSHOT_HEADER_BYTES
+        .checked_add(player_bytes)
+        .ok_or_else(|| ProtocolError::new("snapshot size overflow"))?;
+
+    let mut payload = Vec::with_capacity(capacity);
+    payload.push(SNAPSHOT_WIRE_VERSION);
+    payload.push(scope);
+    payload.extend_from_slice(&schema_version.to_be_bytes());
+    payload.extend_from_slice(&zone_id.get().to_be_bytes());
+    payload.extend_from_slice(&tick.to_be_bytes());
+    payload.extend_from_slice(&encoded_player_count.to_be_bytes());
+    Ok(payload)
+}
+
+fn decode_snapshot_header(
+    payload: &[u8],
+    expected_scope: u8,
+) -> Result<(u16, ZoneId, u64, usize, usize), ProtocolError> {
     let mut offset = 0;
     let wire_version = read_u8(payload, &mut offset)?;
     if wire_version != SNAPSHOT_WIRE_VERSION {
         return Err(ProtocolError::new("unsupported snapshot wire version"));
+    }
+    if read_u8(payload, &mut offset)? != expected_scope {
+        return Err(ProtocolError::new("unexpected snapshot scope"));
     }
 
     let schema_version = u16::from_be_bytes(take(payload, &mut offset)?);
@@ -133,31 +247,16 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
             "snapshot exceeds configured zone player capacity",
         ));
     }
+    Ok((schema_version, zone_id, tick, player_count, offset))
+}
 
-    let mut players = Vec::with_capacity(player_count);
-    for _ in 0..player_count {
-        let player_id = u32::from_be_bytes(take(payload, &mut offset)?);
-        let x = i32::from_be_bytes(take(payload, &mut offset)?);
-        let y = i32::from_be_bytes(take(payload, &mut offset)?);
-        let z = i32::from_be_bytes(take(payload, &mut offset)?);
-        players.push(PlayerSnapshot {
-            player_id,
-            position: [x, y, z],
-        });
-    }
-
+fn ensure_fully_consumed(payload: &[u8], offset: usize) -> Result<(), ProtocolError> {
     if offset != payload.len() {
         return Err(ProtocolError::new(
             "snapshot payload contains trailing bytes",
         ));
     }
-
-    Ok(ZoneSnapshot {
-        schema_version,
-        zone_id,
-        tick,
-        players,
-    })
+    Ok(())
 }
 
 fn read_u8(payload: &[u8], offset: &mut usize) -> Result<u8, ProtocolError> {
@@ -191,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_round_trip_preserves_authoritative_identity() {
+    fn player_snapshot_round_trip_preserves_projection() {
         let snapshot = ZoneSnapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(42),
@@ -207,6 +306,30 @@ mod tests {
     }
 
     #[test]
+    fn canonical_snapshot_round_trip_preserves_continuation_state() {
+        let snapshot = CanonicalZoneSnapshot {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            zone_id: ZoneId::new(42),
+            tick: 99,
+            players: vec![CanonicalPlayerSnapshot {
+                player_id: 7,
+                position: [10, 20, -30],
+                movement_x: -1,
+                movement_z: 1,
+                last_sequence: 81,
+                spawn_slot: 3,
+            }],
+        };
+
+        let encoded = encode_canonical_snapshot(&snapshot).unwrap();
+        assert_eq!(decode_canonical_snapshot(&encoded).unwrap(), snapshot);
+        assert_eq!(
+            decode_snapshot(&encoded).unwrap_err().to_string(),
+            "unexpected snapshot scope"
+        );
+    }
+
+    #[test]
     fn snapshot_decoder_rejects_counts_above_zone_capacity_before_allocation() {
         let snapshot = ZoneSnapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
@@ -217,7 +340,7 @@ mod tests {
         let mut encoded = encode_snapshot(&snapshot).unwrap();
         let excessive_count =
             u16::try_from(MAX_PLAYERS_PER_ZONE + 1).expect("configured capacity fits u16");
-        encoded[15..17].copy_from_slice(&excessive_count.to_be_bytes());
+        encoded[16..18].copy_from_slice(&excessive_count.to_be_bytes());
 
         let error = decode_snapshot(&encoded).unwrap_err();
 
