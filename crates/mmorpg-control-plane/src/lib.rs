@@ -16,9 +16,9 @@ impl HostId {
             return Err(ControlPlaneError::InvalidHostId);
         }
         if value.len() > 128
-            || value
-                .chars()
-                .any(|character| !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_')))
+            || value.chars().any(|character| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+            })
         {
             return Err(ControlPlaneError::InvalidHostId);
         }
@@ -77,25 +77,45 @@ impl fmt::Display for ControlPlaneError {
                 zone_id.get()
             ),
             Self::LeaseOwnerMismatch(zone_id) => {
-                write!(formatter, "zone {} lease owner does not match", zone_id.get())
+                write!(
+                    formatter,
+                    "zone {} lease owner does not match",
+                    zone_id.get()
+                )
             }
             Self::EpochExhausted(zone_id) => {
                 write!(formatter, "zone {} lease epoch is exhausted", zone_id.get())
             }
             Self::TransferIdCollision(transfer_id) => {
-                write!(formatter, "transfer {} was reused with different content", transfer_id.get())
+                write!(
+                    formatter,
+                    "transfer {} was reused with different content",
+                    transfer_id.get()
+                )
             }
             Self::UnknownTransfer(transfer_id) => {
                 write!(formatter, "transfer {} is unknown", transfer_id.get())
             }
             Self::SameZoneTransfer(zone_id) => {
-                write!(formatter, "zone {} cannot hand off to itself", zone_id.get())
+                write!(
+                    formatter,
+                    "zone {} cannot hand off to itself",
+                    zone_id.get()
+                )
             }
             Self::TransferLeaseMismatch(transfer_id) => {
-                write!(formatter, "transfer {} lease does not match", transfer_id.get())
+                write!(
+                    formatter,
+                    "transfer {} lease does not match",
+                    transfer_id.get()
+                )
             }
             Self::TransferNotAccepted(transfer_id) => {
-                write!(formatter, "transfer {} has not been accepted", transfer_id.get())
+                write!(
+                    formatter,
+                    "transfer {} has not been accepted",
+                    transfer_id.get()
+                )
             }
         }
     }
