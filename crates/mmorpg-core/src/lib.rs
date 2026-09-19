@@ -139,9 +139,7 @@ impl ZoneSimulation {
         let mut zone = Self::new(snapshot.zone_id);
         zone.tick = snapshot.tick;
         for player in snapshot.players {
-            if !(-1..=1).contains(&player.movement_x)
-                || !(-1..=1).contains(&player.movement_z)
-            {
+            if !(-1..=1).contains(&player.movement_x) || !(-1..=1).contains(&player.movement_z) {
                 return Err(ZoneError::new(
                     "movement components must be between -1 and 1",
                 ));

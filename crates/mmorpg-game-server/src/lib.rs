@@ -130,8 +130,7 @@ mod tests {
             .apply_command(1, 9, ZoneCommand::SetMovement { x: 1, z: 0 })
             .unwrap();
 
-        let canonical =
-            decode_canonical_snapshot(&adapter.snapshot().unwrap().payload).unwrap();
+        let canonical = decode_canonical_snapshot(&adapter.snapshot().unwrap().payload).unwrap();
         let projected = decode_snapshot(&adapter.snapshot_for(1).unwrap().payload).unwrap();
 
         assert_eq!(adapter.snapshot_scope(), SnapshotScope::PlayerScoped);

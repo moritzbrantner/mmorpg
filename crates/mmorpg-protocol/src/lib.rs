@@ -146,9 +146,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     })
 }
 
-pub fn decode_canonical_snapshot(
-    payload: &[u8],
-) -> Result<CanonicalZoneSnapshot, ProtocolError> {
+pub fn decode_canonical_snapshot(payload: &[u8]) -> Result<CanonicalZoneSnapshot, ProtocolError> {
     let (schema_version, zone_id, tick, player_count, mut offset) =
         decode_snapshot_header(payload, CANONICAL_SNAPSHOT_SCOPE)?;
 
