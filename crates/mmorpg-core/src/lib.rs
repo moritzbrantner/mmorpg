@@ -519,11 +519,6 @@ mod tests {
         assert_eq!(canonical.players.len(), 12);
         assert_eq!(visible.players.len(), 11);
         assert_eq!(visible.players[0].player_id, 1);
-        assert!(
-            visible
-                .players
-                .iter()
-                .all(|player| player.player_id != 12)
-        );
+        assert!(visible.players.iter().all(|player| player.player_id != 12));
     }
 }
