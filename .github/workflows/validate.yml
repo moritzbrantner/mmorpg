@@ -18,6 +18,7 @@ jobs:
       install_command: ""
       cache_bun: false
       cache_cargo: true
+      concurrency_group: mmorpg-${{ github.ref }}-rust
       format_command: cargo fmt --all -- --check
       lint_command: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       test_command: cargo test --workspace --all-features --locked
@@ -35,6 +36,7 @@ jobs:
       install_command: ""
       cache_bun: false
       cache_cargo: true
+      concurrency_group: mmorpg-${{ github.ref }}-browser
       pre_validate_command: rustup target add wasm32-unknown-unknown
       format_command: cargo fmt --manifest-path web-wasm/Cargo.toml --all -- --check
       lint_command: cargo clippy --manifest-path web-wasm/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
