@@ -19,7 +19,7 @@ jobs:
       cache_bun: false
       cache_cargo: true
       format_command: cargo fmt --all -- --check
-      lint_command: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      test_command: cargo test --workspace --all-features
-      build_command: cargo build --workspace --all-features
+      lint_command: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      test_command: cargo test --workspace --all-features --locked
+      build_command: cargo build --workspace --all-features --locked
       artifact_paths: ""
