@@ -1,5 +1,10 @@
 #![forbid(unsafe_code)]
 
+mod content;
+pub use content::{
+    MAX_STATIC_COLLIDERS, StaticCollider, UNITS_PER_METRE, ZoneDefinition, outpost_definition,
+};
+
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -10,11 +15,16 @@ pub type PlayerId = u32;
 
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 1;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 2;
 pub const INTEREST_RADIUS_UNITS: i32 = 2_000;
 
 const PLAYER_BODY_BASE: u64 = 1_000_000;
-const PLAYER_HALF_EXTENTS: Vec3i = Vec3i::new(30, 50, 30);
+pub const PLAYER_HALF_EXTENTS_UNITS: [i32; 3] = [30, 50, 30];
+const PLAYER_HALF_EXTENTS: Vec3i = Vec3i::new(
+    PLAYER_HALF_EXTENTS_UNITS[0],
+    PLAYER_HALF_EXTENTS_UNITS[1],
+    PLAYER_HALF_EXTENTS_UNITS[2],
+);
 const PLAYER_SPEED: i32 = 12;
 const PLAYER_DIAGONAL_SPEED: i32 = 8;
 const SPAWN_GRID_WIDTH: u32 = 32;
@@ -44,12 +54,14 @@ pub enum ZoneCommand {
 pub struct PlayerSnapshot {
     pub player_id: PlayerId,
     pub position: [i32; 3],
+    pub velocity: [i32; 3],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalPlayerSnapshot {
     pub player_id: PlayerId,
     pub position: [i32; 3],
+    pub velocity: [i32; 3],
     pub movement_x: i8,
     pub movement_z: i8,
     pub last_sequence: u32,
@@ -58,6 +70,8 @@ pub struct CanonicalPlayerSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZoneSnapshot {
+    pub content_revision: u64,
+    pub acknowledged_sequence: u32,
     pub schema_version: u16,
     pub zone_id: ZoneId,
     pub tick: u64,
@@ -66,6 +80,7 @@ pub struct ZoneSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalZoneSnapshot {
+    pub definition: ZoneDefinition,
     pub schema_version: u16,
     pub zone_id: ZoneId,
     pub tick: u64,
@@ -111,21 +126,52 @@ pub struct ZoneSimulation {
     zone_id: ZoneId,
     tick: u64,
     world: World,
+    definition: ZoneDefinition,
     players: BTreeMap<PlayerId, PlayerState>,
 }
 
 impl ZoneSimulation {
     #[must_use]
     pub fn new(zone_id: ZoneId) -> Self {
-        Self {
+        Self::with_definition(zone_id, ZoneDefinition::default())
+            .expect("empty zone definition has no invalid physics bodies")
+    }
+
+    pub fn with_definition(zone_id: ZoneId, definition: ZoneDefinition) -> Result<Self, ZoneError> {
+        let gravity = definition.gravity();
+        let mut world = World::new(WorldConfig {
+            gravity: Vec3i::new(gravity[0], gravity[1], gravity[2]),
+            ..WorldConfig::default()
+        });
+        for collider in definition.colliders() {
+            world
+                .add_body(RigidBody::fixed(
+                    BodyId(u64::from(collider.id)),
+                    Vec3i::new(
+                        collider.position[0],
+                        collider.position[1],
+                        collider.position[2],
+                    ),
+                    Vec3i::new(
+                        collider.half_extents[0],
+                        collider.half_extents[1],
+                        collider.half_extents[2],
+                    ),
+                ))
+                .map_err(physics_error)?;
+        }
+        Ok(Self {
             zone_id,
             tick: 0,
-            world: World::new(WorldConfig {
-                gravity: Vec3i::ZERO,
-                ..WorldConfig::default()
-            }),
+            world,
+            definition,
             players: BTreeMap::new(),
-        }
+        })
+    }
+
+    #[must_use]
+    pub fn definition(&self) -> &ZoneDefinition {
+        &self.definition
     }
 
     pub fn from_snapshot(snapshot: CanonicalZoneSnapshot) -> Result<Self, ZoneError> {
@@ -136,7 +182,7 @@ impl ZoneSimulation {
             return Err(ZoneError::new("zone player capacity reached"));
         }
 
-        let mut zone = Self::new(snapshot.zone_id);
+        let mut zone = Self::with_definition(snapshot.zone_id, snapshot.definition)?;
         zone.tick = snapshot.tick;
         for player in snapshot.players {
             if !(-1..=1).contains(&player.movement_x) || !(-1..=1).contains(&player.movement_z) {
@@ -162,7 +208,7 @@ impl ZoneSimulation {
                 .add_body(RigidBody::dynamic(
                     Self::body_id(player.player_id),
                     Vec3i::new(player.position[0], player.position[1], player.position[2]),
-                    Vec3i::ZERO,
+                    Vec3i::new(player.velocity[0], player.velocity[1], player.velocity[2]),
                     PLAYER_HALF_EXTENTS,
                 ))
                 .map_err(physics_error)?;
@@ -263,17 +309,27 @@ impl ZoneSimulation {
     }
 
     pub fn advance_tick(&mut self) -> Result<(), ZoneError> {
+        let next_tick = self
+            .tick
+            .checked_add(1)
+            .ok_or_else(|| ZoneError::new("zone tick overflow"))?;
         for (&player_id, state) in &self.players {
+            let body_id = Self::body_id(player_id);
+            let vertical_velocity = self
+                .world
+                .body(body_id)
+                .ok_or_else(|| ZoneError::new("player physics body is missing"))?
+                .velocity()
+                .y;
+            let mut velocity = Self::movement_velocity(*state);
+            velocity.y = vertical_velocity;
             self.world
-                .set_velocity(Self::body_id(player_id), Self::movement_velocity(*state))
+                .set_velocity(body_id, velocity)
                 .map_err(physics_error)?;
         }
 
         self.world.step(1).map_err(physics_error)?;
-        self.tick = self
-            .tick
-            .checked_add(1)
-            .ok_or_else(|| ZoneError::new("zone tick overflow"))?;
+        self.tick = next_tick;
         Ok(())
     }
 
@@ -284,6 +340,7 @@ impl ZoneSimulation {
             .map(|(&player_id, &state)| self.canonical_player_snapshot(player_id, state))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(CanonicalZoneSnapshot {
+            definition: self.definition.clone(),
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: self.zone_id,
             tick: self.tick,
@@ -313,11 +370,17 @@ impl ZoneSimulation {
             }
         }
 
-        Ok(self.make_snapshot(players))
+        Ok(self.make_snapshot(players, self.players[&player_id].last_sequence))
     }
 
-    fn make_snapshot(&self, players: Vec<PlayerSnapshot>) -> ZoneSnapshot {
+    fn make_snapshot(
+        &self,
+        players: Vec<PlayerSnapshot>,
+        acknowledged_sequence: u32,
+    ) -> ZoneSnapshot {
         ZoneSnapshot {
+            content_revision: self.definition.revision(),
+            acknowledged_sequence,
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: self.zone_id,
             tick: self.tick,
@@ -326,14 +389,16 @@ impl ZoneSimulation {
     }
 
     fn player_snapshot(&self, player_id: PlayerId) -> Result<PlayerSnapshot, ZoneError> {
-        let position = self
+        let body = self
             .world
             .body(Self::body_id(player_id))
-            .ok_or_else(|| ZoneError::new("player physics body is missing"))?
-            .position();
+            .ok_or_else(|| ZoneError::new("player physics body is missing"))?;
+        let position = body.position();
+        let velocity = body.velocity();
         Ok(PlayerSnapshot {
             player_id,
             position: [position.x, position.y, position.z],
+            velocity: [velocity.x, velocity.y, velocity.z],
         })
     }
 
@@ -342,14 +407,16 @@ impl ZoneSimulation {
         player_id: PlayerId,
         state: PlayerState,
     ) -> Result<CanonicalPlayerSnapshot, ZoneError> {
-        let position = self
+        let body = self
             .world
             .body(Self::body_id(player_id))
-            .ok_or_else(|| ZoneError::new("player physics body is missing"))?
-            .position();
+            .ok_or_else(|| ZoneError::new("player physics body is missing"))?;
+        let position = body.position();
+        let velocity = body.velocity();
         Ok(CanonicalPlayerSnapshot {
             player_id,
             position: [position.x, position.y, position.z],
+            velocity: [velocity.x, velocity.y, velocity.z],
             movement_x: state.movement_x,
             movement_z: state.movement_z,
             last_sequence: state.last_sequence,

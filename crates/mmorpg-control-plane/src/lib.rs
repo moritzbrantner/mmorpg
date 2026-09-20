@@ -39,6 +39,14 @@ pub struct ZoneLease {
     pub expires_at_tick: u64,
 }
 
+impl ZoneLease {
+    /// Renewal changes the deadline, never the identity of an authority grant.
+    #[must_use]
+    pub fn same_authority(&self, other: &Self) -> bool {
+        self.zone_id == other.zone_id && self.host_id == other.host_id && self.epoch == other.epoch
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlPlaneError {
     InvalidHostId,
@@ -64,6 +72,7 @@ pub enum ControlPlaneError {
     SameZoneTransfer(ZoneId),
     TransferLeaseMismatch(TransferId),
     TransferNotAccepted(TransferId),
+    EntityTransferInProgress(EntityId),
 }
 
 impl fmt::Display for ControlPlaneError {
@@ -135,6 +144,13 @@ impl fmt::Display for ControlPlaneError {
                     transfer_id.get()
                 )
             }
+            Self::EntityTransferInProgress(entity_id) => {
+                write!(
+                    formatter,
+                    "entity {} already has an active transfer",
+                    entity_id.get()
+                )
+            }
             Self::TransferNotAccepted(transfer_id) => {
                 write!(
                     formatter,
@@ -201,10 +217,8 @@ impl ZoneDirectory {
         {
             return Err(ControlPlaneError::ZoneAlreadyAssigned(zone_id));
         }
-        self.leases.remove(&zone_id);
-
-        let epoch = self.next_epoch(zone_id)?;
         let expires_at_tick = self.lease_deadline(zone_id, now_tick)?;
+        let epoch = self.next_epoch(zone_id)?;
         let lease = ZoneLease {
             zone_id,
             host_id,
@@ -234,8 +248,8 @@ impl ZoneDirectory {
             });
         }
 
-        let epoch = self.next_epoch(zone_id)?;
         let expires_at_tick = self.lease_deadline(zone_id, now_tick)?;
+        let epoch = self.next_epoch(zone_id)?;
         let lease = ZoneLease {
             zone_id,
             host_id,
@@ -379,6 +393,7 @@ pub struct HandoffRecord {
 #[derive(Default)]
 pub struct HandoffRegistry {
     transfers: BTreeMap<TransferId, HandoffRecord>,
+    active_entities: BTreeMap<EntityId, TransferId>,
 }
 
 impl HandoffRegistry {
@@ -400,13 +415,25 @@ impl HandoffRegistry {
         directory.ensure_current(&ticket.destination, now_tick)?;
 
         if let Some(existing) = self.transfers.get(&ticket.transfer_id) {
-            if existing.ticket != ticket {
+            if existing.ticket.entity_id != ticket.entity_id
+                || !existing.ticket.source.same_authority(&ticket.source)
+                || !existing
+                    .ticket
+                    .destination
+                    .same_authority(&ticket.destination)
+            {
                 return Err(ControlPlaneError::TransferIdCollision(ticket.transfer_id));
             }
             return Ok(existing.phase);
         }
 
+        if self.active_entities.contains_key(&ticket.entity_id) {
+            return Err(ControlPlaneError::EntityTransferInProgress(
+                ticket.entity_id,
+            ));
+        }
         let transfer_id = ticket.transfer_id;
+        self.active_entities.insert(ticket.entity_id, transfer_id);
         self.transfers.insert(
             transfer_id,
             HandoffRecord {
@@ -431,7 +458,7 @@ impl HandoffRegistry {
             .ok_or(ControlPlaneError::UnknownTransfer(transfer_id))?
             .ticket
             .clone();
-        if ticket.destination != *destination {
+        if !ticket.destination.same_authority(destination) {
             return Err(ControlPlaneError::TransferLeaseMismatch(transfer_id));
         }
         directory.ensure_current(&ticket.source, now_tick)?;
@@ -460,7 +487,7 @@ impl HandoffRegistry {
             .ok_or(ControlPlaneError::UnknownTransfer(transfer_id))?
             .ticket
             .clone();
-        if ticket.source != *source {
+        if !ticket.source.same_authority(source) {
             return Err(ControlPlaneError::TransferLeaseMismatch(transfer_id));
         }
         directory.ensure_current(&ticket.destination, now_tick)?;
@@ -473,7 +500,10 @@ impl HandoffRegistry {
             HandoffPhase::Prepared => {
                 return Err(ControlPlaneError::TransferNotAccepted(transfer_id));
             }
-            HandoffPhase::Accepted => record.phase = HandoffPhase::Committed,
+            HandoffPhase::Accepted => {
+                record.phase = HandoffPhase::Committed;
+                self.active_entities.remove(&record.ticket.entity_id);
+            }
             HandoffPhase::Committed => {}
         }
         Ok(record.phase)

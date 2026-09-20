@@ -5,6 +5,7 @@ import {
   type RendererSceneNode,
 } from "@moritzbrantner/three-d-renderer";
 import "./styles.css";
+import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, type Vector3 } from "./replication";
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -31,6 +32,27 @@ let facing = Math.PI * 0.15;
 let waystoneActive = false;
 let lastTime = performance.now();
 const keys = new Set<string>();
+// Offline demo source. An online source supplies decoded player-scoped snapshots
+// to the same presentation buffer and sends input commands to the zone host.
+const snapshots = new SnapshotBuffer();
+let demoTick = 0n;
+let accumulatedTicks = 0;
+
+function publishDemoSnapshot() {
+  snapshots.push({
+    zoneId: 1,
+    tick: demoTick,
+    contentRevision: 0n,
+    acknowledgedSequence: 0,
+    players: [{
+      playerId: 1,
+      position: [Math.round(player.x * UNITS_PER_METRE), 83, Math.round(player.z * UNITS_PER_METRE)],
+      velocity: [0, 0, 0],
+    }],
+  });
+}
+
+publishDemoSnapshot();
 
 const worldHalfExtent = 10.5;
 const waystone = { x: 4.8, z: -3.5 };
@@ -64,19 +86,22 @@ function node(
 ): RendererSceneNode {
   const geometry =
     kind === "box"
-      ? { kind, size: dimensions as [number, number, number] }
+      ? { kind, size: dimensions }
       : kind === "sphere"
         ? { kind, radius: dimensions[0] }
         : { kind, radius: dimensions[0], height: dimensions[1] };
 
-  return { id, geometry, color, transform: { translation } } as RendererSceneNode;
+  return { id, geometry, color, transform: { translation } };
 }
 
 function webGpuProjectionFromThree(): Matrix4Values {
   const gl = camera.projectionMatrix.elements;
   const gpu = [...gl];
   for (const index of [2, 6, 10, 14]) {
-    gpu[index] = (gl[index] + gl[index + 1]) / 2;
+    const z = gl[index];
+    const w = gl[index + 1];
+    if (z === undefined || w === undefined) throw new Error("Incomplete projection matrix");
+    gpu[index] = (z + w) / 2;
   }
   return gpu as Matrix4Values;
 }
@@ -112,7 +137,10 @@ function interact() {
     : "Reach the old waystone and activate it.";
 }
 
-function dynamicNodes(): RendererSceneNode[] {
+function dynamicNodes(position: Vector3): RendererSceneNode[] {
+  const x = position[0] / UNITS_PER_METRE;
+  const y = position[1] / UNITS_PER_METRE;
+  const z = position[2] / UNITS_PER_METRE;
   const halfYaw = facing / 2;
   return [
     {
@@ -120,7 +148,7 @@ function dynamicNodes(): RendererSceneNode[] {
       geometry: { kind: "cylinder", radius: 0.42, height: 1.65 },
       color: "#d8d2bd",
       transform: {
-        translation: [player.x, 0.83, player.z],
+        translation: [x, y, z],
         rotationQuaternion: [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)],
       },
     },
@@ -128,7 +156,7 @@ function dynamicNodes(): RendererSceneNode[] {
       id: "player-head",
       geometry: { kind: "sphere", radius: 0.34 },
       color: "#c49b78",
-      transform: { translation: [player.x, 1.9, player.z] },
+      transform: { translation: [x, y + 1.07, z] },
     },
     {
       id: "waystone",
@@ -156,10 +184,19 @@ function resize() {
 function frame(now: number) {
   const deltaSeconds = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
-  updateMovement(deltaSeconds);
-
-  target.set(player.x, 0.9, player.z);
-  const desiredCamera = new THREE.Vector3(player.x + 8.5, 7.6, player.z + 10.5);
+  accumulatedTicks += deltaSeconds * TICK_HZ;
+  while (accumulatedTicks >= 1) {
+    updateMovement(1 / TICK_HZ);
+    accumulatedTicks -= 1;
+    demoTick += 1n;
+    publishDemoSnapshot();
+  }
+  const rendered = snapshots.sample(demoTick > 0n ? demoTick - 1n : 0n, accumulatedTicks)[0];
+  if (!rendered) throw new Error("Demo snapshot is missing its player");
+  const renderX = rendered.position[0] / UNITS_PER_METRE;
+  const renderZ = rendered.position[2] / UNITS_PER_METRE;
+  target.set(renderX, 0.9, renderZ);
+  const desiredCamera = new THREE.Vector3(renderX + 8.5, 7.6, renderZ + 10.5);
   camera.position.lerp(desiredCamera, 1 - Math.pow(0.001, deltaSeconds));
   camera.lookAt(target);
   camera.updateMatrixWorld(true);
@@ -175,7 +212,7 @@ function frame(now: number) {
       viewMatrix: [...camera.matrixWorldInverse.elements] as Matrix4Values,
       projectionMatrix: webGpuProjectionFromThree(),
     },
-    nodes: [...staticNodes, ...dynamicNodes()],
+    nodes: [...staticNodes, ...dynamicNodes(rendered.position)],
   });
 
   requestAnimationFrame(frame);

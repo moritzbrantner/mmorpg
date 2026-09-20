@@ -4,19 +4,20 @@ use std::error::Error;
 use std::fmt;
 
 use mmorpg_core::{
-    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, MAX_PLAYERS_PER_ZONE, PlayerSnapshot,
-    SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneId, ZoneSnapshot,
+    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, MAX_PLAYERS_PER_ZONE, MAX_STATIC_COLLIDERS,
+    PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, StaticCollider, ZoneCommand, ZoneDefinition, ZoneId,
+    ZoneSnapshot,
 };
 
 pub const COMMAND_WIRE_VERSION: u8 = 1;
-pub const SNAPSHOT_WIRE_VERSION: u8 = 1;
+pub const SNAPSHOT_WIRE_VERSION: u8 = 2;
 
 const SET_MOVEMENT_TAG: u8 = 1;
 const CANONICAL_SNAPSHOT_SCOPE: u8 = 1;
 const PLAYER_SNAPSHOT_SCOPE: u8 = 2;
 const SNAPSHOT_HEADER_BYTES: usize = 18;
-const PLAYER_SNAPSHOT_BYTES: usize = 16;
-const CANONICAL_PLAYER_SNAPSHOT_BYTES: usize = 24;
+const PLAYER_SNAPSHOT_BYTES: usize = 28;
+const CANONICAL_PLAYER_SNAPSHOT_BYTES: usize = 36;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolError {
@@ -86,9 +87,12 @@ pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError
         PLAYER_SNAPSHOT_BYTES,
     )?;
 
+    payload.extend_from_slice(&snapshot.content_revision.to_be_bytes());
+    payload.extend_from_slice(&snapshot.acknowledged_sequence.to_be_bytes());
+
     for player in &snapshot.players {
         payload.extend_from_slice(&player.player_id.to_be_bytes());
-        for component in player.position {
+        for component in player.position.into_iter().chain(player.velocity) {
             payload.extend_from_slice(&component.to_be_bytes());
         }
     }
@@ -107,9 +111,11 @@ pub fn encode_canonical_snapshot(
         CANONICAL_PLAYER_SNAPSHOT_BYTES,
     )?;
 
+    encode_definition(&mut payload, &snapshot.definition);
+
     for player in &snapshot.players {
         payload.extend_from_slice(&player.player_id.to_be_bytes());
-        for component in player.position {
+        for component in player.position.into_iter().chain(player.velocity) {
             payload.extend_from_slice(&component.to_be_bytes());
         }
         payload.extend_from_slice(&player.movement_x.to_be_bytes());
@@ -123,6 +129,8 @@ pub fn encode_canonical_snapshot(
 pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     let (schema_version, zone_id, tick, player_count, mut offset) =
         decode_snapshot_header(payload, PLAYER_SNAPSHOT_SCOPE)?;
+    let content_revision = u64::from_be_bytes(take(payload, &mut offset)?);
+    let acknowledged_sequence = u32::from_be_bytes(take(payload, &mut offset)?);
 
     let mut players = Vec::with_capacity(player_count);
     for _ in 0..player_count {
@@ -130,15 +138,19 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         let x = i32::from_be_bytes(take(payload, &mut offset)?);
         let y = i32::from_be_bytes(take(payload, &mut offset)?);
         let z = i32::from_be_bytes(take(payload, &mut offset)?);
+        let velocity = read_vector(payload, &mut offset)?;
         players.push(PlayerSnapshot {
             player_id,
             position: [x, y, z],
+            velocity,
         });
     }
 
     ensure_fully_consumed(payload, offset)?;
 
     Ok(ZoneSnapshot {
+        content_revision,
+        acknowledged_sequence,
         schema_version,
         zone_id,
         tick,
@@ -149,6 +161,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
 pub fn decode_canonical_snapshot(payload: &[u8]) -> Result<CanonicalZoneSnapshot, ProtocolError> {
     let (schema_version, zone_id, tick, player_count, mut offset) =
         decode_snapshot_header(payload, CANONICAL_SNAPSHOT_SCOPE)?;
+    let definition = decode_definition(payload, &mut offset)?;
 
     let mut players = Vec::with_capacity(player_count);
     for _ in 0..player_count {
@@ -156,6 +169,7 @@ pub fn decode_canonical_snapshot(payload: &[u8]) -> Result<CanonicalZoneSnapshot
         let x = i32::from_be_bytes(take(payload, &mut offset)?);
         let y = i32::from_be_bytes(take(payload, &mut offset)?);
         let z = i32::from_be_bytes(take(payload, &mut offset)?);
+        let velocity = read_vector(payload, &mut offset)?;
         let movement_x = i8::from_be_bytes(take(payload, &mut offset)?);
         let movement_z = i8::from_be_bytes(take(payload, &mut offset)?);
         let last_sequence = u32::from_be_bytes(take(payload, &mut offset)?);
@@ -163,6 +177,7 @@ pub fn decode_canonical_snapshot(payload: &[u8]) -> Result<CanonicalZoneSnapshot
         players.push(CanonicalPlayerSnapshot {
             player_id,
             position: [x, y, z],
+            velocity,
             movement_x,
             movement_z,
             last_sequence,
@@ -173,11 +188,55 @@ pub fn decode_canonical_snapshot(payload: &[u8]) -> Result<CanonicalZoneSnapshot
     ensure_fully_consumed(payload, offset)?;
 
     Ok(CanonicalZoneSnapshot {
+        definition,
         schema_version,
         zone_id,
         tick,
         players,
     })
+}
+
+fn encode_definition(payload: &mut Vec<u8>, definition: &ZoneDefinition) {
+    payload.extend_from_slice(&definition.revision().to_be_bytes());
+    for component in definition.gravity() {
+        payload.extend_from_slice(&component.to_be_bytes());
+    }
+    let count = u16::try_from(definition.colliders().len())
+        .expect("validated static collider capacity fits u16");
+    payload.extend_from_slice(&count.to_be_bytes());
+    for collider in definition.colliders() {
+        payload.extend_from_slice(&collider.id.to_be_bytes());
+        for component in collider.position.into_iter().chain(collider.half_extents) {
+            payload.extend_from_slice(&component.to_be_bytes());
+        }
+    }
+}
+
+fn decode_definition(payload: &[u8], offset: &mut usize) -> Result<ZoneDefinition, ProtocolError> {
+    let revision = u64::from_be_bytes(take(payload, offset)?);
+    let gravity = read_vector(payload, offset)?;
+    let count = usize::from(u16::from_be_bytes(take(payload, offset)?));
+    if count > MAX_STATIC_COLLIDERS {
+        return Err(ProtocolError::new("zone static collider capacity reached"));
+    }
+    let mut colliders = Vec::with_capacity(count);
+    for _ in 0..count {
+        colliders.push(StaticCollider {
+            id: u32::from_be_bytes(take(payload, offset)?),
+            position: read_vector(payload, offset)?,
+            half_extents: read_vector(payload, offset)?,
+        });
+    }
+    ZoneDefinition::new(revision, gravity, colliders)
+        .map_err(|error| ProtocolError::new(error.to_string()))
+}
+
+fn read_vector(payload: &[u8], offset: &mut usize) -> Result<[i32; 3], ProtocolError> {
+    Ok([
+        i32::from_be_bytes(take(payload, offset)?),
+        i32::from_be_bytes(take(payload, offset)?),
+        i32::from_be_bytes(take(payload, offset)?),
+    ])
 }
 
 fn encode_snapshot_header(
@@ -290,28 +349,39 @@ mod tests {
     #[test]
     fn player_snapshot_round_trip_preserves_projection() {
         let snapshot = ZoneSnapshot {
+            content_revision: 42,
+            acknowledged_sequence: 81,
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(42),
             tick: 99,
             players: vec![PlayerSnapshot {
                 player_id: 7,
                 position: [10, 20, -30],
+                velocity: [1, -2, 3],
             }],
         };
 
         let encoded = encode_snapshot(&snapshot).unwrap();
         assert_eq!(decode_snapshot(&encoded).unwrap(), snapshot);
+        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v2.hex").trim();
+        let expected = (0..fixture.len())
+            .step_by(2)
+            .map(|offset| u8::from_str_radix(&fixture[offset..offset + 2], 16).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(encoded, expected);
     }
 
     #[test]
     fn canonical_snapshot_round_trip_preserves_continuation_state() {
         let snapshot = CanonicalZoneSnapshot {
+            definition: ZoneDefinition::default(),
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(42),
             tick: 99,
             players: vec![CanonicalPlayerSnapshot {
                 player_id: 7,
                 position: [10, 20, -30],
+                velocity: [1, -2, 3],
                 movement_x: -1,
                 movement_z: 1,
                 last_sequence: 81,
@@ -328,8 +398,53 @@ mod tests {
     }
 
     #[test]
+    fn canonical_wire_restores_physical_world_and_rejects_invalid_content() {
+        let definition = ZoneDefinition::new(
+            7,
+            [0, -1, 0],
+            vec![StaticCollider {
+                id: 1,
+                position: [0, -50, 0],
+                half_extents: [1000, 50, 1000],
+            }],
+        )
+        .unwrap();
+        let mut zone =
+            mmorpg_core::ZoneSimulation::with_definition(ZoneId::new(1), definition).unwrap();
+        zone.add_player(1).unwrap();
+        let mut state = zone.snapshot().unwrap();
+        state.players[0].position[1] = 400;
+        state.players[0].velocity[1] = -5;
+        let encoded = encode_canonical_snapshot(&state).unwrap();
+        let mut original = mmorpg_core::ZoneSimulation::from_snapshot(state).unwrap();
+        let mut restored = mmorpg_core::ZoneSimulation::from_snapshot(
+            decode_canonical_snapshot(&encoded).unwrap(),
+        )
+        .unwrap();
+        for _ in 0..40 {
+            original.advance_tick().unwrap();
+            restored.advance_tick().unwrap();
+            assert_eq!(original.snapshot().unwrap(), restored.snapshot().unwrap());
+        }
+        for length in 0..encoded.len() {
+            assert!(decode_canonical_snapshot(&encoded[..length]).is_err());
+        }
+        let mut excessive = encoded.clone();
+        excessive[38..40].copy_from_slice(&u16::MAX.to_be_bytes());
+        assert!(decode_canonical_snapshot(&excessive).is_err());
+        let mut invalid_extent = encoded.clone();
+        invalid_extent[56..60].copy_from_slice(&(-1_i32).to_be_bytes());
+        assert!(decode_canonical_snapshot(&invalid_extent).is_err());
+        let mut legacy = encoded;
+        legacy[0] = 1;
+        assert!(decode_canonical_snapshot(&legacy).is_err());
+    }
+
+    #[test]
     fn snapshot_decoder_rejects_counts_above_zone_capacity_before_allocation() {
         let snapshot = ZoneSnapshot {
+            content_revision: 42,
+            acknowledged_sequence: 81,
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(1),
             tick: 1,
@@ -351,6 +466,8 @@ mod tests {
     #[test]
     fn snapshot_decoder_rejects_truncation_and_trailing_bytes() {
         let snapshot = ZoneSnapshot {
+            content_revision: 42,
+            acknowledged_sequence: 81,
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(1),
             tick: 1,

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "test": "bun test"
   },
   "dependencies": {
     "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#8187e506f24682dae550284070e45ac33e53ad9c",
@@ -15,5 +16,6 @@
     "typescript": "5.9.2",
     "vite": "7.1.5",
     "@types/three": "0.185.4"
-  }
+  },
+  "packageManager": "bun@1.4.2"
 }

@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+mod fenced_runtime;
+pub use fenced_runtime::{FencedRuntimeError, FencedZoneRuntime};
+
 use game_server::{
     GameSimulation, HostError, MatchHost, MatchId, MatchIdError, MatchRuntime, SimulationError,
     SimulationSnapshot, SnapshotScope,
@@ -16,6 +19,7 @@ pub enum ZoneHostBuildError {
     DuplicateZone(ZoneId),
     MatchId(MatchIdError),
     Host(HostError),
+    Content(mmorpg_core::ZoneError),
 }
 
 impl std::fmt::Display for ZoneHostBuildError {
@@ -31,6 +35,7 @@ impl std::fmt::Display for ZoneHostBuildError {
             }
             Self::MatchId(error) => error.fmt(formatter),
             Self::Host(error) => error.fmt(formatter),
+            Self::Content(error) => error.fmt(formatter),
         }
     }
 }
@@ -40,6 +45,7 @@ impl std::error::Error for ZoneHostBuildError {
         match self {
             Self::MatchId(error) => Some(error),
             Self::Host(error) => Some(error),
+            Self::Content(error) => Some(error),
             Self::Empty | Self::DuplicateZone(_) => None,
         }
     }
@@ -55,6 +61,15 @@ impl ZoneGameServerAdapter {
         Self {
             zone: ZoneSimulation::new(zone_id),
         }
+    }
+
+    pub fn with_definition(
+        zone_id: ZoneId,
+        definition: mmorpg_core::ZoneDefinition,
+    ) -> Result<Self, mmorpg_core::ZoneError> {
+        Ok(Self {
+            zone: ZoneSimulation::with_definition(zone_id, definition)?,
+        })
     }
 
     #[must_use]
@@ -115,7 +130,10 @@ pub fn build_zone_matches(
         .into_iter()
         .map(|zone_id| {
             let match_id = zone_match_id(zone_id).map_err(ZoneHostBuildError::MatchId)?;
-            Ok((match_id, ZoneGameServerAdapter::new(zone_id)))
+            let simulation =
+                ZoneGameServerAdapter::with_definition(zone_id, mmorpg_core::outpost_definition())
+                    .map_err(ZoneHostBuildError::Content)?;
+            Ok((match_id, simulation))
         })
         .collect()
 }

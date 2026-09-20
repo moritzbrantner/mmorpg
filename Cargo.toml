@@ -4,6 +4,7 @@ members = [
   "crates/mmorpg-protocol",
   "crates/mmorpg-game-server",
   "crates/mmorpg-control-plane",
+  "crates/mmorpg-client",
 ]
 resolver = "3"
 
@@ -18,8 +19,9 @@ publish = false
 game-server = { git = "https://github.com/moritzbrantner/game-server.git", rev = "769de47005cc37891011fc76ae183c18b7c5e0ae" }
 physics-engine = { git = "https://github.com/moritzbrantner/physics-engine.git", rev = "c796ea382bdcb0276b9309e8a3cca34c8c28313b" }
 mmorpg-core = { path = "crates/mmorpg-core" }
+mmorpg-control-plane = { path = "crates/mmorpg-control-plane" }
 mmorpg-protocol = { path = "crates/mmorpg-protocol" }
-tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

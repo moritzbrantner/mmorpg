@@ -1,0 +1,27 @@
+[package]
+name = "mmorpg-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+game-server.workspace = true
+mmorpg-core.workspace = true
+mmorpg-protocol.workspace = true
+tokio.workspace = true
+wtransport = { version = "=0.7.2", default-features = false, features = ["ring"] }
+wgpu = "=30.0.1"
+winit = "=0.30.12"
+bytemuck = { version = "=1.25.2", features = ["derive"] }
+three-d-core = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "4f06559812cad1825aaba7be9e2a4860fa072e71" }
+three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "4f06559812cad1825aaba7be9e2a4860fa072e71" }
+
+[dev-dependencies]
+tempfile = "=3.23.0"
+mmorpg-game-server = { path = "../mmorpg-game-server" }
+wtransport = { version = "=0.7.2", default-features = false, features = ["ring", "self-signed"] }
+
+[lints]
+workspace = true
