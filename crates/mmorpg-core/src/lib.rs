@@ -1,9 +1,12 @@
 #![forbid(unsafe_code)]
 
 mod content;
+mod interest;
 pub use content::{
     MAX_STATIC_COLLIDERS, StaticCollider, UNITS_PER_METRE, ZoneDefinition, outpost_definition,
 };
+use interest::InterestIndex;
+pub use interest::{InterestQueryStats, PlayerProjection};
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -128,6 +131,7 @@ pub struct ZoneSimulation {
     world: World,
     definition: ZoneDefinition,
     players: BTreeMap<PlayerId, PlayerState>,
+    interest: InterestIndex,
 }
 
 impl ZoneSimulation {
@@ -166,6 +170,7 @@ impl ZoneSimulation {
             world,
             definition,
             players: BTreeMap::new(),
+            interest: InterestIndex::default(),
         })
     }
 
@@ -222,6 +227,7 @@ impl ZoneSimulation {
                 },
             );
         }
+        zone.rebuild_interest()?;
         Ok(zone)
     }
 
@@ -261,6 +267,8 @@ impl ZoneSimulation {
             ))
             .map_err(physics_error)?;
 
+        let position = Self::spawn_position(spawn_slot);
+        self.interest.insert(player_id, position.x, position.z);
         self.players.insert(
             player_id,
             PlayerState {
@@ -275,7 +283,10 @@ impl ZoneSimulation {
         if self.players.remove(&player_id).is_none() {
             return false;
         }
-        self.world.remove_body(Self::body_id(player_id));
+        if let Some(body) = self.world.remove_body(Self::body_id(player_id)) {
+            let position = body.position();
+            self.interest.remove(player_id, position.x, position.z);
+        }
         true
     }
 
@@ -329,6 +340,7 @@ impl ZoneSimulation {
         }
 
         self.world.step(1).map_err(physics_error)?;
+        self.rebuild_interest()?;
         self.tick = next_tick;
         Ok(())
     }
@@ -349,6 +361,12 @@ impl ZoneSimulation {
     }
 
     pub fn snapshot_for_player(&self, player_id: PlayerId) -> Result<ZoneSnapshot, ZoneError> {
+        Ok(self.project_for_player(player_id)?.snapshot)
+    }
+
+    /// Queries the same authoritative projection as `snapshot_for_player`, with
+    /// operation counts for workload analysis. Does not mutate canonical state.
+    pub fn project_for_player(&self, player_id: PlayerId) -> Result<PlayerProjection, ZoneError> {
         if !self.players.contains_key(&player_id) {
             return Err(ZoneError::new("unknown player"));
         }
@@ -361,7 +379,8 @@ impl ZoneSimulation {
         let radius = i128::from(INTEREST_RADIUS_UNITS);
         let radius_squared = radius * radius;
         let mut players = Vec::new();
-        for candidate in self.players.keys().copied() {
+        let (candidates, stats) = self.interest.candidates(center.x, center.z);
+        for candidate in candidates {
             let snapshot = self.player_snapshot(candidate)?;
             let dx = i128::from(snapshot.position[0]) - i128::from(center.x);
             let dz = i128::from(snapshot.position[2]) - i128::from(center.z);
@@ -370,7 +389,26 @@ impl ZoneSimulation {
             }
         }
 
-        Ok(self.make_snapshot(players, self.players[&player_id].last_sequence))
+        Ok(PlayerProjection {
+            snapshot: self.make_snapshot(players, self.players[&player_id].last_sequence),
+            stats,
+        })
+    }
+
+    // Rebuild once after each successful physics step, never per recipient. This
+    // derived state is reconstructed on recovery rather than entering the wire format.
+    fn rebuild_interest(&mut self) -> Result<(), ZoneError> {
+        let mut interest = InterestIndex::default();
+        for player_id in self.players.keys().copied() {
+            let position = self
+                .world
+                .body(Self::body_id(player_id))
+                .ok_or_else(|| ZoneError::new("player physics body is missing"))?
+                .position();
+            interest.insert(player_id, position.x, position.z);
+        }
+        self.interest = interest;
+        Ok(())
     }
 
     fn make_snapshot(

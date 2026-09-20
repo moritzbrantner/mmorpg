@@ -59,7 +59,8 @@ The workspace provides:
 - validated immutable collision content, gravity, and velocity-preserving physical recovery;
 - stale-command rejection and bounded per-zone player capacity;
 - canonical full-zone snapshots for replay/recovery;
-- player-scoped interest snapshots for network publication;
+- player-scoped interest snapshots with a spatial index for network publication;
+- [deterministic visibility workloads](docs/INTEREST_WORKLOADS.md) with wire parity and snapshot-size evidence;
 - an explicit `game-server::GameSimulation` adapter;
 - deterministic mapping from `ZoneId` to `game-server::MatchId`;
 - a provider-neutral in-memory control-plane reference model with fenced, expiring zone leases;

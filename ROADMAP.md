@@ -42,9 +42,10 @@
 
 ## Interest management and crowded zones
 
-- Add a spatial index owned by the zone simulation.
-- Keep player-scoped projection authoritative in core.
-- Benchmark visibility work, snapshot bytes and physics work independently.
+- [x] Add a spatial index owned by the zone simulation.
+- [x] Keep player-scoped projection authoritative in core.
+- [x] Measure visibility work and snapshot bytes with deterministic sparse, dense and outpost workloads.
+- Benchmark physics work independently in collision-heavy and crowded workloads.
 - Add dynamic zone subdivision or instancing only when workload evidence shows the static-zone model is insufficient.
 
 ## Durable world state

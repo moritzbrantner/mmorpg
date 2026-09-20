@@ -58,7 +58,7 @@ Coordinates are integer simulation units, 100 units per render metre, Y up. A ph
 
 Gameplay additions belong in core as typed intent commands with server-owned preconditions and outcomes. An ability should validate its actor, target, range/visibility, cooldown and resource cost against the authoritative tick. Health, cooldowns, AI state and deterministic random state must enter canonical recovery before those features ship. Session-local `PlayerId` must not become an account, character or cross-zone entity identifier. Durable character IDs and their authorization mapping remain a prerequisite to live handoffs.
 
-Interest currently uses an XZ distance bound in core. This is a relevance policy, not line-of-sight or stealth authorization. Future visibility rules must remain server-owned; a spatial index may accelerate candidate discovery without replacing those rules.
+Interest uses a zone-owned XZ spatial index followed by the exact inclusive distance rule. Nine neighboring cells supply candidates; ordered IDs keep publication deterministic. Admission/removal update the index immediately, and successful physics ticks and recovery rebuild it from authoritative positions. The index is derived state and never enters canonical snapshots. This is a relevance policy, not line-of-sight or stealth authorization. Future visibility rules must remain server-owned. See [deterministic workload evidence](INTEREST_WORKLOADS.md) for query work, snapshot bytes, parity checks and dense-zone limitations.
 
 ## Snapshots and compatibility
 
@@ -140,7 +140,7 @@ Before enabling a distributed fleet, prove with failure injection:
 - unauthenticated sessions cannot select another account's character;
 - overload and drain preserve authority while bounding queues and work.
 
-The current tests prove reference fencing, handoff metadata safety, real engine collision and physical continuation, wire compatibility, client interpolation, and two native clients sharing authority over real loopback WebTransport. The explicit native smoke harness checks GPU readback and optionally a real window. The existing transport still sends whole snapshots as datagrams: dense projections that exceed the negotiated packet budget fail closed. Bounded chunking/replication must be solved in `game-server` before claiming crowded-zone networking capacity. They do not claim those production deployment gates are complete.
+The current tests prove reference fencing, handoff metadata safety, real engine collision and physical continuation, wire compatibility, client interpolation, and two native clients sharing authority over real loopback WebTransport. The explicit native smoke harness checks GPU readback and optionally a real window. The existing transport still sends whole snapshots as datagrams: dense projections that exceed the negotiated packet budget fail closed. Bounded chunking/replication must be solved in `game-server` before claiming crowded-zone networking capacity. These checks do not claim those production deployment gates are complete.
 
 ## Review provenance
 
