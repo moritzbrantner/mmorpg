@@ -40,7 +40,11 @@ impl DemoSimulation {
             .checked_add(1)
             .ok_or_else(|| js_error("demo input sequence overflow"))?;
         self.zone
-            .apply_command(DEMO_PLAYER_ID, self.sequence, ZoneCommand::SetMovement { x, z })
+            .apply_command(
+                DEMO_PLAYER_ID,
+                self.sequence,
+                ZoneCommand::SetMovement { x, z },
+            )
             .map_err(js_error)?;
         self.movement_x = x;
         self.movement_z = z;
@@ -49,7 +53,9 @@ impl DemoSimulation {
 
     pub fn advance_ticks(&mut self, ticks: u32) -> Result<(), JsValue> {
         if ticks > MAX_ADVANCE_TICKS {
-            return Err(js_error("browser frame requested too many simulation ticks"));
+            return Err(js_error(
+                "browser frame requested too many simulation ticks",
+            ));
         }
         for _ in 0..ticks {
             self.zone.advance_tick().map_err(js_error)?;

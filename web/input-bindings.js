@@ -1,5 +1,7 @@
 export const INPUT_BINDINGS_BUNDLE_URL =
-  "https://moritzbrantner.github.io/input-bindings/input-bindings-browser.js";
+  "./vendor/input-bindings-browser.js";
+export const INPUT_BINDINGS_SOURCE_COMMIT = "aec9cbfd4de9f3c9af824b2066afd485cccd0da1";
+export const INPUT_BINDINGS_SHA256 = "b29828e529b7cc8d082785e0830eadaa6cbdb7089b07e705a9d00138a21ead84";
 
 const CONTEXT_ID = "mmorpgTechDemo";
 
@@ -93,6 +95,7 @@ export function attachDemoInputBindings({ target, onMovement, onInteract, onUnav
       console.error("Failed to load shared input-bindings runtime", error);
       target.dataset.inputBindings = "unavailable";
       onUnavailable?.(error);
+      throw error;
     },
   );
 

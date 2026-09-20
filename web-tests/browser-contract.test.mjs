@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const [index, app, input, world, wasm, workflow, pagesConfig, buildScript] = await Promise.all([
+const [index, app, input, world, wasm, workflow, validation, pagesConfig, buildScript] = await Promise.all([
   read("web/index.html"),
   read("web/app.js"),
   read("web/input-bindings.js"),
   read("web/world.js"),
   read("web-wasm/src/lib.rs"),
   read(".github/workflows/pages.yml"),
+  read(".github/workflows/validate.yml"),
   read("site/pages.config.json"),
   read("scripts/build-pages.sh"),
 ]);
@@ -30,11 +31,27 @@ test("browser movement stays behind mmorpg-core and physics-engine authority", (
 
 test("the demo consumes shared rendering and input adapters rather than cloning them", () => {
   assert.match(app, /3d-lab@8187e506f24682dae550284070e45ac33e53ad9c\/packages\/renderer\/index\.js/);
-  assert.match(input, /moritzbrantner\.github\.io\/input-bindings\/input-bindings-browser\.js/);
+  assert.match(input, /\.\/vendor\/input-bindings-browser\.js/);
+  assert.match(input, /aec9cbfd4de9f3c9af824b2066afd485cccd0da1/);
+  assert.match(input, /b29828e529b7cc8d082785e0830eadaa6cbdb7089b07e705a9d00138a21ead84/);
+  assert.doesNotMatch(input, /moritzbrantner\.github\.io\/input-bindings/);
   assert.match(input, /InputRuntimeController/);
   assert.match(input, /attachKeyboardRuntime/);
   assert.doesNotMatch(app, /addEventListener\(["']keydown/);
   assert.doesNotMatch(input, /addEventListener\(["']keydown/);
+});
+
+test("input runtime failure rejects startup instead of continuing without controls", () => {
+  assert.match(input, /onUnavailable\?\.\(error\);\s*throw error;/);
+  assert.match(app, /await controls\.ready/);
+});
+
+test("the independent web-wasm workspace is fully validated with its lockfile", () => {
+  assert.match(validation, /cargo fmt --manifest-path web-wasm\/Cargo\.toml/);
+  assert.match(validation, /cargo clippy --manifest-path web-wasm\/Cargo\.toml[\s\S]*--locked/);
+  assert.match(validation, /cargo test --manifest-path web-wasm\/Cargo\.toml[\s\S]*--locked/);
+  assert.match(validation, /cargo build --manifest-path web-wasm\/Cargo\.toml[\s\S]*wasm32-unknown-unknown --locked/);
+  assert.match(buildScript, /cargo build --manifest-path web-wasm\/Cargo\.toml[\s\S]*--release --locked/);
 });
 
 test("demo interactions are bounded presentation scenarios rather than durable MMORPG state", () => {

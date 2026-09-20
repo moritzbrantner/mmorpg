@@ -36,6 +36,10 @@ jobs:
       cache_bun: false
       cache_cargo: true
       pre_validate_command: rustup target add wasm32-unknown-unknown
-      test_command: node --test web-tests/*.test.mjs
-      build_command: cargo check --manifest-path web-wasm/Cargo.toml --target wasm32-unknown-unknown
+      format_command: cargo fmt --manifest-path web-wasm/Cargo.toml --all -- --check
+      lint_command: cargo clippy --manifest-path web-wasm/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+      test_command: |
+        node --test web-tests/*.test.mjs
+        cargo test --manifest-path web-wasm/Cargo.toml --workspace --all-features --locked
+      build_command: cargo build --manifest-path web-wasm/Cargo.toml --workspace --all-features --target wasm32-unknown-unknown --locked
       artifact_paths: ""

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cargo build --manifest-path web-wasm/Cargo.toml --target wasm32-unknown-unknown --release
+cargo build --manifest-path web-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked
 
 rm -rf dist
 mkdir -p dist/pkg
