@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "name": "MMORPG",
+    "repository": "moritzbrantner/mmorpg",
+    "basePath": "/mmorpg/",
+    "description": "Distributed MMORPG foundations with a small single-player browser tech demo."
+  },
+  "preferences": {
+    "defaults": {
+      "appearance.color_scheme": "dark",
+      "appearance.contrast": "system",
+      "localization.locale": "en"
+    },
+    "locales": [
+      { "id": "en", "label": "English" },
+      { "id": "de", "label": "Deutsch" }
+    ]
+  },
+  "links": [
+    { "label": "Tech demo", "href": "/mmorpg/" },
+    { "label": "Architecture", "href": "https://github.com/moritzbrantner/mmorpg/blob/main/docs/ARCHITECTURE.md" }
+  ],
+  "evidenceSources": [
+    {
+      "id": "coding-tooling",
+      "label": "Repository verification",
+      "kind": "coding-tooling-analysis-v1",
+      "url": "https://moritzbrantner.github.io/coding-tooling/analysis.json/?repo=moritzbrantner/mmorpg"
+    }
+  ]
+}

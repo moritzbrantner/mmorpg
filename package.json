@@ -1,0 +1,15 @@
+{
+  "name": "mmorpg-pages",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:pages": "bash ./scripts/build-pages.sh",
+    "test:web": "node --test web-tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@moritzbrantner/github-pages-template": "git+https://github.com/moritzbrantner/github-pages-template.git#7696672835b8a33eb31607ce000e650775e0f0b8"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

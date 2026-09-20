@@ -51,7 +51,12 @@
 
 ## Client foundations
 
-- Reuse `3d-lab` for generic 3D rendering/camera primitives.
-- Reuse `input-bindings` for bindings and `settings` for user configuration.
+- [x] Add a small single-player GitHub Pages tech demo that drives `mmorpg-core` locally through WASM.
+- [x] Reuse the pinned `3d-lab` renderer instead of creating an MMORPG-local renderer.
+- [x] Reuse the `input-bindings` browser runtime for movement/interact controls instead of adding a key resolver.
+- [x] Keep initial landmark interactions explicitly non-persistent and outside production world authority.
+- Reuse `settings` for user configuration when the client has durable preferences.
 - Reuse `asset-tooling` for processed authored assets and provenance.
+- Move durable character/world interactions behind authoritative core command/query boundaries before they become gameplay features.
+- Add renderer/input/browser runtime evidence once the demo has enough representative work to benchmark.
 - Integrate social functionality with `social-service` only at the boundary that service actually owns.

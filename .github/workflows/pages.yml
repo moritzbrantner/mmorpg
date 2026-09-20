@@ -1,0 +1,32 @@
+name: Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    uses: moritzbrantner/reusable-workflows/.github/workflows/deploy-pages.yml@728fffa13c451766d08f06e6c7d7950a4de57b3d
+    with:
+      node_version: "24"
+      bun_version: ""
+      install_command: "npm ci"
+      pre_command: |
+        rustup target add wasm32-unknown-unknown
+        cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      build_command: "npm run build:pages"
+      artifact_path: dist
+      cache_bun: false
+      cache_node: true
+      npm_cache_dependency_path: package-lock.json
+      concurrency_group: mmorpg-pages-${{ github.ref }}
+      cancel_in_progress: true

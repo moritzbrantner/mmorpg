@@ -11,7 +11,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/validate-repo.yml@45042e56be120b438096e774027637cac0280075
+    uses: moritzbrantner/reusable-workflows/.github/workflows/validate-repo.yml@728fffa13c451766d08f06e6c7d7950a4de57b3d
     with:
       bun_version: ""
       node_version: ""
@@ -22,4 +22,20 @@ jobs:
       lint_command: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       test_command: cargo test --workspace --all-features --locked
       build_command: cargo build --workspace --all-features --locked
+      artifact_paths: ""
+
+  browser:
+    permissions:
+      contents: read
+      packages: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/validate-repo.yml@728fffa13c451766d08f06e6c7d7950a4de57b3d
+    with:
+      bun_version: ""
+      node_version: "24"
+      install_command: ""
+      cache_bun: false
+      cache_cargo: true
+      pre_validate_command: rustup target add wasm32-unknown-unknown
+      test_command: node --test web-tests/*.test.mjs
+      build_command: cargo check --manifest-path web-wasm/Cargo.toml --target wasm32-unknown-unknown
       artifact_paths: ""

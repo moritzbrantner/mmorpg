@@ -12,8 +12,8 @@ Server-authoritative MMORPG foundation designed to scale by distributing **zone 
 | Session ticks, reconnects, replay/recovery, WebTransport | `game-server` |
 | Zone placement, lease fencing, host routing, handoff metadata | `mmorpg-control-plane` |
 | Adapter from a zone simulation into `game-server` | `mmorpg-game-server` |
-| Rendering/client scene primitives | `3d-lab` (future client slice) |
-| Runtime input semantics | `input-bindings` (future client slice) |
+| Rendering/client scene primitives | `3d-lab` |
+| Runtime input semantics | `input-bindings` |
 | User-facing settings | `settings` (future client slice) |
 | Asset normalization/provenance | `asset-tooling` (future content slice) |
 | Social systems | `social-service` where its existing authority fits |
@@ -62,9 +62,23 @@ The initial slice establishes:
 - deterministic lease renewal/expiry and a restartable fencing-epoch floor contract;
 - idempotent prepare/accept/commit state for cross-zone handoff metadata;
 - a runnable multi-zone host with one WebTransport routing surface and separate operational status;
+- a single-player GitHub Pages tech demo that runs `mmorpg-core` locally through WASM while reusing `3d-lab` and `input-bindings`;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
 
 The control-plane implementation in this slice is a **reference model**, not yet a production distributed consensus system. It exists to make ownership, epoch fencing and handoff idempotence executable before choosing storage or orchestration infrastructure.
+
+## Browser tech demo
+
+The Pages client is intentionally not a miniature production server topology. It runs one player and one small local zone in the browser so client foundations can be exercised cheaply:
+
+- WASD or arrow keys feed semantic movement actions through `input-bindings`;
+- the WASM adapter sends those actions into the same `ZoneSimulation` and `physics-engine` path used by server-side gameplay;
+- `3d-lab` materializes the 3D scene while MMORPG-owned JavaScript supplies the demo scene and follow-camera policy;
+- **E** interacts with three local landmarks to exercise the character interaction seam;
+- landmark completion is deliberately non-persistent presentation state, not durable MMORPG world authority;
+- `game-server`, the control plane, leases and cross-zone handoff are not started for this single-player demo.
+
+See [docs/CLIENT_DEMO.md](docs/CLIENT_DEMO.md) for the boundary and build contract.
 
 ## Scaling model
 
@@ -87,7 +101,9 @@ Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative du
 
 - `physics-engine`: `c796ea382bdcb0276b9309e8a3cca34c8c28313b`
 - `game-server`: `769de47005cc37891011fc76ae183c18b7c5e0ae`
-- reusable validation workflow: `45042e56be120b438096e774027637cac0280075`
+- `3d-lab` browser renderer: `8187e506f24682dae550284070e45ac33e53ad9c`
+- `github-pages-template`: `7696672835b8a33eb31607ce000e650775e0f0b8`
+- reusable workflows: `728fffa13c451766d08f06e6c7d7950a4de57b3d`
 
 ## Validation
 
@@ -96,9 +112,11 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo build --workspace --all-features --locked
+node --test web-tests/*.test.mjs
+cargo check --manifest-path web-wasm/Cargo.toml --target wasm32-unknown-unknown
 ```
 
-The committed workspace lockfile makes local and CI dependency resolution reproduce the same graph.
+The committed server workspace lockfile makes local and CI dependency resolution reproduce the same graph. The browser adapter pins its small WASM-only dependencies explicitly and is validated separately from the server workspace.
 
 ## Run a zone host
 
