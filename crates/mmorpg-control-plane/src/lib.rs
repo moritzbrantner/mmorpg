@@ -261,11 +261,7 @@ impl ZoneDirectory {
         Ok(current.clone())
     }
 
-    pub fn release(
-        &mut self,
-        lease: &ZoneLease,
-        now_tick: u64,
-    ) -> Result<(), ControlPlaneError> {
+    pub fn release(&mut self, lease: &ZoneLease, now_tick: u64) -> Result<(), ControlPlaneError> {
         self.ensure_current(lease, now_tick)?;
         self.leases.remove(&lease.zone_id);
         Ok(())
@@ -275,9 +271,7 @@ impl ZoneDirectory {
         let expired = self
             .leases
             .iter()
-            .filter_map(|(zone_id, lease)| {
-                (now_tick >= lease.expires_at_tick).then_some(*zone_id)
-            })
+            .filter_map(|(zone_id, lease)| (now_tick >= lease.expires_at_tick).then_some(*zone_id))
             .collect::<Vec<_>>();
         expired
             .into_iter()
@@ -315,11 +309,7 @@ impl ZoneDirectory {
         Ok(())
     }
 
-    fn lease_deadline(
-        &self,
-        zone_id: ZoneId,
-        now_tick: u64,
-    ) -> Result<u64, ControlPlaneError> {
+    fn lease_deadline(&self, zone_id: ZoneId, now_tick: u64) -> Result<u64, ControlPlaneError> {
         now_tick
             .checked_add(self.lease_ttl_ticks)
             .ok_or(ControlPlaneError::LeaseDeadlineOverflow(zone_id))
