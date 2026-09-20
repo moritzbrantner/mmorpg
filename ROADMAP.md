@@ -20,8 +20,9 @@
 ## Distributed control plane
 
 - Turn the in-memory reference model into a networked service boundary.
-- Add host registration/heartbeats, lease TTL/renewal and fail-closed expiry.
-- Persist lease epochs so restart cannot resurrect stale ownership.
+- [x] Add deterministic lease TTL/renewal and fail-closed expiry semantics to the reference model.
+- Add host registration/heartbeats and require live host registration for placement.
+- Persist lease epochs transactionally so restart cannot resurrect stale ownership.
 - Keep the backing store/provider replaceable behind the control-plane contract.
 - Add deterministic split-brain/fencing tests before failover automation.
 

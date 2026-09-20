@@ -58,7 +58,8 @@ The initial slice establishes:
 - player-scoped interest snapshots for network publication;
 - an explicit `game-server::GameSimulation` adapter;
 - deterministic mapping from `ZoneId` to `game-server::MatchId`;
-- a provider-neutral in-memory control-plane reference model with fenced zone leases;
+- a provider-neutral in-memory control-plane reference model with fenced, expiring zone leases;
+- deterministic lease renewal/expiry and a restartable fencing-epoch floor contract;
 - idempotent prepare/accept/commit state for cross-zone handoff metadata;
 - a runnable multi-zone host with one WebTransport routing surface and separate operational status;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.

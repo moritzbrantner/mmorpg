@@ -36,11 +36,20 @@ pub struct ZoneLease {
     pub zone_id: ZoneId,
     pub host_id: HostId,
     pub epoch: u64,
+    pub expires_at_tick: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlPlaneError {
     InvalidHostId,
+    InvalidLeaseTtl,
+    LeaseDeadlineOverflow(ZoneId),
+    LeaseExpired {
+        zone_id: ZoneId,
+        epoch: u64,
+        expires_at_tick: u64,
+        observed_at_tick: u64,
+    },
     ZoneAlreadyAssigned(ZoneId),
     ZoneNotAssigned(ZoneId),
     StaleLease {
@@ -61,6 +70,22 @@ impl fmt::Display for ControlPlaneError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidHostId => write!(formatter, "host id is invalid"),
+            Self::InvalidLeaseTtl => write!(formatter, "zone lease TTL must be greater than zero"),
+            Self::LeaseDeadlineOverflow(zone_id) => write!(
+                formatter,
+                "zone {} lease deadline overflowed the control-plane tick domain",
+                zone_id.get()
+            ),
+            Self::LeaseExpired {
+                zone_id,
+                epoch,
+                expires_at_tick,
+                observed_at_tick,
+            } => write!(
+                formatter,
+                "zone {} lease epoch {epoch} expired at tick {expires_at_tick}; observed at tick {observed_at_tick}",
+                zone_id.get()
+            ),
             Self::ZoneAlreadyAssigned(zone_id) => {
                 write!(formatter, "zone {} is already assigned", zone_id.get())
             }
@@ -123,13 +148,41 @@ impl fmt::Display for ControlPlaneError {
 
 impl Error for ControlPlaneError {}
 
-#[derive(Default)]
 pub struct ZoneDirectory {
     leases: BTreeMap<ZoneId, ZoneLease>,
     last_epoch: BTreeMap<ZoneId, u64>,
+    lease_ttl_ticks: u64,
 }
 
 impl ZoneDirectory {
+    pub fn new(lease_ttl_ticks: u64) -> Result<Self, ControlPlaneError> {
+        Self::from_epoch_floor(lease_ttl_ticks, BTreeMap::new())
+    }
+
+    pub fn from_epoch_floor(
+        lease_ttl_ticks: u64,
+        last_epoch: BTreeMap<ZoneId, u64>,
+    ) -> Result<Self, ControlPlaneError> {
+        if lease_ttl_ticks == 0 {
+            return Err(ControlPlaneError::InvalidLeaseTtl);
+        }
+        Ok(Self {
+            leases: BTreeMap::new(),
+            last_epoch,
+            lease_ttl_ticks,
+        })
+    }
+
+    #[must_use]
+    pub fn epoch_floor_snapshot(&self) -> BTreeMap<ZoneId, u64> {
+        self.last_epoch.clone()
+    }
+
+    #[must_use]
+    pub const fn lease_ttl_ticks(&self) -> u64 {
+        self.lease_ttl_ticks
+    }
+
     #[must_use]
     pub fn lease(&self, zone_id: ZoneId) -> Option<&ZoneLease> {
         self.leases.get(&zone_id)
@@ -139,15 +192,24 @@ impl ZoneDirectory {
         &mut self,
         zone_id: ZoneId,
         host_id: HostId,
+        now_tick: u64,
     ) -> Result<ZoneLease, ControlPlaneError> {
-        if self.leases.contains_key(&zone_id) {
+        if self
+            .leases
+            .get(&zone_id)
+            .is_some_and(|lease| now_tick < lease.expires_at_tick)
+        {
             return Err(ControlPlaneError::ZoneAlreadyAssigned(zone_id));
         }
+        self.leases.remove(&zone_id);
+
         let epoch = self.next_epoch(zone_id)?;
+        let expires_at_tick = self.lease_deadline(zone_id, now_tick)?;
         let lease = ZoneLease {
             zone_id,
             host_id,
             epoch,
+            expires_at_tick,
         };
         self.leases.insert(zone_id, lease.clone());
         Ok(lease)
@@ -158,6 +220,7 @@ impl ZoneDirectory {
         zone_id: ZoneId,
         expected_epoch: u64,
         host_id: HostId,
+        now_tick: u64,
     ) -> Result<ZoneLease, ControlPlaneError> {
         let current = self
             .leases
@@ -172,22 +235,55 @@ impl ZoneDirectory {
         }
 
         let epoch = self.next_epoch(zone_id)?;
+        let expires_at_tick = self.lease_deadline(zone_id, now_tick)?;
         let lease = ZoneLease {
             zone_id,
             host_id,
             epoch,
+            expires_at_tick,
         };
         self.leases.insert(zone_id, lease.clone());
         Ok(lease)
     }
 
-    pub fn release(&mut self, lease: &ZoneLease) -> Result<(), ControlPlaneError> {
-        self.ensure_current(lease)?;
+    pub fn renew(
+        &mut self,
+        lease: &ZoneLease,
+        now_tick: u64,
+    ) -> Result<ZoneLease, ControlPlaneError> {
+        self.ensure_current(lease, now_tick)?;
+        let expires_at_tick = self.lease_deadline(lease.zone_id, now_tick)?;
+        let current = self
+            .leases
+            .get_mut(&lease.zone_id)
+            .expect("current lease existence checked above");
+        current.expires_at_tick = expires_at_tick;
+        Ok(current.clone())
+    }
+
+    pub fn release(&mut self, lease: &ZoneLease, now_tick: u64) -> Result<(), ControlPlaneError> {
+        self.ensure_current(lease, now_tick)?;
         self.leases.remove(&lease.zone_id);
         Ok(())
     }
 
-    pub fn ensure_current(&self, lease: &ZoneLease) -> Result<(), ControlPlaneError> {
+    pub fn expire(&mut self, now_tick: u64) -> Vec<ZoneLease> {
+        let expired = self
+            .leases
+            .iter()
+            .filter_map(|(zone_id, lease)| (now_tick >= lease.expires_at_tick).then_some(*zone_id))
+            .collect::<Vec<_>>();
+        expired
+            .into_iter()
+            .filter_map(|zone_id| self.leases.remove(&zone_id))
+            .collect()
+    }
+
+    pub fn ensure_current(
+        &self,
+        lease: &ZoneLease,
+        now_tick: u64,
+    ) -> Result<(), ControlPlaneError> {
         let current = self
             .leases
             .get(&lease.zone_id)
@@ -202,7 +298,21 @@ impl ZoneDirectory {
         if current.host_id != lease.host_id {
             return Err(ControlPlaneError::LeaseOwnerMismatch(lease.zone_id));
         }
+        if now_tick >= current.expires_at_tick {
+            return Err(ControlPlaneError::LeaseExpired {
+                zone_id: lease.zone_id,
+                epoch: lease.epoch,
+                expires_at_tick: current.expires_at_tick,
+                observed_at_tick: now_tick,
+            });
+        }
         Ok(())
+    }
+
+    fn lease_deadline(&self, zone_id: ZoneId, now_tick: u64) -> Result<u64, ControlPlaneError> {
+        now_tick
+            .checked_add(self.lease_ttl_ticks)
+            .ok_or(ControlPlaneError::LeaseDeadlineOverflow(zone_id))
     }
 
     fn next_epoch(&mut self, zone_id: ZoneId) -> Result<u64, ControlPlaneError> {
@@ -281,12 +391,13 @@ impl HandoffRegistry {
         &mut self,
         ticket: HandoffTicket,
         directory: &ZoneDirectory,
+        now_tick: u64,
     ) -> Result<HandoffPhase, ControlPlaneError> {
         if ticket.source.zone_id == ticket.destination.zone_id {
             return Err(ControlPlaneError::SameZoneTransfer(ticket.source.zone_id));
         }
-        directory.ensure_current(&ticket.source)?;
-        directory.ensure_current(&ticket.destination)?;
+        directory.ensure_current(&ticket.source, now_tick)?;
+        directory.ensure_current(&ticket.destination, now_tick)?;
 
         if let Some(existing) = self.transfers.get(&ticket.transfer_id) {
             if existing.ticket != ticket {
@@ -311,8 +422,9 @@ impl HandoffRegistry {
         transfer_id: TransferId,
         destination: &ZoneLease,
         directory: &ZoneDirectory,
+        now_tick: u64,
     ) -> Result<HandoffPhase, ControlPlaneError> {
-        directory.ensure_current(destination)?;
+        directory.ensure_current(destination, now_tick)?;
         let ticket = self
             .transfers
             .get(&transfer_id)
@@ -322,7 +434,7 @@ impl HandoffRegistry {
         if ticket.destination != *destination {
             return Err(ControlPlaneError::TransferLeaseMismatch(transfer_id));
         }
-        directory.ensure_current(&ticket.source)?;
+        directory.ensure_current(&ticket.source, now_tick)?;
 
         let record = self
             .transfers
@@ -339,8 +451,9 @@ impl HandoffRegistry {
         transfer_id: TransferId,
         source: &ZoneLease,
         directory: &ZoneDirectory,
+        now_tick: u64,
     ) -> Result<HandoffPhase, ControlPlaneError> {
-        directory.ensure_current(source)?;
+        directory.ensure_current(source, now_tick)?;
         let ticket = self
             .transfers
             .get(&transfer_id)
@@ -350,7 +463,7 @@ impl HandoffRegistry {
         if ticket.source != *source {
             return Err(ControlPlaneError::TransferLeaseMismatch(transfer_id));
         }
-        directory.ensure_current(&ticket.destination)?;
+        directory.ensure_current(&ticket.destination, now_tick)?;
 
         let record = self
             .transfers
@@ -378,25 +491,25 @@ mod tests {
     #[test]
     fn reassignment_fences_the_previous_zone_owner() {
         let zone_id = ZoneId::new(10);
-        let mut directory = ZoneDirectory::default();
-        let first = directory.assign(zone_id, host("host-a")).unwrap();
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let first = directory.assign(zone_id, host("host-a"), 0).unwrap();
         let second = directory
-            .reassign(zone_id, first.epoch, host("host-b"))
+            .reassign(zone_id, first.epoch, host("host-b"), 1)
             .unwrap();
 
         assert!(matches!(
-            directory.ensure_current(&first),
+            directory.ensure_current(&first, 1),
             Err(ControlPlaneError::StaleLease { .. })
         ));
-        assert!(directory.ensure_current(&second).is_ok());
+        assert!(directory.ensure_current(&second, 1).is_ok());
         assert!(second.epoch > first.epoch);
     }
 
     #[test]
     fn handoff_phases_are_idempotent_for_the_same_transfer() {
-        let mut directory = ZoneDirectory::default();
-        let source = directory.assign(ZoneId::new(1), host("host-a")).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b")).unwrap();
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let source = directory.assign(ZoneId::new(1), host("host-a"), 0).unwrap();
+        let destination = directory.assign(ZoneId::new(2), host("host-b"), 0).unwrap();
         let ticket = HandoffTicket {
             transfer_id: TransferId::new(77),
             entity_id: EntityId::new(9001),
@@ -406,34 +519,34 @@ mod tests {
         let mut registry = HandoffRegistry::default();
 
         assert_eq!(
-            registry.prepare(ticket.clone(), &directory).unwrap(),
+            registry.prepare(ticket.clone(), &directory, 0).unwrap(),
             HandoffPhase::Prepared
         );
         assert_eq!(
-            registry.prepare(ticket, &directory).unwrap(),
+            registry.prepare(ticket, &directory, 0).unwrap(),
             HandoffPhase::Prepared
         );
         assert_eq!(
             registry
-                .accept(TransferId::new(77), &destination, &directory)
+                .accept(TransferId::new(77), &destination, &directory, 0)
                 .unwrap(),
             HandoffPhase::Accepted
         );
         assert_eq!(
             registry
-                .accept(TransferId::new(77), &destination, &directory)
+                .accept(TransferId::new(77), &destination, &directory, 0)
                 .unwrap(),
             HandoffPhase::Accepted
         );
         assert_eq!(
             registry
-                .commit(TransferId::new(77), &source, &directory)
+                .commit(TransferId::new(77), &source, &directory, 0)
                 .unwrap(),
             HandoffPhase::Committed
         );
         assert_eq!(
             registry
-                .commit(TransferId::new(77), &source, &directory)
+                .commit(TransferId::new(77), &source, &directory, 0)
                 .unwrap(),
             HandoffPhase::Committed
         );
@@ -441,9 +554,9 @@ mod tests {
 
     #[test]
     fn stale_source_epoch_cannot_accept_a_transfer() {
-        let mut directory = ZoneDirectory::default();
-        let source = directory.assign(ZoneId::new(1), host("host-a")).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b")).unwrap();
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let source = directory.assign(ZoneId::new(1), host("host-a"), 0).unwrap();
+        let destination = directory.assign(ZoneId::new(2), host("host-b"), 0).unwrap();
         let mut registry = HandoffRegistry::default();
         registry
             .prepare(
@@ -454,24 +567,25 @@ mod tests {
                     destination: destination.clone(),
                 },
                 &directory,
+                0,
             )
             .unwrap();
 
         directory
-            .reassign(source.zone_id, source.epoch, host("host-c"))
+            .reassign(source.zone_id, source.epoch, host("host-c"), 1)
             .unwrap();
 
         assert!(matches!(
-            registry.accept(TransferId::new(3), &destination, &directory),
+            registry.accept(TransferId::new(3), &destination, &directory, 1),
             Err(ControlPlaneError::StaleLease { .. })
         ));
     }
 
     #[test]
     fn stale_destination_epoch_cannot_commit_a_transfer() {
-        let mut directory = ZoneDirectory::default();
-        let source = directory.assign(ZoneId::new(1), host("host-a")).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b")).unwrap();
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let source = directory.assign(ZoneId::new(1), host("host-a"), 0).unwrap();
+        let destination = directory.assign(ZoneId::new(2), host("host-b"), 0).unwrap();
         let mut registry = HandoffRegistry::default();
         registry
             .prepare(
@@ -482,27 +596,28 @@ mod tests {
                     destination: destination.clone(),
                 },
                 &directory,
+                0,
             )
             .unwrap();
         registry
-            .accept(TransferId::new(4), &destination, &directory)
+            .accept(TransferId::new(4), &destination, &directory, 0)
             .unwrap();
 
         directory
-            .reassign(destination.zone_id, destination.epoch, host("host-c"))
+            .reassign(destination.zone_id, destination.epoch, host("host-c"), 1)
             .unwrap();
 
         assert!(matches!(
-            registry.commit(TransferId::new(4), &source, &directory),
+            registry.commit(TransferId::new(4), &source, &directory, 1),
             Err(ControlPlaneError::StaleLease { .. })
         ));
     }
 
     #[test]
     fn stale_destination_epoch_cannot_accept_a_transfer() {
-        let mut directory = ZoneDirectory::default();
-        let source = directory.assign(ZoneId::new(1), host("host-a")).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b")).unwrap();
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let source = directory.assign(ZoneId::new(1), host("host-a"), 0).unwrap();
+        let destination = directory.assign(ZoneId::new(2), host("host-b"), 0).unwrap();
         let mut registry = HandoffRegistry::default();
         registry
             .prepare(
@@ -513,24 +628,103 @@ mod tests {
                     destination: destination.clone(),
                 },
                 &directory,
+                0,
             )
             .unwrap();
 
         directory
-            .reassign(destination.zone_id, destination.epoch, host("host-c"))
+            .reassign(destination.zone_id, destination.epoch, host("host-c"), 1)
             .unwrap();
 
         assert!(matches!(
-            registry.accept(TransferId::new(4), &destination, &directory),
+            registry.accept(TransferId::new(4), &destination, &directory, 1),
             Err(ControlPlaneError::StaleLease { .. })
         ));
     }
 
     #[test]
+    fn lease_expiry_and_renewal_are_deterministic() {
+        let zone_id = ZoneId::new(7);
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let lease = directory.assign(zone_id, host("host-a"), 5).unwrap();
+
+        assert_eq!(lease.expires_at_tick, 15);
+        assert!(directory.ensure_current(&lease, 14).is_ok());
+        assert!(matches!(
+            directory.ensure_current(&lease, 15),
+            Err(ControlPlaneError::LeaseExpired { .. })
+        ));
+
+        let replacement = directory
+            .reassign(zone_id, lease.epoch, host("host-b"), 15)
+            .unwrap();
+        assert_eq!(replacement.epoch, lease.epoch + 1);
+        assert_eq!(replacement.expires_at_tick, 25);
+
+        let renewed = directory.renew(&replacement, 20).unwrap();
+        assert_eq!(renewed.epoch, replacement.epoch);
+        assert_eq!(renewed.expires_at_tick, 30);
+        assert!(directory.ensure_current(&replacement, 29).is_ok());
+    }
+
+    #[test]
+    fn expired_assignment_advances_epoch_instead_of_resurrecting_it() {
+        let zone_id = ZoneId::new(8);
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let first = directory.assign(zone_id, host("host-a"), 0).unwrap();
+
+        let second = directory.assign(zone_id, host("host-b"), 10).unwrap();
+
+        assert_eq!(second.epoch, first.epoch + 1);
+        assert!(matches!(
+            directory.ensure_current(&first, 10),
+            Err(ControlPlaneError::StaleLease { .. })
+        ));
+    }
+
+    #[test]
+    fn epoch_floor_survives_directory_restart() {
+        let zone_id = ZoneId::new(9);
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let first = directory.assign(zone_id, host("host-a"), 0).unwrap();
+        let snapshot = directory.epoch_floor_snapshot();
+
+        let mut restored = ZoneDirectory::from_epoch_floor(10, snapshot).unwrap();
+        let second = restored.assign(zone_id, host("host-b"), 100).unwrap();
+
+        assert_eq!(second.epoch, first.epoch + 1);
+    }
+
+    #[test]
+    fn expired_handoff_cannot_advance() {
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let source = directory.assign(ZoneId::new(1), host("host-a"), 0).unwrap();
+        let destination = directory.assign(ZoneId::new(2), host("host-b"), 0).unwrap();
+        let mut registry = HandoffRegistry::default();
+        registry
+            .prepare(
+                HandoffTicket {
+                    transfer_id: TransferId::new(99),
+                    entity_id: EntityId::new(5),
+                    source: source.clone(),
+                    destination: destination.clone(),
+                },
+                &directory,
+                0,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            registry.accept(TransferId::new(99), &destination, &directory, 10),
+            Err(ControlPlaneError::LeaseExpired { .. })
+        ));
+    }
+
+    #[test]
     fn transfer_ids_cannot_be_reused_for_different_content() {
-        let mut directory = ZoneDirectory::default();
-        let source = directory.assign(ZoneId::new(1), host("host-a")).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b")).unwrap();
+        let mut directory = ZoneDirectory::new(10).unwrap();
+        let source = directory.assign(ZoneId::new(1), host("host-a"), 0).unwrap();
+        let destination = directory.assign(ZoneId::new(2), host("host-b"), 0).unwrap();
         let mut registry = HandoffRegistry::default();
 
         registry
@@ -542,6 +736,7 @@ mod tests {
                     destination: destination.clone(),
                 },
                 &directory,
+                0,
             )
             .unwrap();
 
@@ -554,6 +749,7 @@ mod tests {
                     destination,
                 },
                 &directory,
+                0,
             )
             .unwrap_err();
         assert_eq!(
