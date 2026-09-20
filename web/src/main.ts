@@ -6,13 +6,18 @@ import {
 } from "@moritzbrantner/three-d-renderer";
 import "./styles.css";
 
-const canvas = document.querySelector<HTMLCanvasElement>("#world");
-const prompt = document.querySelector<HTMLElement>("#prompt");
-const objective = document.querySelector<HTMLElement>("#objective");
-const status = document.querySelector<HTMLElement>("#status");
-if (!canvas || !prompt || !objective || !status) {
-  throw new Error("Tech demo shell is incomplete");
+function requireElement<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) {
+    throw new Error(`Tech demo shell is missing ${selector}`);
+  }
+  return element;
 }
+
+const canvas = requireElement<HTMLCanvasElement>("#world");
+const prompt = requireElement<HTMLElement>("#prompt");
+const objective = requireElement<HTMLElement>("#objective");
+const status = requireElement<HTMLElement>("#status");
 
 const renderer = createThreeSceneRenderer(canvas, {
   background: "#9fb1a1",
