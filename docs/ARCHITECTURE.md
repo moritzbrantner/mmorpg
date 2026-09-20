@@ -63,6 +63,10 @@ The first implementation is deliberately in-memory so these semantics can be tes
 
 A production backing implementation must preserve the same compare-and-set/fencing behavior.
 
+Zone-lease time is explicit and deterministic rather than read from a wall clock inside the model. Callers supply a monotonic control-plane tick. Every lease has an exclusive expiry tick; renewal extends the current host/epoch deadline, while reassignment always issues a higher fencing epoch. Expired leases fail closed in ownership and handoff checks, and assigning an expired zone advances the epoch instead of reusing it.
+
+`ZoneDirectory::epoch_floor_snapshot` and `ZoneDirectory::from_epoch_floor` define the persistence seam for fencing history. They are not durable storage by themselves: a networked control-plane implementation must transactionally persist the new epoch floor before it publishes a newly granted lease. Otherwise a crash between grant and persistence could reuse an old epoch.
+
 ## 5. Zone placement
 
 Static zones are the initial partitioning model. A host advertises capacity; the control plane assigns zones and issues leases. Capacity should consider at least:
