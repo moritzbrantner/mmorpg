@@ -508,10 +508,10 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            directory.ensure_current(&first),
+            directory.ensure_current(&first, 1),
             Err(ControlPlaneError::StaleLease { .. })
         ));
-        assert!(directory.ensure_current(&second).is_ok());
+        assert!(directory.ensure_current(&second, 1).is_ok());
         assert!(second.epoch > first.epoch);
     }
 
@@ -610,7 +610,7 @@ mod tests {
             )
             .unwrap();
         registry
-            .accept(TransferId::new(4), &destination, &directory)
+            .accept(TransferId::new(4), &destination, &directory, 0)
             .unwrap();
 
         directory
