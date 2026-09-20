@@ -60,6 +60,7 @@ The initial slice establishes:
 - deterministic mapping from `ZoneId` to `game-server::MatchId`;
 - a provider-neutral in-memory control-plane reference model with fenced zone leases;
 - idempotent prepare/accept/commit state for cross-zone handoff metadata;
+- a runnable multi-zone host with one WebTransport routing surface and separate operational status;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
 
 The control-plane implementation in this slice is a **reference model**, not yet a production distributed consensus system. It exists to make ownership, epoch fencing and handoff idempotence executable before choosing storage or orchestration infrastructure.
@@ -91,11 +92,34 @@ Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative du
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo build --workspace --all-features
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+cargo build --workspace --all-features --locked
 ```
 
-The repository is being bootstrapped from an empty repository, so the first foundation PR resolves dependencies without `--locked`. A committed `Cargo.lock` is required once the initial dependency graph has been generated.
+The committed workspace lockfile makes local and CI dependency resolution reproduce the same graph.
+
+## Run a zone host
+
+Provide a TLS certificate and key, then start one process hosting one or more zones:
+
+```sh
+MMORPG_ZONE_IDS=10,11 \
+MMORPG_CERT_PEM=cert.pem \
+MMORPG_KEY_PEM=key.pem \
+MMORPG_RECOVERY_DIR=recovery/zone-host \
+cargo run --locked -p mmorpg-game-server --bin mmorpg-zone-host
+```
+
+The host uses one WebTransport listener (port `4433` by default) and routes sessions under `/game/matches/zone-<id>`. Operational HTTP status is exposed separately on port `8080`:
+
+- `/healthz` reports process liveness;
+- `/readyz` reports whether at least one hosted zone can accept sessions;
+- `/status` reports host capacity and per-zone readiness;
+- `/matches/zone-<id>/readyz` and `/matches/zone-<id>/status` expose a single zone's operational projection.
+
+When `MMORPG_RECOVERY_DIR` is set, graceful `SIGINT`/`SIGTERM` shutdown writes one atomic recovery bundle for the complete configured zone set. Restarting with the same zones restores simulation, command-sequence, and reconnect state, then consumes the old bundle. A missing zone, an extra zone, or corrupt recovery data fails startup closed instead of partially restoring a host. Durable crash recovery remains a separate persistence boundary.
+
+These endpoints consume `game-server` host state and never mutate or redefine zone gameplay authority. Configuration is explicit through `MMORPG_ZONE_IDS`, `MMORPG_PORT`, `MMORPG_STATUS_PORT`, `MMORPG_CERT_PEM`, `MMORPG_KEY_PEM`, `MMORPG_RECOVERY_DIR`, `MMORPG_ROUTE_PREFIX`, `MMORPG_RECONNECT_GRACE_TICKS`, and `MMORPG_DRAIN_GRACE_MS`; recovery is opt-in, while invalid configured values fail startup instead of silently falling back.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md).

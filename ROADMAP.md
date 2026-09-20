@@ -7,14 +7,15 @@
 - [x] Use player-scoped snapshots so interest policy stays outside transport.
 - [x] Define fenced zone leases and deterministic host routing.
 - [x] Define idempotent cross-zone handoff metadata.
-- [ ] Commit the generated workspace `Cargo.lock` after bootstrap dependency resolution.
+- [x] Commit the generated workspace `Cargo.lock` after bootstrap dependency resolution.
 
-## Next slice — runnable zone host
+## Runnable zone host
 
-- Add a zone-host binary around `game-server::MatchHost`.
-- Prove multiple zones advance independently in one process.
-- Expose health/readiness/status without making status endpoints gameplay authorities.
-- Keep one listener/routing surface per host rather than one process per player or one port per zone.
+- [x] Add a zone-host binary around `game-server::MatchHost`.
+- [x] Prove multiple zones advance independently in one process.
+- [x] Expose health/readiness/status without making status endpoints gameplay authorities.
+- [x] Keep one listener/routing surface per host rather than one process per player or one port per zone.
+- [x] Recover the complete hosted zone set atomically across graceful restarts.
 
 ## Distributed control plane
 

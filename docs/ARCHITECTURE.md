@@ -33,6 +33,10 @@ physics-engine
 
 One process can host many zones with `game-server::MatchHost`. Zone IDs map deterministically to route-safe match IDs. The MMO repository should extend orchestration around `MatchHost`, not fork its session runtime.
 
+The `mmorpg-zone-host` binary materializes this boundary. It creates one runtime per configured zone, serves all zones through one WebTransport listener and delegates liveness/readiness/status to `game-server` on a separate operational HTTP listener. Status is a projection of host state; it is not a gameplay or placement command surface.
+
+Optional graceful recovery also remains owned by `game-server`. A configured recovery directory represents one atomic bundle for the host's exact zone set: shutdown freezes and records every zone together, while startup restores all of them or fails closed. This protects planned restarts without treating local recovery files as durable world persistence or control-plane lease authority.
+
 ## 3. Snapshot authority
 
 Two projections exist for different purposes:
