@@ -12,7 +12,7 @@ Server-authoritative MMORPG foundation designed to scale by distributing **zone 
 | Session ticks, reconnects, replay/recovery, WebTransport | `game-server` |
 | Zone placement, lease fencing, host routing, handoff metadata | `mmorpg-control-plane` |
 | Adapter from a zone simulation into `game-server` | `mmorpg-game-server` |
-| Rendering/client scene primitives | `3d-lab` (future client slice) |
+| Rendering/client scene primitives | pinned `3d-lab` browser renderer |
 | Runtime input semantics | `input-bindings` (future client slice) |
 | User-facing settings | `settings` (future client slice) |
 | Asset normalization/provenance | `asset-tooling` (future content slice) |
