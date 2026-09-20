@@ -12,7 +12,7 @@ Server-authoritative MMORPG foundation designed to scale by distributing **zone 
 | Session ticks, reconnects, replay/recovery, WebTransport | `game-server` |
 | Zone placement, lease fencing, host routing, handoff metadata | `mmorpg-control-plane` |
 | Adapter from a zone simulation into `game-server` | `mmorpg-game-server` |
-| Rendering/client scene primitives | `3d-lab` (future client slice) |
+| Rendering/client scene primitives | pinned `3d-lab` browser renderer |
 | Runtime input semantics | `input-bindings` (future client slice) |
 | User-facing settings | `settings` (future client slice) |
 | Asset normalization/provenance | `asset-tooling` (future content slice) |
@@ -61,12 +61,12 @@ The initial slice establishes:
 - a provider-neutral in-memory control-plane reference model with fenced, expiring zone leases;
 - deterministic lease renewal/expiry and a restartable fencing-epoch floor contract;
 - idempotent prepare/accept/commit state for cross-zone handoff metadata;
-- a runnable multi-zone host with one WebTransport routing surface and separate operational status;
+- a runnable multi-zone host with one WebTransport routing surface and separate operational status;\n- a deliberately single-player GitHub Pages tech demo for a tiny explorable zone, consuming the pinned `3d-lab` renderer without introducing browser-side MMO authority;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
 
 The control-plane implementation in this slice is a **reference model**, not yet a production distributed consensus system. It exists to make ownership, epoch fencing and handoff idempotence executable before choosing storage or orchestration infrastructure.
 
-## Scaling model
+## Browser tech demo\n\n`web/` is a small, intentionally non-authoritative GitHub Pages client. It provides a tiny world slice with local movement, a follow camera, and an interactable waystone so browser/client work can advance before online session integration. It does **not** simulate distributed ownership, persistence, handoffs, or authoritative multiplayer state. Those remain in the Rust/server boundaries above.\n\nThe renderer is consumed from an exact `3d-lab` commit. The demo may later replace local movement with an `mmorpg-core`/WASM or network-backed client projection, but it should not create a second gameplay authority in TypeScript.\n\n## Scaling model
 
 The first scaling unit is the zone:
 
