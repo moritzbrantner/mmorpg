@@ -1,0 +1,18 @@
+{
+  "name": "mmorpg-pages-tech-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#8187e506f24682dae550284070e45ac33e53ad9c",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.2",
+    "vite": "7.1.5"
+  }
+}
