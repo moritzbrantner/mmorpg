@@ -1,10 +1,12 @@
 use game_server::{
     BrowserRoutePrefix, DEFAULT_HOST_STATUS_PORT, DEFAULT_RECONNECT_GRACE_TICKS,
-    MatchHostStatusConfig, MatchHostWebTransportConfig, RejectMatchControlService,
+    MatchHostRecoveryConfig, MatchHostStatusConfig, MatchHostWebTransportConfig,
+    RejectMatchControlService, prepare_match_host_for_recovery,
     serve_match_host_with_status_and_control_and_shutdown,
+    serve_prepared_match_host_with_status_and_control_and_shutdown,
 };
 use mmorpg_core::ZoneId;
-use mmorpg_game_server::build_zone_host;
+use mmorpg_game_server::{build_zone_host, build_zone_matches};
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -41,27 +43,50 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let drain_grace_ms = read_number("MMORPG_DRAIN_GRACE_MS", DEFAULT_DRAIN_GRACE_MS)?;
     let certificate_pem = PathBuf::from(read_string("MMORPG_CERT_PEM", "cert.pem")?);
     let private_key_pem = PathBuf::from(read_string("MMORPG_KEY_PEM", "key.pem")?);
+    let recovery_directory = read_optional_path("MMORPG_RECOVERY_DIR")?;
     let route_prefix =
         BrowserRoutePrefix::new(read_string("MMORPG_ROUTE_PREFIX", DEFAULT_ROUTE_PREFIX)?)?;
 
-    let host = build_zone_host(zone_ids, reconnect_grace_ticks)?;
     let (shutdown_sender, shutdown_receiver) = mpsc::channel(4);
     install_shutdown_forwarder(shutdown_sender)?;
+    let transport_config = MatchHostWebTransportConfig {
+        port,
+        certificate_pem,
+        private_key_pem,
+        route_prefix,
+        drain_grace: Duration::from_millis(drain_grace_ms),
+    };
+    let status_config = MatchHostStatusConfig { port: status_port };
 
-    serve_match_host_with_status_and_control_and_shutdown(
-        host,
-        RejectMatchControlService,
-        MatchHostWebTransportConfig {
-            port,
-            certificate_pem,
-            private_key_pem,
-            route_prefix,
-            drain_grace: Duration::from_millis(drain_grace_ms),
-        },
-        MatchHostStatusConfig { port: status_port },
-        shutdown_receiver,
-    )
-    .await?;
+    if let Some(directory) = recovery_directory {
+        let matches = build_zone_matches(zone_ids)?;
+        let max_matches = matches.len();
+        let prepared = prepare_match_host_for_recovery(
+            matches,
+            max_matches,
+            reconnect_grace_ticks,
+            MatchHostRecoveryConfig { directory },
+        )
+        .await?;
+        serve_prepared_match_host_with_status_and_control_and_shutdown(
+            prepared,
+            RejectMatchControlService,
+            transport_config,
+            status_config,
+            shutdown_receiver,
+        )
+        .await?;
+    } else {
+        let host = build_zone_host(zone_ids, reconnect_grace_ticks)?;
+        serve_match_host_with_status_and_control_and_shutdown(
+            host,
+            RejectMatchControlService,
+            transport_config,
+            status_config,
+            shutdown_receiver,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -86,6 +111,15 @@ fn read_string(name: &str, default: &str) -> Result<String, ConfigError> {
     match env::var(name) {
         Ok(value) => Ok(value),
         Err(env::VarError::NotPresent) => Ok(default.to_owned()),
+        Err(error) => Err(ConfigError(format!("{name} is invalid: {error}"))),
+    }
+}
+
+fn read_optional_path(name: &str) -> Result<Option<PathBuf>, ConfigError> {
+    match env::var(name) {
+        Ok(value) if value.is_empty() => Err(ConfigError(format!("{name} must not be empty"))),
+        Ok(value) => Ok(Some(PathBuf::from(value))),
+        Err(env::VarError::NotPresent) => Ok(None),
         Err(error) => Err(ConfigError(format!("{name} is invalid: {error}"))),
     }
 }

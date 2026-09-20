@@ -15,6 +15,7 @@
 - [x] Prove multiple zones advance independently in one process.
 - [x] Expose health/readiness/status without making status endpoints gameplay authorities.
 - [x] Keep one listener/routing surface per host rather than one process per player or one port per zone.
+- [x] Recover the complete hosted zone set atomically across graceful restarts.
 
 ## Distributed control plane
 

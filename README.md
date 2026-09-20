@@ -107,6 +107,7 @@ Provide a TLS certificate and key, then start one process hosting one or more zo
 MMORPG_ZONE_IDS=10,11 \
 MMORPG_CERT_PEM=cert.pem \
 MMORPG_KEY_PEM=key.pem \
+MMORPG_RECOVERY_DIR=recovery/zone-host \
 cargo run --locked -p mmorpg-game-server --bin mmorpg-zone-host
 ```
 
@@ -117,6 +118,8 @@ The host uses one WebTransport listener (port `4433` by default) and routes sess
 - `/status` reports host capacity and per-zone readiness;
 - `/matches/zone-<id>/readyz` and `/matches/zone-<id>/status` expose a single zone's operational projection.
 
-These endpoints consume `game-server` host state and never mutate or redefine zone gameplay authority. Configuration is explicit through `MMORPG_ZONE_IDS`, `MMORPG_PORT`, `MMORPG_STATUS_PORT`, `MMORPG_ROUTE_PREFIX`, `MMORPG_RECONNECT_GRACE_TICKS`, and `MMORPG_DRAIN_GRACE_MS`; invalid configured values fail startup instead of silently falling back.
+When `MMORPG_RECOVERY_DIR` is set, graceful `SIGINT`/`SIGTERM` shutdown writes one atomic recovery bundle for the complete configured zone set. Restarting with the same zones restores simulation, command-sequence, and reconnect state, then consumes the old bundle. A missing zone, an extra zone, or corrupt recovery data fails startup closed instead of partially restoring a host. Durable crash recovery remains a separate persistence boundary.
+
+These endpoints consume `game-server` host state and never mutate or redefine zone gameplay authority. Configuration is explicit through `MMORPG_ZONE_IDS`, `MMORPG_PORT`, `MMORPG_STATUS_PORT`, `MMORPG_CERT_PEM`, `MMORPG_KEY_PEM`, `MMORPG_RECOVERY_DIR`, `MMORPG_ROUTE_PREFIX`, `MMORPG_RECONNECT_GRACE_TICKS`, and `MMORPG_DRAIN_GRACE_MS`; recovery is opt-in, while invalid configured values fail startup instead of silently falling back.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md).

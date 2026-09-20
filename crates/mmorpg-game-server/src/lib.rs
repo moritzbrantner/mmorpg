@@ -80,6 +80,21 @@ pub fn build_zone_host(
     zone_ids: impl IntoIterator<Item = ZoneId>,
     reconnect_grace_ticks: u64,
 ) -> Result<MatchHost<ZoneGameServerAdapter>, ZoneHostBuildError> {
+    let matches = build_zone_matches(zone_ids)?;
+    let mut host = MatchHost::new(matches.len()).map_err(ZoneHostBuildError::Host)?;
+    for (match_id, simulation) in matches {
+        let runtime = MatchRuntime::new(simulation, reconnect_grace_ticks);
+        host.insert(match_id, runtime).map_err(|failure| {
+            let (error, _, _) = failure.into_parts();
+            ZoneHostBuildError::Host(error)
+        })?;
+    }
+    Ok(host)
+}
+
+pub fn build_zone_matches(
+    zone_ids: impl IntoIterator<Item = ZoneId>,
+) -> Result<Vec<(MatchId, ZoneGameServerAdapter)>, ZoneHostBuildError> {
     let zone_ids = zone_ids.into_iter().collect::<Vec<_>>();
     if zone_ids.is_empty() {
         return Err(ZoneHostBuildError::Empty);
@@ -96,16 +111,13 @@ pub fn build_zone_host(
         return Err(ZoneHostBuildError::DuplicateZone(duplicate));
     }
 
-    let mut host = MatchHost::new(zone_ids.len()).map_err(ZoneHostBuildError::Host)?;
-    for zone_id in zone_ids {
-        let match_id = zone_match_id(zone_id).map_err(ZoneHostBuildError::MatchId)?;
-        let runtime = MatchRuntime::new(ZoneGameServerAdapter::new(zone_id), reconnect_grace_ticks);
-        host.insert(match_id, runtime).map_err(|failure| {
-            let (error, _, _) = failure.into_parts();
-            ZoneHostBuildError::Host(error)
-        })?;
-    }
-    Ok(host)
+    zone_ids
+        .into_iter()
+        .map(|zone_id| {
+            let match_id = zone_match_id(zone_id).map_err(ZoneHostBuildError::MatchId)?;
+            Ok((match_id, ZoneGameServerAdapter::new(zone_id)))
+        })
+        .collect()
 }
 
 impl GameSimulation for ZoneGameServerAdapter {
@@ -238,6 +250,42 @@ mod tests {
         assert_eq!(snapshot.tick, 5);
         assert_eq!(snapshot.players.len(), 1);
         assert!(snapshot.players[0].position[0] > 0);
+    }
+
+    #[test]
+    fn game_server_recovery_restores_zone_and_reconnect_state() {
+        let zone_id = ZoneId::new(9);
+        let previous_token = ReconnectToken([7; RECONNECT_TOKEN_BYTES]);
+        let replacement_token = ReconnectToken([8; RECONNECT_TOKEN_BYTES]);
+        let mut runtime =
+            MatchRuntime::new_with_replay_capture(ZoneGameServerAdapter::new(zone_id), 120);
+        let lease = runtime.admit(previous_token).unwrap();
+        let payload = encode_command(ZoneCommand::SetMovement { x: 1, z: 0 });
+
+        runtime
+            .submit_command(lease.player_id, lease.connection_epoch, 9, &payload)
+            .unwrap();
+        for _ in 0..5 {
+            runtime.advance_tick().unwrap();
+        }
+        assert!(runtime.disconnect(lease.player_id, lease.connection_epoch));
+        runtime.freeze_for_recovery();
+
+        let image = runtime.recovery_image().unwrap();
+        let mut restored =
+            MatchRuntime::restore_from_recovery(ZoneGameServerAdapter::new(zone_id), image)
+                .unwrap();
+        let snapshot = decode_canonical_snapshot(&restored.snapshot().unwrap().payload).unwrap();
+        let reconnected = restored
+            .reconnect(previous_token, replacement_token)
+            .unwrap();
+
+        assert_eq!(snapshot.zone_id, zone_id);
+        assert_eq!(snapshot.tick, 5);
+        assert_eq!(snapshot.players[0].last_sequence, 9);
+        assert!(snapshot.players[0].position[0] > 0);
+        assert_eq!(reconnected.player_id, lease.player_id);
+        assert_eq!(reconnected.connection_epoch, lease.connection_epoch + 1);
     }
 
     #[test]
