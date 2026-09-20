@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0c111a" />
+    <meta
+      name="description"
+      content="Single-player browser tech demo for the mmorpg repository."
+    />
+    <title>MMORPG · world tech demo</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="world" aria-label="3D world tech demo"></canvas>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">MMORPG / browser tech demo</p>
+          <h1>Greyhaven Outpost</h1>
+        </div>
+        <div class="status" id="status">Exploring</div>
+      </header>
+      <section class="hud" aria-label="Controls">
+        <p><kbd>WASD</kbd> move · <kbd>Shift</kbd> sprint · <kbd>E</kbd> interact</p>
+        <p id="objective">Reach the old waystone and activate it.</p>
+      </section>
+      <aside class="prompt" id="prompt" hidden></aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
