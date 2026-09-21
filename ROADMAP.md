@@ -78,6 +78,8 @@
 - Add account authentication and live zone routing; current sessions are anonymous.
 - [x] Share immutable collision geometry and player dimensions between the server and native client.
 - Extend this contract to authored visual assets and their provenance.
+- Consume pinned `3d-lab` procedural skeletal animation for two-bone IK, foot placement/locking, pelvis correction and surface-normal alignment against client-visible shared collision geometry; it remains presentation over server-owned movement and physics truth.
+- Add bounded motion warping for interactions and attacks only from server-owned target/cue data; warped presentation must not change authoritative transforms, hits, cooldowns, recovery, zone handoff or replay state.
 - Add optional shared-physics prediction and acknowledgement-based reconciliation.
 - Reuse `input-bindings` for bindings and `settings` for user configuration.
 - Reuse `asset-tooling` for processed authored assets and provenance.
