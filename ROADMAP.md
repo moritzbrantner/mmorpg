@@ -74,7 +74,8 @@
 - [x] Separate fixed demo ticks from interpolated render frames and bound presentation history.
 - [x] Connect a native wgpu/winit client to the shared WebTransport session protocol.
 - [x] Verify two clients share authoritative movement and key-release acknowledgements.
-- Add account authentication, reconnect/resume and live zone routing; current sessions are anonymous.
+- [x] Resume native sessions with retained player identity, increasing sequences and presentation reset.
+- Add account authentication and live zone routing; current sessions are anonymous.
 - [x] Share immutable collision geometry and player dimensions between the server and native client.
 - Extend this contract to authored visual assets and their provenance.
 - Add optional shared-physics prediction and acknowledgement-based reconciliation.
@@ -86,6 +87,7 @@
 
 - [x] Native wgpu game window with interpolated authoritative snapshots.
 - [x] Bounded network state, TLS trust, timeout and shutdown ownership.
+- [x] One bounded automatic resume attempt on transport interruption, with cancellable shutdown.
 - [x] Reproducible local host/client/GPU smoke harness.
 - Add Tauri only when launcher, login, patching and settings workflows need a webview shell.
 - Add platform packaging and Windows/macOS verification before distributing installers.

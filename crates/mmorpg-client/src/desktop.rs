@@ -1,4 +1,4 @@
-use crate::NetworkUpdate;
+use mmorpg_client::session::NetworkUpdate;
 use mmorpg_client::{ClientError, graphics::WindowRenderer, presentation::Presentation};
 use mmorpg_core::ZoneDefinition;
 use std::{
@@ -29,6 +29,7 @@ pub fn run(
         window: None,
         renderer: None,
         presentation: Presentation::new(player_id, definition, Instant::now()),
+        connection_epoch: None,
         input,
         updates,
         keys: HashSet::new(),
@@ -49,6 +50,7 @@ struct App {
     window: Option<Arc<Window>>,
     renderer: Option<WindowRenderer>,
     presentation: Presentation,
+    connection_epoch: Option<u32>,
     input: watch::Sender<[i8; 2]>,
     updates: watch::Receiver<NetworkUpdate>,
     keys: HashSet<KeyCode>,
@@ -143,7 +145,19 @@ impl ApplicationHandler for App {
                 let update = self.updates.borrow_and_update().clone();
                 match update {
                     NetworkUpdate::Waiting => {}
-                    NetworkUpdate::Snapshot(snapshot) => {
+                    NetworkUpdate::Reconnecting => {
+                        if let Some(window) = &self.window {
+                            window.set_title("MMORPG — reconnecting to world");
+                        }
+                    }
+                    NetworkUpdate::Snapshot {
+                        connection_epoch,
+                        snapshot,
+                    } => {
+                        if self.connection_epoch != Some(connection_epoch) {
+                            self.presentation.reset(now);
+                            self.connection_epoch = Some(connection_epoch);
+                        }
                         if let Err(error) = self.presentation.push((*snapshot).clone(), now) {
                             self.fail(event_loop, error);
                             return;

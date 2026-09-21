@@ -33,6 +33,12 @@ impl Presentation {
         }
     }
 
+    /// Start a new connection epoch without blending with obsolete samples.
+    pub fn reset(&mut self, now: Instant) {
+        self.history.clear();
+        self.latest_received = now;
+    }
+
     pub fn push(&mut self, snapshot: ZoneSnapshot, now: Instant) -> Result<bool, ClientError> {
         if snapshot.content_revision != self.definition.revision() {
             return Err("snapshot content revision mismatch".into());

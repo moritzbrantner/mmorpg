@@ -70,6 +70,7 @@ The workspace provides:
 - a runnable multi-zone host with one WebTransport routing surface and separate operational status;
 - a deliberately single-player GitHub Pages tech demo for a tiny explorable zone, consuming the pinned `3d-lab` renderer without introducing browser-side MMO authority;
 - strict Rust/browser snapshot v2 compatibility tests and bounded client interpolation;
+- native session resume with preserved player identity, command sequencing and connection-epoch resets;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
 
 The control-plane implementation in this slice is a **reference model**, not yet a production distributed consensus system. It exists to make ownership, epoch fencing and handoff idempotence executable before choosing storage or orchestration infrastructure.

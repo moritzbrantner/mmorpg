@@ -81,3 +81,15 @@ fn incompatible_content_zones_and_duplicate_entities_fail_closed() {
     duplicate.players.push(duplicate.players[0].clone());
     assert!(presentation.push(duplicate, now).is_err());
 }
+
+#[test]
+fn a_resumed_connection_discards_old_interpolation_even_when_ticks_regress() {
+    let now = Instant::now();
+    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    presentation.push(snapshot(100, [0, 50, 0]), now).unwrap();
+    presentation.push(snapshot(104, [400, 50, 0]), now).unwrap();
+    presentation.reset(now);
+    assert!(presentation.players(now).is_empty());
+    assert!(presentation.push(snapshot(2, [900, 50, 0]), now).unwrap());
+    assert_eq!(presentation.camera_target(now), [9.0, 0.5, 0.0]);
+}

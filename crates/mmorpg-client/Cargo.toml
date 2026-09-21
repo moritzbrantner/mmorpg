@@ -11,6 +11,7 @@ game-server.workspace = true
 mmorpg-core.workspace = true
 mmorpg-protocol.workspace = true
 tokio.workspace = true
+url = "=2.5.8"
 wtransport = { version = "=0.7.2", default-features = false, features = ["ring"] }
 wgpu = "=30.0.1"
 winit = "=0.30.12"

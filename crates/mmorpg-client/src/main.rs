@@ -3,22 +3,19 @@
 mod desktop;
 
 use mmorpg_client::{
-    ClientError, graphics::render_offscreen, network::ClientSession, presentation::Presentation,
+    ClientError,
+    graphics::render_offscreen,
+    network::ClientSession,
+    presentation::Presentation,
+    session::{NetworkUpdate, run_session},
 };
-use mmorpg_core::{ZoneId, ZoneSnapshot, outpost_definition};
+use mmorpg_core::{ZoneId, outpost_definition};
 use std::{
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::sync::{oneshot, watch};
-
-#[derive(Clone)]
-enum NetworkUpdate {
-    Waiting,
-    Snapshot(Arc<ZoneSnapshot>),
-    Failed(String),
-}
 
 struct Options {
     url: String,
@@ -76,7 +73,7 @@ fn main() -> Result<(), ClientError> {
     };
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
     let definition = outpost_definition();
-    let session = runtime.block_on(ClientSession::connect(
+    let mut session = runtime.block_on(ClientSession::connect(
         &options.url,
         options.certificate.as_deref(),
         options.zone_id,
@@ -85,13 +82,16 @@ fn main() -> Result<(), ClientError> {
     let player_id = session.player_id();
     if options.smoke {
         return runtime.block_on(async {
-            let snapshot = session.receive_snapshot().await?;
+            // Verify a fresh projection, then render the resumed authoritative world.
+            session.receive_snapshot().await?;
+            let snapshot = session.reconnect().await?;
+            let connection_epoch = session.connection_epoch();
             let tick = snapshot.tick;
             let mut presentation = Presentation::new(player_id, definition, Instant::now());
             presentation.push(snapshot, Instant::now())?;
             let now = Instant::now();
             let colors = render_offscreen(&presentation.scene(now), presentation.camera_target(now)).await?;
-            println!("{{\"event\":\"client_smoke_passed\",\"player_id\":{player_id},\"tick\":{tick},\"rendered_colors\":{colors}}}");
+            println!("{{\"event\":\"client_smoke_passed\",\"player_id\":{player_id},\"tick\":{tick},\"connection_epoch\":{connection_epoch},\"rendered_colors\":{colors}}}");
             Ok(())
         });
     }
@@ -131,31 +131,6 @@ fn main() -> Result<(), ClientError> {
         Ok::<(), ClientError>(())
     })?;
     result
-}
-
-async fn run_session(
-    mut session: ClientSession,
-    input: watch::Receiver<[i8; 2]>,
-    updates: &watch::Sender<NetworkUpdate>,
-    mut shutdown: oneshot::Receiver<()>,
-) -> Result<(), ClientError> {
-    let mut heartbeat = tokio::time::interval(Duration::from_millis(50));
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut last_snapshot = Instant::now();
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => return Ok(()),
-            _ = heartbeat.tick() => {
-                if last_snapshot.elapsed() > Duration::from_secs(5) { return Err("server snapshots stopped".into()); }
-                let [x, z] = *input.borrow();
-                session.send_movement(x, z)?;
-            }
-            snapshot = session.receive_snapshot() => {
-                last_snapshot = Instant::now();
-                updates.send_replace(NetworkUpdate::Snapshot(Arc::new(snapshot?)));
-            }
-        }
-    }
 }
 
 #[cfg(test)]

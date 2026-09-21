@@ -6,7 +6,7 @@ use mmorpg_core::{ZoneId, outpost_definition};
 use std::{net::UdpSocket, time::Duration};
 
 #[tokio::test]
-async fn two_real_clients_share_server_authority_and_reject_wrong_content() {
+async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
     let temporary = tempfile::tempdir().unwrap();
     let certificate = temporary.path().join("cert.pem");
     let key = temporary.path().join("key.pem");
@@ -93,9 +93,62 @@ async fn two_real_clients_share_server_authority_and_reject_wrong_content() {
             stopped,
             "key release must become authoritative and acknowledged"
         );
-        let incompatible =
+        // Commands may have reached the server even if their ACK was lost.
+        // Preserve the highest sent sequence across connection replacement.
+        for _ in 0..32 {
+            first.send_movement(0, 0)?;
+        }
+        let player_id = first.player_id();
+        let previous_epoch = first.connection_epoch();
+        let resumed = first.reconnect().await?;
+        assert_eq!(first.player_id(), player_id);
+        assert_eq!(first.connection_epoch(), previous_epoch + 1);
+        assert!(resumed.acknowledged_sequence >= 35);
+        let resumed_player = resumed
+            .players
+            .iter()
+            .find(|p| p.player_id == player_id)
+            .unwrap();
+        assert!(
+            resumed_player.position[2] < start[2],
+            "resume must retain movement state"
+        );
+        assert_eq!(resumed_player.velocity, [0; 3]);
+        assert_eq!(
+            resumed.players.len(),
+            2,
+            "resume must not admit another player"
+        );
+        // A second successful resume needs the newly rotated token.
+        let again = first.reconnect().await?;
+        assert_eq!(first.connection_epoch(), previous_epoch + 2);
+        assert!(again.acknowledged_sequence > resumed.acknowledged_sequence);
+        first.send_movement(0, 1)?;
+        let mut resumed_movement = false;
+        for _ in 0..30 {
+            let snapshot = second.receive_snapshot().await?;
+            if snapshot
+                .players
+                .iter()
+                .any(|p| p.player_id == player_id && p.velocity[2] > 0)
+            {
+                resumed_movement = true;
+                break;
+            }
+        }
+        assert!(
+            resumed_movement,
+            "resumed commands must reach the same authoritative player"
+        );
+        let mut incompatible =
             ClientSession::connect(&url, Some(&certificate), zone_id, revision + 1).await?;
-        assert!(incompatible.receive_snapshot().await.is_err());
+        let incompatible_error = incompatible.receive_snapshot().await.unwrap_err();
+        assert!(!incompatible.can_reconnect(&incompatible_error).await);
+        assert!(incompatible.reconnect().await.is_err());
+        assert_eq!(
+            incompatible.reconnect().await.unwrap_err().to_string(),
+            "session resume is unavailable after an incomplete attempt"
+        );
         let unrelated_identity = wtransport::Identity::self_signed(["localhost"]).unwrap();
         let wrong_certificate = temporary.path().join("wrong-cert.pem");
         std::fs::write(
@@ -108,6 +161,8 @@ async fn two_real_clients_share_server_authority_and_reject_wrong_content() {
                 .await
                 .is_err()
         );
+        verify_automatic_resume(first).await?;
+        verify_shutdown_during_resume(second).await?;
         Ok::<(), ClientError>(())
     })
     .await;
@@ -118,4 +173,69 @@ async fn two_real_clients_share_server_authority_and_reject_wrong_content() {
         .unwrap()
         .unwrap();
     result.unwrap().unwrap();
+}
+
+async fn verify_automatic_resume(session: ClientSession) -> Result<(), ClientError> {
+    use mmorpg_client::session::{NetworkUpdate, run_session};
+    use tokio::sync::{oneshot, watch};
+    let player_id = session.player_id();
+    let epoch = session.connection_epoch();
+    session.disconnect();
+    let (_input, input) = watch::channel([0, 0]);
+    let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
+    let (shutdown, stopped) = oneshot::channel();
+    // JoinSet aborts its owned task on every early-return/panic path.
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(async move { run_session(session, input, &updates, stopped).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            receiver.changed().await?;
+            if let NetworkUpdate::Snapshot {
+                connection_epoch,
+                snapshot,
+            } = &*receiver.borrow_and_update()
+            {
+                assert_eq!(*connection_epoch, epoch + 1);
+                assert!(snapshot.players.iter().any(|p| p.player_id == player_id));
+                break;
+            }
+        }
+        Ok::<(), ClientError>(())
+    })
+    .await??;
+    shutdown
+        .send(())
+        .map_err(|_| "worker exited before shutdown")?;
+    tokio::time::timeout(Duration::from_secs(1), tasks.join_next())
+        .await?
+        .ok_or("missing worker")???;
+    Ok(())
+}
+
+async fn verify_shutdown_during_resume(session: ClientSession) -> Result<(), ClientError> {
+    use mmorpg_client::session::{NetworkUpdate, run_session};
+    use tokio::sync::{oneshot, watch};
+    session.disconnect();
+    let (_input, input) = watch::channel([0, 0]);
+    let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
+    let (shutdown, stopped) = oneshot::channel();
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(async move { run_session(session, input, &updates, stopped).await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            receiver.changed().await?;
+            if matches!(*receiver.borrow_and_update(), NetworkUpdate::Reconnecting) {
+                break;
+            }
+        }
+        Ok::<(), ClientError>(())
+    })
+    .await??;
+    shutdown
+        .send(())
+        .map_err(|_| "worker exited before shutdown")?;
+    tokio::time::timeout(Duration::from_secs(1), tasks.join_next())
+        .await?
+        .ok_or("missing worker")???;
+    Ok(())
 }
