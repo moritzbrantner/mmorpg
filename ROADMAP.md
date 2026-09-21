@@ -21,7 +21,7 @@
 
 - Turn the in-memory reference model into a networked service boundary.
 - [x] Add deterministic lease TTL/renewal and fail-closed expiry semantics to the reference model.
-- Add host registration/heartbeats and require live host registration for placement.
+- [x] Add host registration/heartbeats and require live host registration for placement.
 - Persist lease epochs transactionally so restart cannot resurrect stale ownership.
 - Keep the backing store/provider replaceable behind the control-plane contract.
 - [x] Fence reference runtime operations against current directory authority and independent lease time.
