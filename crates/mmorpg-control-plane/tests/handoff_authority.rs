@@ -20,8 +20,12 @@ fn registered_hosts() -> HostRegistry {
 fn lease_renewal_preserves_handoff_identity_and_retries() {
     let mut directory = ZoneDirectory::new(10).unwrap();
     let hosts = registered_hosts();
-    let source = directory.assign(ZoneId::new(1), host("a"), &hosts, 0).unwrap();
-    let destination = directory.assign(ZoneId::new(2), host("b"), &hosts, 0).unwrap();
+    let source = directory
+        .assign(ZoneId::new(1), host("a"), &hosts, 0)
+        .unwrap();
+    let destination = directory
+        .assign(ZoneId::new(2), host("b"), &hosts, 0)
+        .unwrap();
     let mut ticket = HandoffTicket {
         transfer_id: TransferId::new(7),
         entity_id: EntityId::new(90),
@@ -54,8 +58,12 @@ fn lease_renewal_preserves_handoff_identity_and_retries() {
 fn an_entity_cannot_prepare_two_concurrent_transfers() {
     let mut directory = ZoneDirectory::new(10).unwrap();
     let hosts = registered_hosts();
-    let source = directory.assign(ZoneId::new(1), host("a"), &hosts, 0).unwrap();
-    let destination = directory.assign(ZoneId::new(2), host("b"), &hosts, 0).unwrap();
+    let source = directory
+        .assign(ZoneId::new(1), host("a"), &hosts, 0)
+        .unwrap();
+    let destination = directory
+        .assign(ZoneId::new(2), host("b"), &hosts, 0)
+        .unwrap();
     let mut ticket = HandoffTicket {
         transfer_id: TransferId::new(7),
         entity_id: EntityId::new(90),
@@ -96,8 +104,12 @@ fn failed_assignment_does_not_consume_an_epoch_or_remove_a_lease() {
 fn retrying_a_committed_transfer_does_not_release_a_newer_reservation() {
     let mut directory = ZoneDirectory::new(10).unwrap();
     let hosts = registered_hosts();
-    let source = directory.assign(ZoneId::new(1), host("a"), &hosts, 0).unwrap();
-    let destination = directory.assign(ZoneId::new(2), host("b"), &hosts, 0).unwrap();
+    let source = directory
+        .assign(ZoneId::new(1), host("a"), &hosts, 0)
+        .unwrap();
+    let destination = directory
+        .assign(ZoneId::new(2), host("b"), &hosts, 0)
+        .unwrap();
     let first = HandoffTicket {
         transfer_id: TransferId::new(7),
         entity_id: EntityId::new(90),
