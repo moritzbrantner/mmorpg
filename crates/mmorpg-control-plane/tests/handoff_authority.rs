@@ -76,12 +76,16 @@ fn failed_assignment_does_not_consume_an_epoch_or_remove_a_lease() {
     let zone = ZoneId::new(1);
     let lease = directory.assign(zone, host("a"), &hosts, 0).unwrap();
     let floor = directory.epoch_floor_snapshot();
-    assert!(directory.assign(zone, host("b"), &hosts, u64::MAX).is_err());
+    assert!(
+        directory
+            .assign(zone, host("b"), &hosts, u64::MAX - 1)
+            .is_err()
+    );
     assert_eq!(directory.epoch_floor_snapshot(), floor);
     assert_eq!(directory.lease(zone), Some(&lease));
     assert!(
         directory
-            .reassign(zone, lease.epoch, host("b"), &hosts, u64::MAX)
+            .reassign(zone, lease.epoch, host("b"), &hosts, u64::MAX - 1)
             .is_err()
     );
     assert_eq!(directory.epoch_floor_snapshot(), floor);
