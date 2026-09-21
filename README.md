@@ -63,8 +63,8 @@ The workspace provides:
 - [deterministic visibility workloads](docs/INTEREST_WORKLOADS.md) with wire parity and snapshot-size evidence;
 - an explicit `game-server::GameSimulation` adapter;
 - deterministic mapping from `ZoneId` to `game-server::MatchId`;
-- a provider-neutral in-memory control-plane reference model with fenced, expiring zone leases;
-- deterministic lease renewal/expiry and a restartable fencing-epoch floor contract;
+- a provider-neutral in-memory control-plane reference model with heartbeat-gated host placement and fenced, expiring zone leases;
+- deterministic host registration/heartbeat expiry, lease renewal/expiry, and a restartable fencing-epoch floor contract;
 - idempotent prepare/accept/commit handoff metadata that survives lease renewal and reserves one transfer per entity;
 - a fenced runtime interface that rejects expired/stale owners before commands, admission, ticks, or publication in the reference model;
 - a runnable multi-zone host with one WebTransport routing surface and separate operational status;
@@ -73,7 +73,7 @@ The workspace provides:
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
 
-The control-plane implementation in this slice is a **reference model**, not yet a production distributed consensus system. It exists to make ownership, epoch fencing and handoff idempotence executable before choosing storage or orchestration infrastructure.
+The control-plane implementation in this slice is a **reference model**, not yet a production distributed consensus system. Host registration is placement eligibility only: a missed heartbeat blocks new assignment to that host but does not revoke an already-issued zone lease. Existing lease deadlines and fencing epochs remain the authority boundary. The model exists to make ownership, liveness-sensitive placement, epoch fencing and handoff idempotence executable before choosing storage or orchestration infrastructure.
 
 ## Native multiplayer client
 

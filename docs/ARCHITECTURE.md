@@ -8,7 +8,7 @@ The scaling unit is an authoritative zone. Each zone runs one deterministic phys
 | --- | --- | --- |
 | Zone simulation | Fixed ticks, ordered players, capacity, sequenced movement, interest projections | Character abilities, NPCs, combat, inventory, quests |
 | Physics | Pinned engine, shared playable outpost, validated static collision content, gravity, velocity-preserving recovery | Authored content pipeline, character controller, workload limits |
-| Ownership | Expiring fenced directory; `FencedZoneRuntime` checks every reference-runtime operation | Durable linearizable directory, local host permits, lease-aware network serving |
+| Ownership | Expiring fenced directory; heartbeat-gated host placement; `FencedZoneRuntime` checks every reference-runtime operation | Durable linearizable directory, host-incarnation/local permits, lease-aware network serving |
 | Handoff | Idempotent metadata, renewal-safe identity, one active transfer per entity | Frozen state export, staged import, activation/retirement, crash reconciliation |
 | Transport | Shared sessions, reconnect, WebTransport, multi-zone host, graceful recovery | Authentication, durable character binding, fleet routing |
 | Graphics | Native wgpu client, shared mesh/camera models, live WebTransport snapshots, bounded interpolation; separate offline browser demo | Authored assets, character animation, prediction/reconciliation |
@@ -42,7 +42,7 @@ Two clocks have different purposes:
 - simulation ticks advance deterministic gameplay;
 - control-plane time advances lease validity even when a simulation stalls.
 
-The reference caller supplies monotonic control-plane time. `FencedZoneRuntime::execute` checks that time and the current directory grant before admission, commands, ticks, reconnect, or publication. An immutable directory borrow spans the synchronous operation, so reassignment cannot interleave with it in this in-process model. Regressing time fails closed. The callback is trusted composition code and must not extract the runtime or defer authoritative effects past the checked operation.
+The reference caller supplies monotonic control-plane time. Host registrations use that same independent time domain: registration and heartbeat produce bounded liveness windows, and assignment/reassignment require the destination host to be live at the placement instant. Heartbeat expiry is deliberately not a second revocation mechanism; an already-issued zone lease remains authoritative until its own deadline or reassignment fences it. `FencedZoneRuntime::execute` checks control-plane time and the current directory grant before admission, commands, ticks, reconnect, or publication. An immutable directory borrow spans the synchronous operation, so reassignment cannot interleave with it in this in-process model. Regressing time fails closed. The callback is trusted composition code and must not extract the runtime or defer authoritative effects past the checked operation.
 
 A production adapter must not query a distributed database in the simulation hot loop. It needs locally cached, bounded authority permits whose deadlines are conservatively derived from the granting service and a monotonic clock. Failure to renew stops admission, simulation and publication. Revocation cannot depend on a message reaching a partitioned old host.
 

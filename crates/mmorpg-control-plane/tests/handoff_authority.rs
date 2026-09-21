@@ -1,5 +1,6 @@
 use mmorpg_control_plane::{
-    EntityId, HandoffPhase, HandoffRegistry, HandoffTicket, HostId, TransferId, ZoneDirectory,
+    EntityId, HandoffPhase, HandoffRegistry, HandoffTicket, HostId, HostRegistry, TransferId,
+    ZoneDirectory,
 };
 use mmorpg_core::ZoneId;
 
@@ -7,11 +8,24 @@ fn host(name: &str) -> HostId {
     HostId::new(name).unwrap()
 }
 
+fn registered_hosts() -> HostRegistry {
+    let mut hosts = HostRegistry::new(u64::MAX).unwrap();
+    for name in ["a", "b"] {
+        hosts.register(host(name), 0).unwrap();
+    }
+    hosts
+}
+
 #[test]
 fn lease_renewal_preserves_handoff_identity_and_retries() {
     let mut directory = ZoneDirectory::new(10).unwrap();
-    let source = directory.assign(ZoneId::new(1), host("a"), 0).unwrap();
-    let destination = directory.assign(ZoneId::new(2), host("b"), 0).unwrap();
+    let hosts = registered_hosts();
+    let source = directory
+        .assign(ZoneId::new(1), host("a"), &hosts, 0)
+        .unwrap();
+    let destination = directory
+        .assign(ZoneId::new(2), host("b"), &hosts, 0)
+        .unwrap();
     let mut ticket = HandoffTicket {
         transfer_id: TransferId::new(7),
         entity_id: EntityId::new(90),
@@ -43,8 +57,13 @@ fn lease_renewal_preserves_handoff_identity_and_retries() {
 #[test]
 fn an_entity_cannot_prepare_two_concurrent_transfers() {
     let mut directory = ZoneDirectory::new(10).unwrap();
-    let source = directory.assign(ZoneId::new(1), host("a"), 0).unwrap();
-    let destination = directory.assign(ZoneId::new(2), host("b"), 0).unwrap();
+    let hosts = registered_hosts();
+    let source = directory
+        .assign(ZoneId::new(1), host("a"), &hosts, 0)
+        .unwrap();
+    let destination = directory
+        .assign(ZoneId::new(2), host("b"), &hosts, 0)
+        .unwrap();
     let mut ticket = HandoffTicket {
         transfer_id: TransferId::new(7),
         entity_id: EntityId::new(90),
@@ -61,15 +80,20 @@ fn an_entity_cannot_prepare_two_concurrent_transfers() {
 #[test]
 fn failed_assignment_does_not_consume_an_epoch_or_remove_a_lease() {
     let mut directory = ZoneDirectory::new(10).unwrap();
+    let hosts = registered_hosts();
     let zone = ZoneId::new(1);
-    let lease = directory.assign(zone, host("a"), 0).unwrap();
+    let lease = directory.assign(zone, host("a"), &hosts, 0).unwrap();
     let floor = directory.epoch_floor_snapshot();
-    assert!(directory.assign(zone, host("b"), u64::MAX).is_err());
+    assert!(
+        directory
+            .assign(zone, host("b"), &hosts, u64::MAX - 1)
+            .is_err()
+    );
     assert_eq!(directory.epoch_floor_snapshot(), floor);
     assert_eq!(directory.lease(zone), Some(&lease));
     assert!(
         directory
-            .reassign(zone, lease.epoch, host("b"), u64::MAX)
+            .reassign(zone, lease.epoch, host("b"), &hosts, u64::MAX - 1)
             .is_err()
     );
     assert_eq!(directory.epoch_floor_snapshot(), floor);
@@ -79,8 +103,13 @@ fn failed_assignment_does_not_consume_an_epoch_or_remove_a_lease() {
 #[test]
 fn retrying_a_committed_transfer_does_not_release_a_newer_reservation() {
     let mut directory = ZoneDirectory::new(10).unwrap();
-    let source = directory.assign(ZoneId::new(1), host("a"), 0).unwrap();
-    let destination = directory.assign(ZoneId::new(2), host("b"), 0).unwrap();
+    let hosts = registered_hosts();
+    let source = directory
+        .assign(ZoneId::new(1), host("a"), &hosts, 0)
+        .unwrap();
+    let destination = directory
+        .assign(ZoneId::new(2), host("b"), &hosts, 0)
+        .unwrap();
     let first = HandoffTicket {
         transfer_id: TransferId::new(7),
         entity_id: EntityId::new(90),
