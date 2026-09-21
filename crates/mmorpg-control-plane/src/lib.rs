@@ -927,7 +927,7 @@ mod tests {
 
         let mut restored = ZoneDirectory::from_epoch_floor(10, snapshot).unwrap();
         let second = restored
-            .assign(zone_id, host("host-b"), &hosts, &hosts, 100)
+            .assign(zone_id, host("host-b"), &hosts, 100)
             .unwrap();
 
         assert_eq!(second.epoch, first.epoch + 1);
