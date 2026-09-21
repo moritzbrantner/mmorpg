@@ -106,11 +106,7 @@ impl HostRegistry {
             .collect()
     }
 
-    pub fn ensure_live(
-        &self,
-        host_id: &HostId,
-        now_tick: u64,
-    ) -> Result<(), ControlPlaneError> {
+    pub fn ensure_live(&self, host_id: &HostId, now_tick: u64) -> Result<(), ControlPlaneError> {
         let registration = self
             .registrations
             .get(host_id)
@@ -721,7 +717,9 @@ mod tests {
         let zone_id = ZoneId::new(10);
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let first = directory.assign(zone_id, host("host-a"), &hosts, 0).unwrap();
+        let first = directory
+            .assign(zone_id, host("host-a"), &hosts, 0)
+            .unwrap();
         let second = directory
             .reassign(zone_id, first.epoch, host("host-b"), &hosts, 1)
             .unwrap();
@@ -738,8 +736,12 @@ mod tests {
     fn handoff_phases_are_idempotent_for_the_same_transfer() {
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let source = directory.assign(ZoneId::new(1), host("host-a"), &hosts, 0).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b"), &hosts, 0).unwrap();
+        let source = directory
+            .assign(ZoneId::new(1), host("host-a"), &hosts, 0)
+            .unwrap();
+        let destination = directory
+            .assign(ZoneId::new(2), host("host-b"), &hosts, 0)
+            .unwrap();
         let ticket = HandoffTicket {
             transfer_id: TransferId::new(77),
             entity_id: EntityId::new(9001),
@@ -786,8 +788,12 @@ mod tests {
     fn stale_source_epoch_cannot_accept_a_transfer() {
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let source = directory.assign(ZoneId::new(1), host("host-a"), &hosts, 0).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b"), &hosts, 0).unwrap();
+        let source = directory
+            .assign(ZoneId::new(1), host("host-a"), &hosts, 0)
+            .unwrap();
+        let destination = directory
+            .assign(ZoneId::new(2), host("host-b"), &hosts, 0)
+            .unwrap();
         let mut registry = HandoffRegistry::default();
         registry
             .prepare(
@@ -816,8 +822,12 @@ mod tests {
     fn stale_destination_epoch_cannot_commit_a_transfer() {
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let source = directory.assign(ZoneId::new(1), host("host-a"), &hosts, 0).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b"), &hosts, 0).unwrap();
+        let source = directory
+            .assign(ZoneId::new(1), host("host-a"), &hosts, 0)
+            .unwrap();
+        let destination = directory
+            .assign(ZoneId::new(2), host("host-b"), &hosts, 0)
+            .unwrap();
         let mut registry = HandoffRegistry::default();
         registry
             .prepare(
@@ -836,7 +846,13 @@ mod tests {
             .unwrap();
 
         directory
-            .reassign(destination.zone_id, destination.epoch, host("host-c"), &hosts, 1)
+            .reassign(
+                destination.zone_id,
+                destination.epoch,
+                host("host-c"),
+                &hosts,
+                1,
+            )
             .unwrap();
 
         assert!(matches!(
@@ -849,8 +865,12 @@ mod tests {
     fn stale_destination_epoch_cannot_accept_a_transfer() {
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let source = directory.assign(ZoneId::new(1), host("host-a"), &hosts, 0).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b"), &hosts, 0).unwrap();
+        let source = directory
+            .assign(ZoneId::new(1), host("host-a"), &hosts, 0)
+            .unwrap();
+        let destination = directory
+            .assign(ZoneId::new(2), host("host-b"), &hosts, 0)
+            .unwrap();
         let mut registry = HandoffRegistry::default();
         registry
             .prepare(
@@ -866,7 +886,13 @@ mod tests {
             .unwrap();
 
         directory
-            .reassign(destination.zone_id, destination.epoch, host("host-c"), &hosts, 1)
+            .reassign(
+                destination.zone_id,
+                destination.epoch,
+                host("host-c"),
+                &hosts,
+                1,
+            )
             .unwrap();
 
         assert!(matches!(
@@ -880,7 +906,9 @@ mod tests {
         let zone_id = ZoneId::new(7);
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let lease = directory.assign(zone_id, host("host-a"), &hosts, 5).unwrap();
+        let lease = directory
+            .assign(zone_id, host("host-a"), &hosts, 5)
+            .unwrap();
 
         assert_eq!(lease.expires_at_tick, 15);
         assert!(directory.ensure_current(&lease, 14).is_ok());
@@ -906,9 +934,13 @@ mod tests {
         let zone_id = ZoneId::new(8);
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let first = directory.assign(zone_id, host("host-a"), &hosts, 0).unwrap();
+        let first = directory
+            .assign(zone_id, host("host-a"), &hosts, 0)
+            .unwrap();
 
-        let second = directory.assign(zone_id, host("host-b"), &hosts, 10).unwrap();
+        let second = directory
+            .assign(zone_id, host("host-b"), &hosts, 10)
+            .unwrap();
 
         assert_eq!(second.epoch, first.epoch + 1);
         assert!(matches!(
@@ -922,7 +954,9 @@ mod tests {
         let zone_id = ZoneId::new(9);
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let first = directory.assign(zone_id, host("host-a"), &hosts, 0).unwrap();
+        let first = directory
+            .assign(zone_id, host("host-a"), &hosts, 0)
+            .unwrap();
         let snapshot = directory.epoch_floor_snapshot();
 
         let mut restored = ZoneDirectory::from_epoch_floor(10, snapshot).unwrap();
@@ -937,8 +971,12 @@ mod tests {
     fn expired_handoff_cannot_advance() {
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let source = directory.assign(ZoneId::new(1), host("host-a"), &hosts, 0).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b"), &hosts, 0).unwrap();
+        let source = directory
+            .assign(ZoneId::new(1), host("host-a"), &hosts, 0)
+            .unwrap();
+        let destination = directory
+            .assign(ZoneId::new(2), host("host-b"), &hosts, 0)
+            .unwrap();
         let mut registry = HandoffRegistry::default();
         registry
             .prepare(
@@ -963,8 +1001,12 @@ mod tests {
     fn transfer_ids_cannot_be_reused_for_different_content() {
         let mut directory = ZoneDirectory::new(10).unwrap();
         let hosts = registered_hosts(0);
-        let source = directory.assign(ZoneId::new(1), host("host-a"), &hosts, 0).unwrap();
-        let destination = directory.assign(ZoneId::new(2), host("host-b"), &hosts, 0).unwrap();
+        let source = directory
+            .assign(ZoneId::new(1), host("host-a"), &hosts, 0)
+            .unwrap();
+        let destination = directory
+            .assign(ZoneId::new(2), host("host-b"), &hosts, 0)
+            .unwrap();
         let mut registry = HandoffRegistry::default();
 
         registry
