@@ -10,6 +10,7 @@ import {
   hatOption,
   isHatStyle,
   loadCharacter,
+  rotateYawOffset,
   saveCharacter,
   type CharacterAppearance,
   type HatStyle,
@@ -191,6 +192,7 @@ function dynamicNodes(position: Vector3): RendererSceneNode[] {
   const z = position[2] / UNITS_PER_METRE;
   const halfYaw = facing / 2;
   const rotationQuaternion: RotationQuaternion = [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)];
+  const [swordOffsetX, swordOffsetZ] = rotateYawOffset(facing, 0.58, 0.04);
   return [
     {
       id: "player",
@@ -214,7 +216,10 @@ function dynamicNodes(position: Vector3): RendererSceneNode[] {
       id: "player-sword",
       geometry: { kind: "box", size: [0.12, 1.35, 0.08] },
       color: "#c7b66d",
-      transform: { translation: [x + 0.58, y + 0.15, z + 0.04], rotationQuaternion },
+      transform: {
+        translation: [x + swordOffsetX, y + 0.15, z + swordOffsetZ],
+        rotationQuaternion,
+      },
     },
     ...worldHatNodes(x, y, z, rotationQuaternion, characterAppearance.hat),
     {
