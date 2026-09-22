@@ -5,6 +5,7 @@ import {
   HAT_OPTIONS,
   equipmentForAppearance,
   loadCharacter,
+  rotateYawOffset,
   saveCharacter,
   storageKeyForCharacter,
 } from "../src/character-customization.ts";
@@ -30,6 +31,18 @@ describe("character customization prototype", () => {
     const equipment = equipmentForAppearance(PREVIEW_CHARACTER, { hat: "ironcrest-helm" });
     expect(equipment[0]).toEqual({ slot: "Head", name: "Ironcrest Helm", accent: "#858e91" });
     expect(equipment.slice(1)).toEqual(PREVIEW_CHARACTER.equipment.slice(1));
+  });
+
+  test("rotates attachment offsets with the avatar yaw", () => {
+    expect(rotateYawOffset(0, 0.58, 0.04)).toEqual([0.58, 0.04]);
+
+    const quarterTurn = rotateYawOffset(Math.PI / 2, 0.58, 0.04);
+    expect(quarterTurn[0]).toBeCloseTo(0.04);
+    expect(quarterTurn[1]).toBeCloseTo(-0.58);
+
+    const halfTurn = rotateYawOffset(Math.PI, 0.58, 0.04);
+    expect(halfTurn[0]).toBeCloseTo(-0.58);
+    expect(halfTurn[1]).toBeCloseTo(-0.04);
   });
 
   test("round-trips a versioned character save by exact character identity", () => {
