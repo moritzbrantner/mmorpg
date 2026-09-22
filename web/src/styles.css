@@ -375,3 +375,259 @@ kbd {
   .topbar { top: .65rem; left: .65rem; right: .65rem; }
   .hud { left: .65rem; bottom: .65rem; max-width: calc(100vw - 1.3rem); }
 }
+
+
+/* Character customization MVP */
+.roster-panel {
+  top: 2.3rem;
+  width: min(22rem, 30vw);
+  transform: none;
+}
+
+.selection-actions {
+  width: min(22rem, 30vw);
+}
+
+.customization-block {
+  margin-top: .85rem;
+  padding-top: .8rem;
+  border-top: 1px solid rgb(255 255 255 / 8%);
+}
+
+.customization-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.customization-heading .panel-label { margin-bottom: .6rem; }
+.customization-heading > span {
+  color: #72817a;
+  font-size: .6rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.hat-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: .45rem;
+}
+
+.hat-option {
+  min-width: 0;
+  min-height: 5.1rem;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: .38rem;
+  padding: .5rem .3rem;
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 3%);
+  color: #b9c4be;
+  cursor: pointer;
+}
+
+.hat-option:hover { background: rgb(255 255 255 / 6%); }
+.hat-option:focus-visible { outline: 2px solid #e5cf86; outline-offset: 2px; }
+.hat-option.is-selected {
+  border-color: rgb(208 177 96 / 58%);
+  background: linear-gradient(180deg, rgb(183 148 70 / 18%), rgb(255 255 255 / 3%));
+  color: #f0e5c9;
+  box-shadow: inset 0 -2px var(--gold);
+}
+
+.hat-option > span:last-child {
+  overflow: hidden;
+  width: 100%;
+  font-size: .67rem;
+  font-weight: 650;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hat-icon {
+  position: relative;
+  width: 2.75rem;
+  height: 2rem;
+  display: block;
+}
+
+.hat-icon::before,
+.hat-icon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.hat-icon--hood::before {
+  top: .08rem;
+  width: 1.75rem;
+  height: 1.7rem;
+  border: 1px solid #d0ddd5;
+  border-radius: 52% 52% 38% 38%;
+  background: #9fafaa;
+  box-shadow: inset 0 -.45rem rgb(55 72 67 / 42%);
+}
+.hat-icon--hood::after {
+  bottom: .02rem;
+  width: 1.08rem;
+  height: .75rem;
+  border-radius: 50%;
+  background: #2c3b37;
+}
+
+.hat-icon--cap::before {
+  top: .34rem;
+  width: 1.55rem;
+  height: 1rem;
+  border-radius: 50% 50% 34% 34%;
+  background: #627a58;
+}
+.hat-icon--cap::after {
+  top: 1.18rem;
+  width: 2.45rem;
+  height: .25rem;
+  border-radius: 50%;
+  background: #7f966e;
+  box-shadow: .45rem .08rem 0 -.05rem #7f966e;
+}
+
+.hat-icon--helm::before {
+  top: .3rem;
+  width: 1.75rem;
+  height: 1.45rem;
+  border: 1px solid #b4babc;
+  border-radius: 50% 50% 25% 25%;
+  background: linear-gradient(90deg, #747d80, #a1aaad 52%, #6e777a);
+}
+.hat-icon--helm::after {
+  top: .02rem;
+  width: .18rem;
+  height: .78rem;
+  background: #b9c0c2;
+  box-shadow: 0 .92rem 0 .42rem rgb(95 104 107 / 42%);
+}
+
+.save-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .45rem;
+  margin-top: .7rem;
+}
+
+.save-actions button {
+  padding: .58rem .5rem;
+  border: 1px solid rgb(218 195 129 / 24%);
+  background: rgb(255 255 255 / 4%);
+  color: #d9dfdb;
+  font-size: .69rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.save-actions button:hover { background: rgb(183 148 70 / 12%); }
+.save-actions button:focus-visible { outline: 2px solid #e5cf86; outline-offset: 2px; }
+
+.save-status {
+  min-height: 1.2rem;
+  margin: .55rem .1rem 0;
+  color: #85948d;
+  font-size: .63rem;
+  line-height: 1.35;
+}
+
+.fallback-head {
+  box-shadow: none;
+}
+
+.fallback-hat {
+  z-index: 2;
+}
+
+.character-select[data-hat="wayfarer-hood"] .fallback-hat {
+  top: .7rem;
+  left: 2.42rem;
+  width: 3.18rem;
+  height: 3.25rem;
+  border-radius: 52% 52% 38% 38%;
+  background: #a8bab1;
+  box-shadow: inset 0 -.72rem rgb(55 72 67 / 36%);
+}
+
+.character-select[data-hat="ranger-cap"] .fallback-hat {
+  top: .72rem;
+  left: 2.35rem;
+  width: 3.35rem;
+  height: 1.25rem;
+  border-radius: 50% 50% 28% 28%;
+  background: #627a58;
+  box-shadow: .45rem .88rem 0 -.46rem #7f966e, 0 .96rem 0 -.36rem #7f966e;
+}
+
+.character-select[data-hat="ironcrest-helm"] .fallback-hat {
+  top: .72rem;
+  left: 2.34rem;
+  width: 3.25rem;
+  height: 2.72rem;
+  border: 1px solid #aab0b2;
+  border-radius: 50% 50% 28% 28%;
+  background: linear-gradient(90deg, #747d80, #a1aaad 52%, #6e777a);
+  box-shadow: inset 0 -.75rem rgb(55 62 64 / 25%);
+}
+
+.character-select[data-hat="ironcrest-helm"] .fallback-hat::before {
+  content: "";
+  position: absolute;
+  top: -.75rem;
+  left: 50%;
+  width: .3rem;
+  height: 1rem;
+  transform: translateX(-50%);
+  background: #b9c0c2;
+}
+
+@media (max-width: 880px) {
+  .roster-panel {
+    top: 5.7rem;
+    right: 1.1rem;
+    width: min(20rem, calc(100vw - 2.2rem));
+    transform: none;
+  }
+
+  .selection-actions {
+    right: 1.1rem;
+    bottom: calc(39vh + 1.8rem);
+    width: min(20rem, calc(100vw - 2.2rem));
+  }
+
+  .hat-option { min-height: 4.4rem; }
+}
+
+@media (max-width: 640px) {
+  .roster-panel {
+    top: 5rem;
+    left: 1rem;
+    right: 1rem;
+    width: auto;
+  }
+
+  .customization-block {
+    margin-top: .55rem;
+    padding-top: .55rem;
+  }
+
+  .hat-option { min-height: 3.55rem; }
+  .hat-icon { display: none; }
+
+  .selection-actions {
+    right: 1rem;
+    bottom: calc(43vh + 1.2rem);
+    width: 15.5rem;
+  }
+
+  .save-status { display: none; }
+}
