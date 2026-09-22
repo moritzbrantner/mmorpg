@@ -635,9 +635,9 @@ impl<S: EpochFloorStore> EpochPersistedZoneDirectory<S> {
         hosts: &HostRegistry,
         now_tick: u64,
     ) -> Result<ZoneLease, EpochPersistedDirectoryError> {
-        let lease = self
-            .directory
-            .plan_reassign(zone_id, expected_epoch, host_id, hosts, now_tick)?;
+        let lease =
+            self.directory
+                .plan_reassign(zone_id, expected_epoch, host_id, hosts, now_tick)?;
         self.persist_epoch(&lease)?;
         self.directory.commit_lease(lease.clone());
         Ok(lease)
