@@ -14,7 +14,7 @@
     <main id="app">
       <canvas id="world" tabindex="-1" aria-label="3D MMORPG character and world preview"></canvas>
 
-      <section id="character-select" class="character-select" aria-labelledby="character-name">
+      <section id="character-select" class="character-select" data-hat="wayfarer-hood" aria-labelledby="character-name">
         <div class="selection-brand">
           <p class="eyebrow">MMORPG / Greyhaven realm</p>
           <p class="selection-title">Choose your character</p>
@@ -22,6 +22,7 @@
 
         <div class="character-stage-fallback" id="character-stage-fallback" aria-hidden="true">
           <span class="fallback-head"></span>
+          <span class="fallback-hat"></span>
           <span class="fallback-body"></span>
           <span class="fallback-shoulder fallback-shoulder-left"></span>
           <span class="fallback-shoulder fallback-shoulder-right"></span>
@@ -50,7 +51,7 @@
           </div>
         </section>
 
-        <aside class="roster-panel" aria-label="Character roster">
+        <aside class="roster-panel" aria-label="Character roster and customization">
           <p class="panel-label">Characters</p>
           <button class="roster-character is-selected" type="button" data-character-id="aelric-stormward" aria-pressed="true">
             <span class="roster-portrait">AS</span>
@@ -60,11 +61,33 @@
             </span>
             <span class="roster-check" aria-hidden="true">◆</span>
           </button>
-          <button class="new-character" type="button" disabled>
-            <span aria-hidden="true">＋</span>
-            <span>Create character</span>
-            <small>coming later</small>
-          </button>
+
+          <div class="customization-block">
+            <div class="customization-heading">
+              <p class="panel-label">Head style</p>
+              <span>MVP appearance</span>
+            </div>
+            <div class="hat-options" aria-label="Choose a hat">
+              <button class="hat-option is-selected" type="button" data-hat-style="wayfarer-hood" aria-pressed="true">
+                <span class="hat-icon hat-icon--hood" aria-hidden="true"></span>
+                <span>Hood</span>
+              </button>
+              <button class="hat-option" type="button" data-hat-style="ranger-cap" aria-pressed="false">
+                <span class="hat-icon hat-icon--cap" aria-hidden="true"></span>
+                <span>Ranger cap</span>
+              </button>
+              <button class="hat-option" type="button" data-hat-style="ironcrest-helm" aria-pressed="false">
+                <span class="hat-icon hat-icon--helm" aria-hidden="true"></span>
+                <span>Iron helm</span>
+              </button>
+            </div>
+
+            <div class="save-actions">
+              <button id="save-character" type="button">Save character</button>
+              <button id="load-character" type="button">Load saved</button>
+            </div>
+            <p id="save-status" class="save-status" aria-live="polite">Not saved yet.</p>
+          </div>
         </aside>
 
         <footer class="selection-actions">
@@ -76,7 +99,7 @@
             <span>Enter World</span>
             <small>Continue to Greyhaven</small>
           </button>
-          <p class="selection-note">Local preview character. Account-backed roster and durable equipment remain server-side roadmap work.</p>
+          <p class="selection-note">Prototype saves are local to this browser. Account-backed character identity and authoritative equipment remain server-side roadmap work.</p>
         </footer>
       </section>
 
