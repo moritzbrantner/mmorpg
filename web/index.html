@@ -3,24 +3,114 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0c111a" />
+    <meta name="theme-color" content="#11161c" />
     <meta
       name="description"
       content="Single-player browser tech demo for the mmorpg repository."
     />
-    <title>MMORPG · world tech demo</title>
+    <title>MMORPG · character selection</title>
   </head>
   <body>
     <main id="app">
-      <canvas id="world" aria-label="3D world tech demo"></canvas>
-      <header class="topbar">
+      <canvas id="world" tabindex="-1" aria-label="3D MMORPG character and world preview"></canvas>
+
+      <section id="character-select" class="character-select" data-hat="wayfarer-hood" aria-labelledby="character-name">
+        <div class="selection-brand">
+          <p class="eyebrow">MMORPG / Greyhaven realm</p>
+          <p class="selection-title">Choose your character</p>
+        </div>
+
+        <div class="character-stage-fallback" id="character-stage-fallback" aria-hidden="true">
+          <span class="fallback-head"></span>
+          <span class="fallback-hat"></span>
+          <span class="fallback-body"></span>
+          <span class="fallback-shoulder fallback-shoulder-left"></span>
+          <span class="fallback-shoulder fallback-shoulder-right"></span>
+          <span class="fallback-sword"></span>
+          <span class="fallback-pedestal"></span>
+        </div>
+
+        <section class="character-details" aria-label="Selected character">
+          <div class="character-identity">
+            <p class="selection-kicker">Selected character</p>
+            <h1 id="character-name">Aelric Stormward</h1>
+            <p id="character-subtitle" class="character-subtitle">Level 18 · Human Warden</p>
+          </div>
+
+          <div class="equipment-heading">
+            <span>Equipped</span>
+            <span class="preview-label">preview loadout</span>
+          </div>
+          <div id="equipment-list" class="equipment-list">
+            <article class="equipment-item"><span class="equipment-swatch"></span><span><small>Head</small><strong>Wayfarer's Hood</strong></span></article>
+            <article class="equipment-item"><span class="equipment-swatch"></span><span><small>Shoulders</small><strong>Greywatch Mantle</strong></span></article>
+            <article class="equipment-item"><span class="equipment-swatch"></span><span><small>Chest</small><strong>Warden's Brigandine</strong></span></article>
+            <article class="equipment-item"><span class="equipment-swatch"></span><span><small>Hands</small><strong>Ashwood Grips</strong></span></article>
+            <article class="equipment-item"><span class="equipment-swatch"></span><span><small>Feet</small><strong>Trailbound Boots</strong></span></article>
+            <article class="equipment-item"><span class="equipment-swatch"></span><span><small>Main hand</small><strong>Oathkeeper Blade</strong></span></article>
+          </div>
+        </section>
+
+        <aside class="roster-panel" aria-label="Character roster and customization">
+          <p class="panel-label">Characters</p>
+          <button class="roster-character is-selected" type="button" data-character-id="aelric-stormward" aria-pressed="true">
+            <span class="roster-portrait">AS</span>
+            <span class="roster-copy">
+              <strong>Aelric Stormward</strong>
+              <small>18 Warden · Greyhaven</small>
+            </span>
+            <span class="roster-check" aria-hidden="true">◆</span>
+          </button>
+
+          <div class="customization-block">
+            <div class="customization-heading">
+              <p class="panel-label">Head style</p>
+              <span>MVP appearance</span>
+            </div>
+            <div class="hat-options" aria-label="Choose a hat">
+              <button class="hat-option is-selected" type="button" data-hat-style="wayfarer-hood" aria-pressed="true">
+                <span class="hat-icon hat-icon--hood" aria-hidden="true"></span>
+                <span>Hood</span>
+              </button>
+              <button class="hat-option" type="button" data-hat-style="ranger-cap" aria-pressed="false">
+                <span class="hat-icon hat-icon--cap" aria-hidden="true"></span>
+                <span>Ranger cap</span>
+              </button>
+              <button class="hat-option" type="button" data-hat-style="ironcrest-helm" aria-pressed="false">
+                <span class="hat-icon hat-icon--helm" aria-hidden="true"></span>
+                <span>Iron helm</span>
+              </button>
+            </div>
+
+            <div class="save-actions">
+              <button id="save-character" type="button">Save character</button>
+              <button id="load-character" type="button">Load saved</button>
+            </div>
+            <p id="save-status" class="save-status" aria-live="polite">Not saved yet.</p>
+          </div>
+        </aside>
+
+        <footer class="selection-actions">
+          <div class="world-destination">
+            <small>Last location</small>
+            <strong id="character-location">Greyhaven Outpost</strong>
+          </div>
+          <button id="enter-world" class="enter-world" type="button">
+            <span>Enter World</span>
+            <small>Continue to Greyhaven</small>
+          </button>
+          <p class="selection-note">Prototype saves are local to this browser. Account-backed character identity and authoritative equipment remain server-side roadmap work.</p>
+        </footer>
+      </section>
+
+      <header class="topbar" data-world-ui hidden>
         <div>
           <p class="eyebrow">MMORPG / browser tech demo</p>
           <h1>Greyhaven Outpost</h1>
         </div>
         <div class="status" id="status">Exploring</div>
       </header>
-      <section class="hud" aria-label="Controls">
+      <section class="hud" data-world-ui aria-label="Controls" hidden>
         <p><kbd>WASD</kbd> move · <kbd>Shift</kbd> sprint · <kbd>E</kbd> interact</p>
         <p id="objective">Reach the old waystone and activate it.</p>
       </section>
