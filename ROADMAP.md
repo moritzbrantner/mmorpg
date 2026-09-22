@@ -22,7 +22,8 @@
 - Turn the in-memory reference model into a networked service boundary.
 - [x] Add deterministic lease TTL/renewal and fail-closed expiry semantics to the reference model.
 - [x] Add host registration/heartbeats and require live host registration for placement.
-- Persist lease epochs transactionally so restart cannot resurrect stale ownership.
+- [x] Put fencing-epoch advancement behind a provider-neutral compare-and-advance store contract; storage failure or concurrent allocation cannot acknowledge a lease.
+- Back that contract with durable linearizable storage and persist active ownership/deadlines before enabling restart-driven failover.
 - Keep the backing store/provider replaceable behind the control-plane contract.
 - [x] Fence reference runtime operations against current directory authority and independent lease time.
 - [x] Prove reassignment rejects old-owner commands, ticks, admission and publication.
