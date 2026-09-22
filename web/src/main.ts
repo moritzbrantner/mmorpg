@@ -5,6 +5,16 @@ import {
   type RendererSceneNode,
 } from "@moritzbrantner/three-d-renderer";
 import {
+  DEFAULT_CHARACTER_APPEARANCE,
+  equipmentForAppearance,
+  hatOption,
+  isHatStyle,
+  loadCharacter,
+  saveCharacter,
+  type CharacterAppearance,
+  type HatStyle,
+} from "./character-customization";
+import {
   PREVIEW_CHARACTER,
   enterPreviewWorld,
   initialEntryState,
@@ -28,11 +38,15 @@ const objective = requireElement<HTMLElement>("#objective");
 const status = requireElement<HTMLElement>("#status");
 const characterSelect = requireElement<HTMLElement>("#character-select");
 const enterWorldButton = requireElement<HTMLButtonElement>("#enter-world");
+const saveCharacterButton = requireElement<HTMLButtonElement>("#save-character");
+const loadCharacterButton = requireElement<HTMLButtonElement>("#load-character");
+const saveStatus = requireElement<HTMLElement>("#save-status");
 const equipmentList = requireElement<HTMLElement>("#equipment-list");
 const characterName = requireElement<HTMLElement>("#character-name");
 const characterSubtitle = requireElement<HTMLElement>("#character-subtitle");
 const characterLocation = requireElement<HTMLElement>("#character-location");
 const fallbackCharacter = requireElement<HTMLElement>("#character-stage-fallback");
+const hatButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-hat-style]")];
 const worldUi = [...document.querySelectorAll<HTMLElement>("[data-world-ui]")];
 
 const renderer = createThreeSceneRenderer(canvas, {
@@ -44,12 +58,16 @@ const renderer = createThreeSceneRenderer(canvas, {
 fallbackCharacter.hidden = true;
 
 type Vec2 = { x: number; z: number };
+type RotationQuaternion = [number, number, number, number];
+type LocalPoint = (x: number, y: number, z: number) => [number, number, number];
+
 const player: Vec2 = { x: -5.5, z: 4.5 };
 let facing = Math.PI * 0.15;
 let waystoneActive = false;
 let lastTime = performance.now();
 const keys = new Set<string>();
 let entryState: EntryState = initialEntryState();
+let characterAppearance: CharacterAppearance = { ...DEFAULT_CHARACTER_APPEARANCE };
 
 // Offline demo source. An online source supplies decoded player-scoped snapshots
 // to the same presentation buffer and sends input commands to the zone host.
@@ -172,7 +190,7 @@ function dynamicNodes(position: Vector3): RendererSceneNode[] {
   const y = position[1] / UNITS_PER_METRE;
   const z = position[2] / UNITS_PER_METRE;
   const halfYaw = facing / 2;
-  const rotationQuaternion: [number, number, number, number] = [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)];
+  const rotationQuaternion: RotationQuaternion = [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)];
   return [
     {
       id: "player",
@@ -198,6 +216,7 @@ function dynamicNodes(position: Vector3): RendererSceneNode[] {
       color: "#c7b66d",
       transform: { translation: [x + 0.58, y + 0.15, z + 0.04], rotationQuaternion },
     },
+    ...worldHatNodes(x, y, z, rotationQuaternion, characterAppearance.hat),
     {
       id: "waystone",
       geometry: { kind: "box", size: [0.9, 2.7, 0.75] },
@@ -213,12 +232,59 @@ function dynamicNodes(position: Vector3): RendererSceneNode[] {
   ];
 }
 
+function worldHatNodes(
+  x: number,
+  y: number,
+  z: number,
+  rotationQuaternion: RotationQuaternion,
+  hat: HatStyle,
+): RendererSceneNode[] {
+  if (hat === "wayfarer-hood") {
+    return [{
+      id: "player-hat-hood",
+      geometry: { kind: "cylinder", radius: 0.36, height: 0.2 },
+      color: "#b7c6bd",
+      transform: { translation: [x, y + 1.34, z], rotationQuaternion },
+    }];
+  }
+  if (hat === "ranger-cap") {
+    return [
+      {
+        id: "player-hat-cap-brim",
+        geometry: { kind: "cylinder", radius: 0.45, height: 0.08 },
+        color: "#6f875f",
+        transform: { translation: [x, y + 1.32, z], rotationQuaternion },
+      },
+      {
+        id: "player-hat-cap-crown",
+        geometry: { kind: "cylinder", radius: 0.29, height: 0.2 },
+        color: "#5d7351",
+        transform: { translation: [x, y + 1.42, z], rotationQuaternion },
+      },
+    ];
+  }
+  return [
+    {
+      id: "player-hat-helm",
+      geometry: { kind: "cylinder", radius: 0.35, height: 0.28 },
+      color: "#858e91",
+      transform: { translation: [x, y + 1.33, z], rotationQuaternion },
+    },
+    {
+      id: "player-hat-crest",
+      geometry: { kind: "box", size: [0.1, 0.36, 0.34] },
+      color: "#aab0b2",
+      transform: { translation: [x, y + 1.58, z], rotationQuaternion },
+    },
+  ];
+}
+
 function selectionCharacterNodes(now: number): RendererSceneNode[] {
   const baseX = -1.2;
   const idleYaw = Math.sin(now / 3400) * 0.16 - 0.18;
   const halfYaw = idleYaw / 2;
-  const rotationQuaternion: [number, number, number, number] = [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)];
-  const localPoint = (x: number, y: number, z: number): [number, number, number] => {
+  const rotationQuaternion: RotationQuaternion = [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)];
+  const localPoint: LocalPoint = (x, y, z) => {
     const cos = Math.cos(idleYaw);
     const sin = Math.sin(idleYaw);
     return [baseX + x * cos + z * sin, y, -x * sin + z * cos];
@@ -243,12 +309,7 @@ function selectionCharacterNodes(now: number): RendererSceneNode[] {
       color: "#c49b78",
       transform: { translation: localPoint(0, 2.48, 0), rotationQuaternion },
     },
-    {
-      id: "preview-hood",
-      geometry: { kind: "sphere", radius: 0.4 },
-      color: "#b7c6bd",
-      transform: { translation: localPoint(0, 2.56, 0.06), rotationQuaternion },
-    },
+    ...previewHatNodes(characterAppearance.hat, localPoint, rotationQuaternion),
     {
       id: "preview-face",
       geometry: { kind: "sphere", radius: 0.27 },
@@ -318,11 +379,63 @@ function selectionCharacterNodes(now: number): RendererSceneNode[] {
   ];
 }
 
-function renderCharacterDetails(character: CharacterPreview) {
+function previewHatNodes(
+  hat: HatStyle,
+  localPoint: LocalPoint,
+  rotationQuaternion: RotationQuaternion,
+): RendererSceneNode[] {
+  if (hat === "wayfarer-hood") {
+    return [{
+      id: "preview-hat-hood",
+      geometry: { kind: "sphere", radius: 0.4 },
+      color: "#b7c6bd",
+      transform: { translation: localPoint(0, 2.56, 0.06), rotationQuaternion },
+    }];
+  }
+  if (hat === "ranger-cap") {
+    return [
+      {
+        id: "preview-hat-cap-brim",
+        geometry: { kind: "cylinder", radius: 0.5, height: 0.08 },
+        color: "#6f875f",
+        transform: { translation: localPoint(0, 2.72, 0), rotationQuaternion },
+      },
+      {
+        id: "preview-hat-cap-crown",
+        geometry: { kind: "cylinder", radius: 0.31, height: 0.25 },
+        color: "#5d7351",
+        transform: { translation: localPoint(0, 2.84, 0.04), rotationQuaternion },
+      },
+    ];
+  }
+  return [
+    {
+      id: "preview-hat-helm",
+      geometry: { kind: "sphere", radius: 0.39 },
+      color: "#858e91",
+      transform: { translation: localPoint(0, 2.56, 0.04), rotationQuaternion },
+    },
+    {
+      id: "preview-hat-brow",
+      geometry: { kind: "box", size: [0.62, 0.1, 0.12] },
+      color: "#aab0b2",
+      transform: { translation: localPoint(0, 2.58, -0.33), rotationQuaternion },
+    },
+    {
+      id: "preview-hat-crest",
+      geometry: { kind: "box", size: [0.12, 0.44, 0.42] },
+      color: "#aab0b2",
+      transform: { translation: localPoint(0, 2.94, 0.04), rotationQuaternion },
+    },
+  ];
+}
+
+function renderCharacterDetails(character: CharacterPreview, appearance: CharacterAppearance) {
   characterName.textContent = character.name;
   characterSubtitle.textContent = `Level ${character.level} · ${character.race} ${character.className}`;
   characterLocation.textContent = character.location;
-  equipmentList.replaceChildren(...character.equipment.map((item) => {
+  const equipment = equipmentForAppearance(character, appearance);
+  equipmentList.replaceChildren(...equipment.map((item) => {
     const article = document.createElement("article");
     article.className = "equipment-item";
     const swatch = document.createElement("span");
@@ -337,6 +450,40 @@ function renderCharacterDetails(character: CharacterPreview) {
     article.append(swatch, copy);
     return article;
   }));
+}
+
+function applyAppearance(nextAppearance: CharacterAppearance, message: string) {
+  characterAppearance = { ...nextAppearance };
+  characterSelect.dataset.hat = characterAppearance.hat;
+  renderCharacterDetails(PREVIEW_CHARACTER, characterAppearance);
+  for (const button of hatButtons) {
+    const selected = button.dataset.hatStyle === characterAppearance.hat;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+  saveStatus.textContent = message;
+}
+
+function saveCurrentCharacter() {
+  try {
+    const saved = saveCharacter(localStorage, PREVIEW_CHARACTER.id, characterAppearance);
+    saveStatus.textContent = `Saved locally · ${hatOption(saved.appearance.hat).name}`;
+  } catch {
+    saveStatus.textContent = "Browser storage is unavailable; character was not saved.";
+  }
+}
+
+function loadSavedCharacter() {
+  try {
+    const saved = loadCharacter(localStorage, PREVIEW_CHARACTER.id);
+    if (!saved) {
+      saveStatus.textContent = "No local save exists for this character yet.";
+      return;
+    }
+    applyAppearance(saved.appearance, `Loaded local save · ${hatOption(saved.appearance.hat).name}`);
+  } catch {
+    saveStatus.textContent = "Local save is invalid and was not loaded.";
+  }
 }
 
 function resize() {
@@ -416,7 +563,16 @@ function enterWorld() {
   canvas.focus();
 }
 
-renderCharacterDetails(PREVIEW_CHARACTER);
+applyAppearance(DEFAULT_CHARACTER_APPEARANCE, "Not saved yet.");
+for (const button of hatButtons) {
+  button.addEventListener("click", () => {
+    const style = button.dataset.hatStyle;
+    if (!isHatStyle(style)) return;
+    applyAppearance({ hat: style }, `Unsaved change · ${hatOption(style).name}`);
+  });
+}
+saveCharacterButton.addEventListener("click", saveCurrentCharacter);
+loadCharacterButton.addEventListener("click", loadSavedCharacter);
 enterWorldButton.addEventListener("click", enterWorld);
 
 window.addEventListener("keydown", (event) => {
