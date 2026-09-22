@@ -21,6 +21,12 @@ export type SavedCharacterV1 = {
 
 export type CharacterStorage = Pick<Storage, "getItem" | "setItem">;
 
+export function rotateYawOffset(yaw: number, x: number, z: number): [number, number] {
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  return [x * cos + z * sin, -x * sin + z * cos];
+}
+
 export function isHatStyle(value: unknown): value is HatStyle {
   return HAT_OPTIONS.some((option) => option.id === value);
 }
