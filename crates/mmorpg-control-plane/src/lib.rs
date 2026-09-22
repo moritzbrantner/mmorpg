@@ -293,6 +293,89 @@ impl fmt::Display for ControlPlaneError {
 
 impl Error for ControlPlaneError {}
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EpochFloorStoreError {
+    Conflict {
+        zone_id: ZoneId,
+        expected_epoch: u64,
+        actual_epoch: u64,
+    },
+    Unavailable(String),
+}
+
+impl fmt::Display for EpochFloorStoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Conflict {
+                zone_id,
+                expected_epoch,
+                actual_epoch,
+            } => write!(
+                formatter,
+                "zone {} epoch floor changed concurrently: expected {expected_epoch}, actual {actual_epoch}",
+                zone_id.get()
+            ),
+            Self::Unavailable(message) => {
+                write!(formatter, "epoch floor store is unavailable: {message}")
+            }
+        }
+    }
+}
+
+impl Error for EpochFloorStoreError {}
+
+/// Provider-neutral persistence boundary for monotonic zone fencing epochs.
+///
+/// A production implementation must make `compare_and_advance` linearizable and
+/// durable before returning success. This contract intentionally persists only
+/// epoch floors; active ownership/deadlines remain a separate directory concern.
+pub trait EpochFloorStore {
+    fn load_epoch_floor(&self) -> Result<BTreeMap<ZoneId, u64>, EpochFloorStoreError>;
+
+    fn compare_and_advance(
+        &mut self,
+        zone_id: ZoneId,
+        expected_epoch: u64,
+        next_epoch: u64,
+    ) -> Result<(), EpochFloorStoreError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EpochPersistedDirectoryError {
+    Directory(ControlPlaneError),
+    Store(EpochFloorStoreError),
+}
+
+impl fmt::Display for EpochPersistedDirectoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Directory(error) => error.fmt(formatter),
+            Self::Store(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for EpochPersistedDirectoryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Directory(error) => Some(error),
+            Self::Store(error) => Some(error),
+        }
+    }
+}
+
+impl From<ControlPlaneError> for EpochPersistedDirectoryError {
+    fn from(error: ControlPlaneError) -> Self {
+        Self::Directory(error)
+    }
+}
+
+impl From<EpochFloorStoreError> for EpochPersistedDirectoryError {
+    fn from(error: EpochFloorStoreError) -> Self {
+        Self::Store(error)
+    }
+}
+
 pub struct ZoneDirectory {
     leases: BTreeMap<ZoneId, ZoneLease>,
     last_epoch: BTreeMap<ZoneId, u64>,
@@ -340,23 +423,8 @@ impl ZoneDirectory {
         hosts: &HostRegistry,
         now_tick: u64,
     ) -> Result<ZoneLease, ControlPlaneError> {
-        if self
-            .leases
-            .get(&zone_id)
-            .is_some_and(|lease| now_tick < lease.expires_at_tick)
-        {
-            return Err(ControlPlaneError::ZoneAlreadyAssigned(zone_id));
-        }
-        hosts.ensure_live(&host_id, now_tick)?;
-        let expires_at_tick = self.lease_deadline(zone_id, now_tick)?;
-        let epoch = self.next_epoch(zone_id)?;
-        let lease = ZoneLease {
-            zone_id,
-            host_id,
-            epoch,
-            expires_at_tick,
-        };
-        self.leases.insert(zone_id, lease.clone());
+        let lease = self.plan_assign(zone_id, host_id, hosts, now_tick)?;
+        self.commit_lease(lease.clone());
         Ok(lease)
     }
 
@@ -368,28 +436,8 @@ impl ZoneDirectory {
         hosts: &HostRegistry,
         now_tick: u64,
     ) -> Result<ZoneLease, ControlPlaneError> {
-        let current = self
-            .leases
-            .get(&zone_id)
-            .ok_or(ControlPlaneError::ZoneNotAssigned(zone_id))?;
-        if current.epoch != expected_epoch {
-            return Err(ControlPlaneError::StaleLease {
-                zone_id,
-                expected_epoch,
-                actual_epoch: current.epoch,
-            });
-        }
-
-        hosts.ensure_live(&host_id, now_tick)?;
-        let expires_at_tick = self.lease_deadline(zone_id, now_tick)?;
-        let epoch = self.next_epoch(zone_id)?;
-        let lease = ZoneLease {
-            zone_id,
-            host_id,
-            epoch,
-            expires_at_tick,
-        };
-        self.leases.insert(zone_id, lease.clone());
+        let lease = self.plan_reassign(zone_id, expected_epoch, host_id, hosts, now_tick)?;
+        self.commit_lease(lease.clone());
         Ok(lease)
     }
 
@@ -456,19 +504,192 @@ impl ZoneDirectory {
         Ok(())
     }
 
+    fn plan_assign(
+        &self,
+        zone_id: ZoneId,
+        host_id: HostId,
+        hosts: &HostRegistry,
+        now_tick: u64,
+    ) -> Result<ZoneLease, ControlPlaneError> {
+        if self
+            .leases
+            .get(&zone_id)
+            .is_some_and(|lease| now_tick < lease.expires_at_tick)
+        {
+            return Err(ControlPlaneError::ZoneAlreadyAssigned(zone_id));
+        }
+        hosts.ensure_live(&host_id, now_tick)?;
+        Ok(ZoneLease {
+            zone_id,
+            host_id,
+            epoch: self.next_epoch_candidate(zone_id)?,
+            expires_at_tick: self.lease_deadline(zone_id, now_tick)?,
+        })
+    }
+
+    fn plan_reassign(
+        &self,
+        zone_id: ZoneId,
+        expected_epoch: u64,
+        host_id: HostId,
+        hosts: &HostRegistry,
+        now_tick: u64,
+    ) -> Result<ZoneLease, ControlPlaneError> {
+        let current = self
+            .leases
+            .get(&zone_id)
+            .ok_or(ControlPlaneError::ZoneNotAssigned(zone_id))?;
+        if current.epoch != expected_epoch {
+            return Err(ControlPlaneError::StaleLease {
+                zone_id,
+                expected_epoch,
+                actual_epoch: current.epoch,
+            });
+        }
+        hosts.ensure_live(&host_id, now_tick)?;
+        Ok(ZoneLease {
+            zone_id,
+            host_id,
+            epoch: self.next_epoch_candidate(zone_id)?,
+            expires_at_tick: self.lease_deadline(zone_id, now_tick)?,
+        })
+    }
+
+    fn commit_lease(&mut self, lease: ZoneLease) {
+        self.last_epoch.insert(lease.zone_id, lease.epoch);
+        self.leases.insert(lease.zone_id, lease);
+    }
+
     fn lease_deadline(&self, zone_id: ZoneId, now_tick: u64) -> Result<u64, ControlPlaneError> {
         now_tick
             .checked_add(self.lease_ttl_ticks)
             .ok_or(ControlPlaneError::LeaseDeadlineOverflow(zone_id))
     }
 
-    fn next_epoch(&mut self, zone_id: ZoneId) -> Result<u64, ControlPlaneError> {
-        let last = self.last_epoch.get(&zone_id).copied().unwrap_or(0);
-        let next = last
+    fn next_epoch_candidate(&self, zone_id: ZoneId) -> Result<u64, ControlPlaneError> {
+        self.last_epoch
+            .get(&zone_id)
+            .copied()
+            .unwrap_or(0)
             .checked_add(1)
-            .ok_or(ControlPlaneError::EpochExhausted(zone_id))?;
-        self.last_epoch.insert(zone_id, next);
-        Ok(next)
+            .ok_or(ControlPlaneError::EpochExhausted(zone_id))
+    }
+}
+
+/// Zone directory that reserves each new fencing epoch in an external store
+/// before making the corresponding lease visible to callers.
+///
+/// This prevents epoch reuse after restart and fails closed on persistence
+/// errors or concurrent allocation. It does not persist active lease deadlines,
+/// so it is not by itself sufficient for automated failover.
+pub struct EpochPersistedZoneDirectory<S: EpochFloorStore> {
+    directory: ZoneDirectory,
+    store: S,
+}
+
+impl<S: EpochFloorStore> EpochPersistedZoneDirectory<S> {
+    pub fn from_store(
+        lease_ttl_ticks: u64,
+        store: S,
+    ) -> Result<Self, EpochPersistedDirectoryError> {
+        let epoch_floor = store.load_epoch_floor()?;
+        let directory = ZoneDirectory::from_epoch_floor(lease_ttl_ticks, epoch_floor)?;
+        Ok(Self { directory, store })
+    }
+
+    #[must_use]
+    pub fn epoch_floor_snapshot(&self) -> BTreeMap<ZoneId, u64> {
+        self.directory.epoch_floor_snapshot()
+    }
+
+    #[must_use]
+    pub const fn lease_ttl_ticks(&self) -> u64 {
+        self.directory.lease_ttl_ticks()
+    }
+
+    #[must_use]
+    pub fn lease(&self, zone_id: ZoneId) -> Option<&ZoneLease> {
+        self.directory.lease(zone_id)
+    }
+
+    pub fn assign(
+        &mut self,
+        zone_id: ZoneId,
+        host_id: HostId,
+        hosts: &HostRegistry,
+        now_tick: u64,
+    ) -> Result<ZoneLease, EpochPersistedDirectoryError> {
+        let lease = self
+            .directory
+            .plan_assign(zone_id, host_id, hosts, now_tick)?;
+        self.persist_epoch(&lease)?;
+        self.directory.commit_lease(lease.clone());
+        Ok(lease)
+    }
+
+    pub fn reassign(
+        &mut self,
+        zone_id: ZoneId,
+        expected_epoch: u64,
+        host_id: HostId,
+        hosts: &HostRegistry,
+        now_tick: u64,
+    ) -> Result<ZoneLease, EpochPersistedDirectoryError> {
+        let lease =
+            self.directory
+                .plan_reassign(zone_id, expected_epoch, host_id, hosts, now_tick)?;
+        self.persist_epoch(&lease)?;
+        self.directory.commit_lease(lease.clone());
+        Ok(lease)
+    }
+
+    pub fn renew(
+        &mut self,
+        lease: &ZoneLease,
+        now_tick: u64,
+    ) -> Result<ZoneLease, EpochPersistedDirectoryError> {
+        self.directory.renew(lease, now_tick).map_err(Into::into)
+    }
+
+    pub fn release(
+        &mut self,
+        lease: &ZoneLease,
+        now_tick: u64,
+    ) -> Result<(), EpochPersistedDirectoryError> {
+        self.directory.release(lease, now_tick).map_err(Into::into)
+    }
+
+    pub fn expire(&mut self, now_tick: u64) -> Vec<ZoneLease> {
+        self.directory.expire(now_tick)
+    }
+
+    pub fn ensure_current(
+        &self,
+        lease: &ZoneLease,
+        now_tick: u64,
+    ) -> Result<(), EpochPersistedDirectoryError> {
+        self.directory
+            .ensure_current(lease, now_tick)
+            .map_err(Into::into)
+    }
+
+    #[must_use]
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    #[must_use]
+    pub fn into_store(self) -> S {
+        self.store
+    }
+
+    fn persist_epoch(&mut self, lease: &ZoneLease) -> Result<(), EpochFloorStoreError> {
+        let expected_epoch = lease
+            .epoch
+            .checked_sub(1)
+            .expect("zone lease epochs start at one");
+        self.store
+            .compare_and_advance(lease.zone_id, expected_epoch, lease.epoch)
     }
 }
 

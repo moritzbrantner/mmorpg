@@ -1,6 +1,13 @@
+use std::collections::BTreeMap;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+
 use mmorpg_control_plane::{
-    EntityId, HandoffPhase, HandoffRegistry, HandoffTicket, HostId, HostRegistry, TransferId,
-    ZoneDirectory,
+    EntityId, EpochFloorStore, EpochFloorStoreError, EpochPersistedDirectoryError,
+    EpochPersistedZoneDirectory, HandoffPhase, HandoffRegistry, HandoffTicket, HostId,
+    HostRegistry, TransferId, ZoneDirectory,
 };
 use mmorpg_core::ZoneId;
 
@@ -14,6 +21,63 @@ fn registered_hosts() -> HostRegistry {
         hosts.register(host(name), 0).unwrap();
     }
     hosts
+}
+
+#[derive(Clone, Default)]
+struct SharedEpochStore {
+    floors: Arc<Mutex<BTreeMap<ZoneId, u64>>>,
+    reject_next: Arc<AtomicBool>,
+}
+
+impl SharedEpochStore {
+    fn reject_next(&self) {
+        self.reject_next.store(true, Ordering::SeqCst);
+    }
+
+    fn floor(&self, zone_id: ZoneId) -> Option<u64> {
+        self.floors.lock().unwrap().get(&zone_id).copied()
+    }
+}
+
+impl EpochFloorStore for SharedEpochStore {
+    fn load_epoch_floor(&self) -> Result<BTreeMap<ZoneId, u64>, EpochFloorStoreError> {
+        self.floors
+            .lock()
+            .map(|floors| floors.clone())
+            .map_err(|_| EpochFloorStoreError::Unavailable("test store lock poisoned".into()))
+    }
+
+    fn compare_and_advance(
+        &mut self,
+        zone_id: ZoneId,
+        expected_epoch: u64,
+        next_epoch: u64,
+    ) -> Result<(), EpochFloorStoreError> {
+        if self.reject_next.swap(false, Ordering::SeqCst) {
+            return Err(EpochFloorStoreError::Unavailable(
+                "injected persistence failure".into(),
+            ));
+        }
+        let mut floors = self
+            .floors
+            .lock()
+            .map_err(|_| EpochFloorStoreError::Unavailable("test store lock poisoned".into()))?;
+        let actual_epoch = floors.get(&zone_id).copied().unwrap_or(0);
+        if actual_epoch != expected_epoch {
+            return Err(EpochFloorStoreError::Conflict {
+                zone_id,
+                expected_epoch,
+                actual_epoch,
+            });
+        }
+        if expected_epoch.checked_add(1) != Some(next_epoch) {
+            return Err(EpochFloorStoreError::Unavailable(
+                "non-monotonic epoch advance".into(),
+            ));
+        }
+        floors.insert(zone_id, next_epoch);
+        Ok(())
+    }
 }
 
 #[test]
@@ -136,4 +200,66 @@ fn retrying_a_committed_transfer_does_not_release_a_newer_reservation() {
         .unwrap();
     next.transfer_id = TransferId::new(9);
     assert!(registry.prepare(next, &directory, 1).is_err());
+}
+
+#[test]
+fn persisted_epoch_floor_advances_across_directory_restart() {
+    let store = SharedEpochStore::default();
+    let hosts = registered_hosts();
+    let zone = ZoneId::new(41);
+
+    let first = {
+        let mut directory = EpochPersistedZoneDirectory::from_store(10, store.clone()).unwrap();
+        directory.assign(zone, host("a"), &hosts, 0).unwrap()
+    };
+    assert_eq!(first.epoch, 1);
+    assert_eq!(store.floor(zone), Some(1));
+
+    let mut restarted = EpochPersistedZoneDirectory::from_store(10, store.clone()).unwrap();
+    let second = restarted.assign(zone, host("b"), &hosts, 10).unwrap();
+    assert_eq!(second.epoch, 2);
+    assert_eq!(store.floor(zone), Some(2));
+}
+
+#[test]
+fn concurrent_epoch_allocator_conflict_fails_closed() {
+    let store = SharedEpochStore::default();
+    let hosts = registered_hosts();
+    let zone = ZoneId::new(42);
+    let mut first = EpochPersistedZoneDirectory::from_store(10, store.clone()).unwrap();
+    let mut stale = EpochPersistedZoneDirectory::from_store(10, store.clone()).unwrap();
+
+    first.assign(zone, host("a"), &hosts, 0).unwrap();
+    let error = stale.assign(zone, host("b"), &hosts, 0).unwrap_err();
+
+    assert!(matches!(
+        error,
+        EpochPersistedDirectoryError::Store(EpochFloorStoreError::Conflict {
+            zone_id,
+            expected_epoch: 0,
+            actual_epoch: 1,
+        }) if zone_id == zone
+    ));
+    assert!(stale.lease(zone).is_none());
+    assert!(stale.epoch_floor_snapshot().is_empty());
+    assert_eq!(store.floor(zone), Some(1));
+}
+
+#[test]
+fn epoch_store_failure_never_acknowledges_a_lease() {
+    let store = SharedEpochStore::default();
+    store.reject_next();
+    let hosts = registered_hosts();
+    let zone = ZoneId::new(43);
+    let mut directory = EpochPersistedZoneDirectory::from_store(10, store.clone()).unwrap();
+
+    let error = directory.assign(zone, host("a"), &hosts, 0).unwrap_err();
+
+    assert!(matches!(
+        error,
+        EpochPersistedDirectoryError::Store(EpochFloorStoreError::Unavailable(_))
+    ));
+    assert!(directory.lease(zone).is_none());
+    assert!(directory.epoch_floor_snapshot().is_empty());
+    assert_eq!(store.floor(zone), None);
 }
