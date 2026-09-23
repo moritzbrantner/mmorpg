@@ -23,6 +23,8 @@ import {
   type EntryState,
 } from "./character-selection";
 import "./styles.css";
+import { DEMO_WORLD_HALF_EXTENT, type DemoProgress } from "./demo-save";
+import { installDemoSaveControls } from "./demo-save-controls";
 import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, type Vector3 } from "./replication";
 
 function requireElement<T extends Element>(selector: string): T {
@@ -92,7 +94,7 @@ function publishDemoSnapshot() {
 
 publishDemoSnapshot();
 
-const worldHalfExtent = 10.5;
+const worldHalfExtent = DEMO_WORLD_HALF_EXTENT;
 const waystone = { x: 4.8, z: -3.5 };
 const interactRadius = 2.1;
 const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 80);
@@ -180,6 +182,10 @@ function nearWaystone() {
 function interact() {
   if (!nearWaystone()) return;
   waystoneActive = !waystoneActive;
+  updateObjective();
+}
+
+function updateObjective() {
   status.textContent = waystoneActive ? "Waystone active" : "Exploring";
   objective.textContent = waystoneActive
     ? "Waystone activated. Explore the outpost."
@@ -561,8 +567,7 @@ function enterWorld() {
   entryState = enterPreviewWorld(entryState);
   characterSelect.hidden = true;
   for (const element of worldUi) element.hidden = false;
-  status.textContent = "Exploring";
-  objective.textContent = "Reach the old waystone and activate it.";
+  updateObjective();
   keys.clear();
   lastTime = performance.now();
   canvas.focus();
@@ -581,6 +586,9 @@ loadCharacterButton.addEventListener("click", loadSavedCharacter);
 enterWorldButton.addEventListener("click", enterWorld);
 
 window.addEventListener("keydown", (event) => {
+  // Let native controls handle Enter/Space; never turn save UI input into movement.
+  if (event.target instanceof HTMLElement &&
+      event.target.closest("button, input, select, textarea, summary, [contenteditable=true], [data-game-save-controls]")) return;
   if (entryState.phase === "character-selection") {
     if (event.code === "Enter" && !event.repeat) {
       event.preventDefault();
@@ -597,6 +605,36 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => keys.delete(event.code));
 window.addEventListener("blur", () => keys.clear());
 window.addEventListener("resize", resize);
+document.addEventListener("focusin", () => keys.clear());
+document.addEventListener("visibilitychange", () => { if (document.hidden) keys.clear(); });
+
+installDemoSaveControls(
+  [...document.querySelectorAll<HTMLElement>("[data-game-save-controls]")],
+  PREVIEW_CHARACTER.id,
+  (): DemoProgress => ({
+    position: { ...player },
+    facing,
+    waystoneActive,
+    appearance: { ...characterAppearance },
+    tick: demoTick,
+    tickFraction: accumulatedTicks,
+  }),
+  (saved) => {
+    // The controller validates the entire document before invoking this commit boundary.
+    player.x = saved.position.x;
+    player.z = saved.position.z;
+    facing = saved.facing;
+    waystoneActive = saved.waystoneActive;
+    demoTick = saved.tick;
+    accumulatedTicks = saved.tickFraction;
+    applyAppearance(saved.appearance, "Appearance restored from game save.");
+    keys.clear();
+    snapshots.reset();
+    publishDemoSnapshot();
+    camera.position.set(player.x + 8.5, 7.6, player.z + 10.5);
+    enterWorld();
+  },
+);
 
 resize();
 requestAnimationFrame(frame);

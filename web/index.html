@@ -83,10 +83,11 @@
             </div>
 
             <div class="save-actions">
-              <button id="save-character" type="button">Save character</button>
-              <button id="load-character" type="button">Load saved</button>
+              <button id="save-character" type="button">Save appearance</button>
+              <button id="load-character" type="button">Load appearance</button>
             </div>
             <p id="save-status" class="save-status" aria-live="polite">Not saved yet.</p>
+            <div data-game-save-controls aria-label="Offline game progress"></div>
           </div>
         </aside>
 
@@ -113,6 +114,7 @@
       <section class="hud" data-world-ui aria-label="Controls" hidden>
         <p><kbd>WASD</kbd> move · <kbd>Shift</kbd> sprint · <kbd>E</kbd> interact</p>
         <p id="objective">Reach the old waystone and activate it.</p>
+        <div data-game-save-controls aria-label="Offline game progress"></div>
       </section>
       <aside class="prompt" id="prompt" hidden></aside>
     </main>
