@@ -23,7 +23,12 @@ import {
   type EntryState,
 } from "./character-selection";
 import "./styles.css";
+import { advanceDemoTick } from "./demo-clock";
+import { DEMO_WORLD_HALF_EXTENT, type DemoProgress } from "./demo-save";
+import { installDemoSaveControls } from "./demo-save-controls";
 import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, type Vector3 } from "./replication";
+import { installCharacterTurntable } from "./character-turntable";
+import "./character-selection-layout.css";
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -47,6 +52,8 @@ const characterName = requireElement<HTMLElement>("#character-name");
 const characterSubtitle = requireElement<HTMLElement>("#character-subtitle");
 const characterLocation = requireElement<HTMLElement>("#character-location");
 const fallbackCharacter = requireElement<HTMLElement>("#character-stage-fallback");
+const previewSurface = requireElement<HTMLElement>("#preview-surface");
+const returnButton = requireElement<HTMLButtonElement>("#return-to-characters");
 const hatButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-hat-style]")];
 const worldUi = [...document.querySelectorAll<HTMLElement>("[data-world-ui]")];
 
@@ -69,6 +76,11 @@ let lastTime = performance.now();
 const keys = new Set<string>();
 let entryState: EntryState = initialEntryState();
 let characterAppearance: CharacterAppearance = { ...DEFAULT_CHARACTER_APPEARANCE };
+const turntable = installCharacterTurntable(previewSurface, {
+  left: requireElement<HTMLButtonElement>("#rotate-left"),
+  right: requireElement<HTMLButtonElement>("#rotate-right"),
+  reset: requireElement<HTMLButtonElement>("#reset-rotation"),
+}, () => entryState.phase === "character-selection");
 
 // Offline demo source. An online source supplies decoded player-scoped snapshots
 // to the same presentation buffer and sends input commands to the zone host.
@@ -92,10 +104,11 @@ function publishDemoSnapshot() {
 
 publishDemoSnapshot();
 
-const worldHalfExtent = 10.5;
+const worldHalfExtent = DEMO_WORLD_HALF_EXTENT;
 const waystone = { x: 4.8, z: -3.5 };
 const interactRadius = 2.1;
 const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 80);
+const previewCamera = new THREE.PerspectiveCamera(48, 1, 0.1, 80);
 const target = new THREE.Vector3();
 
 const staticNodes: RendererSceneNode[] = [
@@ -143,8 +156,8 @@ function node(
   return { id, geometry, color, transform: { translation } };
 }
 
-function webGpuProjectionFromThree(): Matrix4Values {
-  const gl = camera.projectionMatrix.elements;
+function webGpuProjectionFromThree(source = camera): Matrix4Values {
+  const gl = source.projectionMatrix.elements;
   const gpu = [...gl];
   for (const index of [2, 6, 10, 14]) {
     const z = gl[index];
@@ -180,6 +193,10 @@ function nearWaystone() {
 function interact() {
   if (!nearWaystone()) return;
   waystoneActive = !waystoneActive;
+  updateObjective();
+}
+
+function updateObjective() {
   status.textContent = waystoneActive ? "Waystone active" : "Exploring";
   objective.textContent = waystoneActive
     ? "Waystone activated. Explore the outpost."
@@ -284,14 +301,14 @@ function worldHatNodes(
   ];
 }
 
-function selectionCharacterNodes(now: number): RendererSceneNode[] {
+function selectionCharacterNodes(): RendererSceneNode[] {
   const baseX = -1.2;
-  const idleYaw = Math.sin(now / 3400) * 0.16 - 0.18;
-  const halfYaw = idleYaw / 2;
+  const yaw = turntable.yaw;
+  const halfYaw = yaw / 2;
   const rotationQuaternion: RotationQuaternion = [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)];
   const localPoint: LocalPoint = (x, y, z) => {
-    const cos = Math.cos(idleYaw);
-    const sin = Math.sin(idleYaw);
+    const cos = Math.cos(yaw);
+    const sin = Math.sin(yaw);
     return [baseX + x * cos + z * sin, y, -x * sin + z * cos];
   };
 
@@ -470,6 +487,7 @@ function applyAppearance(nextAppearance: CharacterAppearance, message: string) {
 }
 
 function saveCurrentCharacter() {
+  saveControls.cancelPending();
   try {
     const saved = saveCharacter(localStorage, PREVIEW_CHARACTER.id, characterAppearance);
     saveStatus.textContent = `Saved locally · ${hatOption(saved.appearance.hat).name}`;
@@ -479,6 +497,7 @@ function saveCurrentCharacter() {
 }
 
 function loadSavedCharacter() {
+  saveControls.cancelPending();
   try {
     const saved = loadCharacter(localStorage, PREVIEW_CHARACTER.id);
     if (!saved) {
@@ -491,25 +510,35 @@ function loadSavedCharacter() {
   }
 }
 
+function layoutPreview() {
+  if (entryState.phase !== "character-selection") return;
+  const width = Math.max(canvas.clientWidth, 1);
+  const height = Math.max(canvas.clientHeight, 1);
+  const rect = previewSurface.getBoundingClientRect();
+  const displayHeight = Math.max(1, Math.min(rect.height * 0.8, rect.width * 1.1));
+  const distance = 3.4 * height / (2 * Math.tan(THREE.MathUtils.degToRad(24)) * displayHeight);
+  previewCamera.position.set(4.5, 1.25, 7.1).normalize().multiplyScalar(distance).add(new THREE.Vector3(-1.2, 1.5, 0));
+  previewCamera.lookAt(-1.2, 1.5, 0);
+  previewCamera.setViewOffset(width, height, width / 2 - (rect.left + rect.width / 2), height / 2 - (rect.top + rect.height / 2), width, height);
+  previewCamera.updateMatrixWorld(true);
+}
+
 function resize() {
   const width = Math.max(canvas.clientWidth, 1);
   const height = Math.max(canvas.clientHeight, 1);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height, window.devicePixelRatio);
+  layoutPreview();
 }
 
-function renderSelection(now: number) {
-  target.set(-1.2, 1.45, 0);
-  camera.position.set(3.3, 2.7, 7.1);
-  camera.lookAt(target);
-  camera.updateMatrixWorld(true);
+function renderSelection() {
   renderer.render({
     camera: {
-      viewMatrix: [...camera.matrixWorldInverse.elements] as Matrix4Values,
-      projectionMatrix: webGpuProjectionFromThree(),
+      viewMatrix: [...previewCamera.matrixWorldInverse.elements] as Matrix4Values,
+      projectionMatrix: webGpuProjectionFromThree(previewCamera),
     },
-    nodes: [...selectionStageNodes, ...selectionCharacterNodes(now)],
+    nodes: [...selectionStageNodes, ...selectionCharacterNodes()],
   });
 }
 
@@ -518,7 +547,7 @@ function renderWorld(deltaSeconds: number) {
   while (accumulatedTicks >= 1) {
     updateMovement(1 / TICK_HZ);
     accumulatedTicks -= 1;
-    demoTick += 1n;
+    demoTick = advanceDemoTick(demoTick, snapshots);
     publishDemoSnapshot();
   }
   const rendered = snapshots.sample(demoTick > 0n ? demoTick - 1n : 0n, accumulatedTicks)[0];
@@ -550,7 +579,7 @@ function frame(now: number) {
   const deltaSeconds = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
   if (entryState.phase === "character-selection") {
-    renderSelection(now);
+    renderSelection();
   } else {
     renderWorld(deltaSeconds);
   }
@@ -558,34 +587,96 @@ function frame(now: number) {
 }
 
 function enterWorld() {
+  turntable.cancel();
   entryState = enterPreviewWorld(entryState);
   characterSelect.hidden = true;
   for (const element of worldUi) element.hidden = false;
-  status.textContent = "Exploring";
-  objective.textContent = "Reach the old waystone and activate it.";
+  camera.position.set(player.x + 8.5, 7.6, player.z + 10.5);
+  updateObjective();
   keys.clear();
   lastTime = performance.now();
   canvas.focus();
 }
 
+function resumeWorld() {
+  saveControls.cancelPending();
+  enterWorld();
+}
+
+function returnToCharacters() {
+  saveControls.cancelPending();
+  turntable.cancel();
+  entryState = initialEntryState();
+  keys.clear();
+  characterSelect.hidden = false;
+  for (const element of worldUi) element.hidden = true;
+  prompt.hidden = true;
+  requireElement<HTMLElement>("#enter-world-label").textContent = "Resume exploration";
+  requireElement<HTMLElement>("#enter-world-note").textContent = "Current session paused · not automatically saved";
+  lastTime = performance.now();
+  saveControls.refresh();
+  characterSelect.scrollTop = 0;
+  layoutPreview();
+  previewSurface.focus({ preventScroll: true });
+}
+
 applyAppearance(DEFAULT_CHARACTER_APPEARANCE, "Not saved yet.");
+const saveControls = installDemoSaveControls(
+  [...document.querySelectorAll<HTMLElement>("[data-game-save-controls]")],
+  PREVIEW_CHARACTER.id,
+  (): DemoProgress => ({
+    position: { ...player },
+    facing,
+    waystoneActive,
+    appearance: { ...characterAppearance },
+    tick: demoTick,
+    tickFraction: accumulatedTicks,
+  }),
+  (saved) => {
+    // The controller validates the entire document before invoking this commit boundary.
+    player.x = saved.position.x;
+    player.z = saved.position.z;
+    facing = saved.facing;
+    waystoneActive = saved.waystoneActive;
+    demoTick = saved.tick;
+    accumulatedTicks = saved.tickFraction;
+    applyAppearance(saved.appearance, "Appearance restored from game save.");
+    keys.clear();
+    snapshots.reset();
+    publishDemoSnapshot();
+    enterWorld();
+  },
+);
+
 for (const button of hatButtons) {
   button.addEventListener("click", () => {
     const style = button.dataset.hatStyle;
     if (!isHatStyle(style)) return;
+    saveControls.cancelPending();
     applyAppearance({ hat: style }, `Unsaved change · ${hatOption(style).name}`);
   });
 }
 saveCharacterButton.addEventListener("click", saveCurrentCharacter);
 loadCharacterButton.addEventListener("click", loadSavedCharacter);
-enterWorldButton.addEventListener("click", enterWorld);
+enterWorldButton.addEventListener("click", resumeWorld);
+returnButton.addEventListener("click", returnToCharacters);
+canvas.addEventListener("pointerdown", () => { if (entryState.phase === "world") canvas.focus(); });
 
 window.addEventListener("keydown", (event) => {
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  // Native controls and the turntable own their keyboard input.
+  if (event.target instanceof HTMLElement &&
+      event.target.closest("button, input, select, textarea, summary, a, [contenteditable=true], [role=slider], [data-game-save-controls]")) return;
   if (entryState.phase === "character-selection") {
     if (event.code === "Enter" && !event.repeat) {
       event.preventDefault();
-      enterWorld();
+      resumeWorld();
     }
+    return;
+  }
+  if (event.code === "Escape" && !event.repeat) {
+    event.preventDefault();
+    returnToCharacters();
     return;
   }
   keys.add(event.code);
@@ -597,6 +688,10 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => keys.delete(event.code));
 window.addEventListener("blur", () => keys.clear());
 window.addEventListener("resize", resize);
+document.addEventListener("focusin", () => keys.clear());
+document.addEventListener("visibilitychange", () => { if (document.hidden) keys.clear(); });
+characterSelect.addEventListener("scroll", layoutPreview, { passive: true });
+new ResizeObserver(layoutPreview).observe(previewSurface);
 
 resize();
 requestAnimationFrame(frame);
