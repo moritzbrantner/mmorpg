@@ -1,6 +1,5 @@
 /** Offline demo persistence only. Never submit these files to an online zone host. */
 import { isHatStyle, type CharacterAppearance, type CharacterStorage } from "./character-customization";
-
 import { MAX_DEMO_TICK } from "./demo-clock";
 
 export const DEMO_WORLD_ID = "greyhaven-outpost-v1";
@@ -125,6 +124,17 @@ export class DemoSaveController {
     private readonly storage: () => CharacterStorage,
   ) {}
 
+  /** Query only: inspecting a checkpoint must not restore it or retire pending intent. */
+  inspect(): DemoProgress | null {
+    const raw = this.storage().getItem(demoSaveKey(this.characterId));
+    return raw === null ? null : decodeDemoSave(raw, this.characterId);
+  }
+
+  /** Navigation/customization supersedes any file read still in flight. */
+  cancelPending(): void {
+    this.#operation += 1;
+  }
+
   save(): void {
     this.#operation += 1;
     const raw = encodeDemoSave(this.capture(), this.characterId);
@@ -134,9 +144,8 @@ export class DemoSaveController {
 
   load(): boolean {
     this.#operation += 1;
-    const raw = this.storage().getItem(demoSaveKey(this.characterId));
-    if (raw === null) return false;
-    const progress = decodeDemoSave(raw, this.characterId);
+    const progress = this.inspect();
+    if (progress === null) return false;
     this.restore(progress);
     return true;
   }

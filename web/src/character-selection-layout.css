@@ -1,0 +1,105 @@
+/* Keep controls beside (not on top of) the renderer-owned character. */
+.character-select {
+  display: grid;
+  grid-template: "brand brand brand" auto "details preview sidebar" minmax(0, 1fr) / minmax(13rem, .9fr) minmax(17rem, 1.5fr) minmax(18rem, 1fr);
+  height: 100dvh;
+  padding: clamp(.85rem, 2vw, 2rem);
+  gap: 1.1rem;
+  overflow: auto;
+}
+.selection-brand { grid-area: brand; position: static; }
+.character-details {
+  grid-area: details;
+  position: relative;
+  inset: auto;
+  width: auto;
+  max-height: 100%;
+  overflow: auto;
+  align-self: end;
+}
+.selection-sidebar {
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  overflow: auto;
+  pointer-events: auto;
+}
+.selection-sidebar .roster-panel,
+.selection-sidebar .selection-actions {
+  position: relative;
+  inset: auto;
+  width: auto;
+  transform: none;
+  flex: none;
+}
+.selection-sidebar .selection-actions { margin-top: auto; }
+.character-inspector {
+  grid-area: preview;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: auto;
+}
+.preview-surface {
+  flex: 1;
+  min-height: 12rem;
+  border-radius: 1rem;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+}
+.preview-surface[data-dragging="true"] { cursor: grabbing; }
+.preview-surface:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: -3px; }
+.turntable-controls { display: flex; justify-content: center; flex-wrap: wrap; gap: .5rem; }
+.turntable-controls button,
+#return-to-characters {
+  min-height: 2.75rem;
+  padding: .5rem .7rem;
+  border: 1px solid var(--panel-border);
+  border-radius: .3rem;
+  background: #182522;
+  color: #edf4ee;
+  font: inherit;
+  font-size: .8rem;
+  cursor: pointer;
+}
+.turntable-controls button:hover,
+#return-to-characters:hover { background: #30453d; }
+.turntable-controls button:focus-visible,
+#return-to-characters:focus-visible,
+.appearance-storage summary:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
+.turntable-hint { text-align: center; font-size: .75rem; color: #c1cec6; line-height: 1.5; }
+.appearance-storage { margin-top: .8rem; font-size: .75rem; color: #aabbb1; }
+.appearance-storage summary { cursor: pointer; padding: .4rem 0; }
+.game-save-summary { font-size: .75rem; line-height: 1.5; color: #ded7bf; overflow-wrap: anywhere; }
+.game-save-actions button { min-height: 2.75rem; }
+.game-save-actions button:disabled { opacity: .45; cursor: not-allowed; background: #202e2a; }
+.game-save-status { min-height: 2.8em; }
+.world-toolbar { display: flex; align-items: center; gap: .8rem; }
+.preview-loading { margin: auto; text-align: center; }
+.selection-note { font-size: .7rem; color: #a3b1a7; }
+
+@media (max-width: 1000px) {
+  .character-select {
+    grid-template: "brand" auto "preview" clamp(19rem, 48vh, 28rem) "sidebar" auto "details" auto / minmax(0, 1fr);
+    pointer-events: auto;
+    overscroll-behavior: contain;
+  }
+  .character-inspector { min-height: 0; }
+  .selection-sidebar { overflow: visible; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .selection-sidebar .selection-actions { margin: 0; align-self: start; }
+  .character-details { max-height: none; }
+  .equipment-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .selection-note { display: block; }
+  .selection-title { font-size: 1.6rem; }
+  .selection-sidebar .panel-label { display: block; }
+}
+@media (max-width: 600px) {
+  .selection-sidebar { grid-template-columns: minmax(0, 1fr); }
+  .equipment-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .world-toolbar { flex-direction: column; gap: .3rem; align-items: end; }
+  .prompt { bottom: 18rem; max-width: calc(100vw - 2rem); }
+}
