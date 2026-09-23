@@ -1,12 +1,13 @@
 /** Offline demo persistence only. Never submit these files to an online zone host. */
 import { isHatStyle, type CharacterAppearance, type CharacterStorage } from "./character-customization";
 
+import { MAX_DEMO_TICK } from "./demo-clock";
+
 export const DEMO_WORLD_ID = "greyhaven-outpost-v1";
 export const DEMO_WORLD_HALF_EXTENT = 10.5;
 export const MAX_DEMO_SAVE_BYTES = 8192;
 const FORMAT = "mmorpg.offline-demo-save";
 const VERSION = 1;
-const MAX_TICK = 18446744073709551615n;
 
 export type DemoProgress = {
   position: { x: number; z: number };
@@ -59,7 +60,7 @@ function validateDocument(value: unknown, characterId: string): DemoProgress {
     throw new Error("Save tick must be a canonical unsigned decimal string.");
   }
   const tick = BigInt(progress.tick);
-  if (tick > MAX_TICK) throw new Error("Save tick exceeds the supported range.");
+  if (tick > MAX_DEMO_TICK) throw new Error("Save tick exceeds the supported range.");
   const tickFraction = numberInRange(progress.tickFraction, 0, 1);
   if (tickFraction === 1) throw new Error("Save tick fraction must be less than one.");
   return {

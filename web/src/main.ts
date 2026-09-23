@@ -23,6 +23,7 @@ import {
   type EntryState,
 } from "./character-selection";
 import "./styles.css";
+import { advanceDemoTick } from "./demo-clock";
 import { DEMO_WORLD_HALF_EXTENT, type DemoProgress } from "./demo-save";
 import { installDemoSaveControls } from "./demo-save-controls";
 import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, type Vector3 } from "./replication";
@@ -524,7 +525,7 @@ function renderWorld(deltaSeconds: number) {
   while (accumulatedTicks >= 1) {
     updateMovement(1 / TICK_HZ);
     accumulatedTicks -= 1;
-    demoTick += 1n;
+    demoTick = advanceDemoTick(demoTick, snapshots);
     publishDemoSnapshot();
   }
   const rendered = snapshots.sample(demoTick > 0n ? demoTick - 1n : 0n, accumulatedTicks)[0];

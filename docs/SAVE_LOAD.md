@@ -16,7 +16,10 @@ Saves preserve full-precision X/Z position, facing, waystone activation, hat app
 the decimal bigint demo tick, and the remaining fractional tick. They do not persist
 held keys, renderer objects, camera interpolation, or old presentation snapshots.
 Loading clears input, resets/reseeds snapshot history, snaps the camera, and refreshes
-the objective from the restored waystone state. The old appearance-only save buttons
+the objective from the restored waystone state. The offline demo clock rolls over
+to zero at its unsigned 64-bit maximum and clears old presentation history. Thus even
+a checkpoint at the maximum tick remains playable and saveable after advancing.
+This does not change server tick semantics. The old appearance-only save buttons
 and storage namespace remain supported separately; they are not fabricated game saves.
 
 No autosave runs on startup, per frame, or during shutdown. An explicit save replaces
