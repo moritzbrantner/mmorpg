@@ -84,14 +84,16 @@
 
 @media (max-width: 1000px) {
   .character-select {
-    grid-template: "brand" auto "preview" clamp(19rem, 48vh, 28rem) "sidebar" auto "details" auto / minmax(0, 1fr);
+    /* Content-sized rows must not collapse the equipment panel below a tall save sidebar. */
+    grid-template: "brand" max-content "preview" minmax(min-content, clamp(22rem, 48vh, 28rem)) "sidebar" max-content "details" max-content / minmax(0, 1fr);
+    align-content: start;
     pointer-events: auto;
     overscroll-behavior: contain;
   }
   .character-inspector { min-height: 0; }
   .selection-sidebar { overflow: visible; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .selection-sidebar .selection-actions { margin: 0; align-self: start; }
-  .character-details { max-height: none; }
+  .character-details { max-height: none; overflow: visible; align-self: stretch; }
   .equipment-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .selection-note { display: block; }
   .selection-title { font-size: 1.6rem; }

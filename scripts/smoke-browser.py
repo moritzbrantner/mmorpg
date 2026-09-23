@@ -164,6 +164,9 @@ class BrowserAcceptance(unittest.TestCase):
         surface.dispatch_event("pointercancel", {"pointerId": 99})
         expect(surface).to_have_attribute("aria-valuenow", angle)
         surface.evaluate("el => el.releasePointerCapture(window.__pointerId)")
+        # Capture changes are processed before the next pointer event, not on rAF.
+        # https://www.w3.org/TR/pointerevents3/#process-pending-pointer-capture
+        self.page.mouse.move(x + 81, y)
         self.frames()
         expect(surface).to_have_attribute("aria-valuenow", "0")
         self.page.mouse.up()
@@ -280,12 +283,32 @@ class BrowserAcceptance(unittest.TestCase):
         self.save()
         self.page.screenshot(path=str(ARTIFACTS / "character-selection-mobile-saves.png"))
         expect(self.page.locator("#character-select .game-save-summary")).to_contain_text("Local checkpoint")
-        boxes = [self.page.locator(selector).bounding_box() for selector in [".roster-panel", ".selection-actions", ".character-details"]]
-        for i, a in enumerate(boxes):
-            for b in boxes[i + 1:]:
-                overlap = min(a["x"] + a["width"], b["x"] + b["width"]) > max(a["x"], b["x"]) and min(a["y"] + a["height"], b["y"] + b["height"]) > max(a["y"], b["y"])
-                self.assertFalse(overlap, "Mobile controls must not overlap")
+        self.assert_selection_layout()
+        self.page.locator(".selection-actions").scroll_into_view_if_needed()
+        self.frames()
+        self.page.screenshot(path=str(ARTIFACTS / "character-selection-mobile-resume.png"))
         session.detach()
+
+    def assert_selection_layout(self):
+        selectors = [".selection-brand", "#preview-surface", ".turntable-controls", ".roster-panel", ".selection-actions", ".character-details"]
+        boxes = {selector: self.page.locator(selector).bounding_box() for selector in selectors}
+        (ARTIFACTS / f"{self._testMethodName}-layout.json").write_text(json.dumps(boxes, indent=2))
+        for i, name in enumerate(selectors):
+            a = boxes[name]
+            for other in selectors[i + 1:]:
+                b = boxes[other]
+                overlap = min(a["x"] + a["width"], b["x"] + b["width"]) > max(a["x"], b["x"]) + 1 and min(a["y"] + a["height"], b["y"] + b["height"]) > max(a["y"], b["y"]) + 1
+                self.assertFalse(overlap, f"Selection panels overlap: {name} {a}, {other} {b}")
+        self.assertFalse(self.page.locator("#character-select").evaluate("el => el.scrollWidth > el.clientWidth + 1"))
+
+    def test_selection_layout_at_narrow_short_and_tablet_sizes(self):
+        self.open()
+        for width, height in [(320, 568), (844, 390), (900, 700), (1280, 600)]:
+            with self.subTest(width=width, height=height):
+                self.page.set_viewport_size({"width": width, "height": height})
+                self.frames()
+                self.assert_selection_layout()
+                self.page.screenshot(path=str(ARTIFACTS / f"selection-{width}x{height}.png"))
 
 
 if __name__ == "__main__":
