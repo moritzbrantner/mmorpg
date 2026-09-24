@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advanceDemoTick, MAX_DEMO_TICK } from "../src/demo-clock";
+import { advanceDemoTick, frameDeltaSeconds, MAX_DEMO_TICK } from "../src/demo-clock";
 import { DemoSaveController, decodeDemoSave, type DemoProgress } from "../src/demo-save";
 import { SnapshotBuffer } from "../src/replication";
 
@@ -53,4 +53,14 @@ test("tick rollover clears stale snapshots so the next published frame is accept
   const next = advanceDemoTick(tick, snapshots);
   assert.equal(snapshots.push(snapshot(next, 300)), true);
   assert.equal(snapshots.sample(next)[0]?.position[0], 300);
+});
+
+test("frame delta clamps transition timestamp skew and long stalls", () => {
+  assert.equal(frameDeltaSeconds(1000, 1001), 0);
+  assert.equal(frameDeltaSeconds(1016, 1000), 0.016);
+  assert.equal(frameDeltaSeconds(1200, 1000), 0.05);
+  for (const invalid of [NaN, Infinity, -Infinity]) {
+    assert.throws(() => frameDeltaSeconds(invalid, 0));
+    assert.throws(() => frameDeltaSeconds(0, invalid));
+  }
 });

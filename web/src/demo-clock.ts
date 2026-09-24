@@ -9,3 +9,10 @@ export function advanceDemoTick(tick: bigint, presentation: { reset(): void }): 
   }
   return tick + 1n;
 }
+
+export function frameDeltaSeconds(now: number, previous: number): number {
+  if (!Number.isFinite(now) || !Number.isFinite(previous)) {
+    throw new Error("Frame timestamps must be finite.");
+  }
+  return Math.max(0, Math.min((now - previous) / 1000, 0.05));
+}
