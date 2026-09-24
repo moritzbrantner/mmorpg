@@ -298,13 +298,15 @@ class BrowserAcceptance(unittest.TestCase):
         class_radios = self.page.get_by_role("group", name="Class").get_by_role("radio")
         self.assertEqual(class_radios.count(), 3)
         expect(self.page.get_by_role("radio", name=re.compile("^Warden"))).to_be_checked()
-        expect(self.page.get_by_role("radio", name="Male")).to_be_checked()
+        expect(self.page.get_by_role("radio", name="Male", exact=True)).to_be_checked()
 
         self.page.get_by_label("Name").fill("Lyra Vale")
         self.page.get_by_role("radio", name=re.compile("^Ranger")).check()
         self.page.get_by_role("radio", name="Female").check()
         expect(self.page.locator("#character-subtitle")).to_contain_text("Female Human Ranger")
         expect(self.page.locator("#equipment-list")).to_contain_text("Ashwood Longbow")
+        self.frames()
+        self.page.screenshot(path=str(ARTIFACTS / "character-creation-female-ranger.png"))
         self.page.get_by_role("button", name="Create character", exact=True).filter(visible=True).click()
 
         expect(self.page.get_by_role("button", name=re.compile("Lyra Vale"))).to_be_visible()
@@ -314,6 +316,12 @@ class BrowserAcceptance(unittest.TestCase):
             "id": "local-1", "name": "Lyra Vale", "classId": "ranger", "sex": "female",
         }])
 
+        self.page.get_by_role("button", name="Enter World").click()
+        self.frames(8)
+        self.page.screenshot(path=str(ARTIFACTS / "character-ranger-world.png"))
+        self.page.locator("#world").focus()
+        self.page.keyboard.press("Escape")
+        expect(self.page.locator("#character-name")).to_have_text("Lyra Vale")
         self.save()
         self.assertIsNotNone(self.page.evaluate("() => localStorage.getItem('mmorpg.offline-demo.v1.local-1')"))
         self.assertIsNone(self.checkpoint(), "A created character must not write the built-in character save slot")
@@ -328,7 +336,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.get_by_role("button", name="Create character", exact=True).click()
         self.page.get_by_label("Name").fill("Dorian Voss")
         self.page.get_by_role("radio", name=re.compile("^Arcanist")).check()
-        expect(self.page.get_by_role("radio", name="Male")).to_be_checked()
+        expect(self.page.get_by_role("radio", name="Male", exact=True)).to_be_checked()
         expect(self.page.locator("#character-subtitle")).to_contain_text("Male Human Arcanist")
         expect(self.page.locator("#equipment-list")).to_contain_text("Emberglass Staff")
         self.page.get_by_role("button", name="Create character", exact=True).filter(visible=True).click()
