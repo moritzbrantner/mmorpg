@@ -309,7 +309,8 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.screenshot(path=str(ARTIFACTS / "character-creation-female-ranger.png"))
         self.page.get_by_role("button", name="Create character", exact=True).filter(visible=True).click()
 
-        expect(self.page.get_by_role("button", name=re.compile("Lyra Vale"))).to_be_visible()
+        roster_buttons = self.page.locator("#character-roster")
+        expect(roster_buttons.get_by_role("button", name=re.compile("Lyra Vale"))).to_be_visible()
         expect(self.page.locator("#character-name")).to_have_text("Lyra Vale")
         roster = self.page.evaluate("key => JSON.parse(localStorage.getItem(key))", ROSTER_KEY)
         self.assertEqual(roster["characters"], [{
@@ -325,14 +326,15 @@ class BrowserAcceptance(unittest.TestCase):
         self.save()
         self.assertIsNotNone(self.page.evaluate("() => localStorage.getItem('mmorpg.offline-demo.v1.local-1')"))
         self.assertIsNone(self.checkpoint(), "A created character must not write the built-in character save slot")
-        self.page.get_by_role("button", name=re.compile("Aelric Stormward")).click()
+        roster_buttons.get_by_role("button", name=re.compile("Aelric Stormward")).click()
         expect(self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True)).to_be_disabled()
-        self.page.get_by_role("button", name=re.compile("Lyra Vale")).click()
+        roster_buttons.get_by_role("button", name=re.compile("Lyra Vale")).click()
         expect(self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True)).to_be_enabled()
 
         self.page.reload()
         self.page.wait_for_function("window.__calls.draws > 0")
-        expect(self.page.get_by_role("button", name=re.compile("Lyra Vale"))).to_be_visible()
+        roster_buttons = self.page.locator("#character-roster")
+        expect(roster_buttons.get_by_role("button", name=re.compile("Lyra Vale"))).to_be_visible()
         self.page.get_by_role("button", name="Create character", exact=True).click()
         self.page.get_by_label("Name").fill("Dorian Voss")
         self.page.get_by_role("radio", name=re.compile("^Arcanist")).check()
@@ -340,7 +342,7 @@ class BrowserAcceptance(unittest.TestCase):
         expect(self.page.locator("#character-subtitle")).to_contain_text("Male Human Arcanist")
         expect(self.page.locator("#equipment-list")).to_contain_text("Emberglass Staff")
         self.page.get_by_role("button", name="Create character", exact=True).filter(visible=True).click()
-        expect(self.page.get_by_role("button", name=re.compile("Dorian Voss"))).to_be_visible()
+        expect(self.page.locator("#character-roster").get_by_role("button", name=re.compile("Dorian Voss"))).to_be_visible()
         self.page.screenshot(path=str(ARTIFACTS / "character-creation-roster.png"))
 
     def assert_selection_layout(self):

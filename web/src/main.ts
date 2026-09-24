@@ -30,7 +30,7 @@ import {
   type EntryState,
 } from "./character-selection";
 import "./styles.css";
-import { advanceDemoTick } from "./demo-clock";
+import { advanceDemoTick, frameDeltaSeconds } from "./demo-clock";
 import { DEMO_WORLD_HALF_EXTENT, type DemoProgress } from "./demo-save";
 import { installDemoSaveControls } from "./demo-save-controls";
 import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, type Vector3 } from "./replication";
@@ -970,7 +970,7 @@ function renderWorld(deltaSeconds: number) {
 }
 
 function frame(now: number) {
-  const deltaSeconds = Math.min((now - lastTime) / 1000, 0.05);
+  const deltaSeconds = frameDeltaSeconds(now, lastTime);
   lastTime = now;
   if (entryState.phase === "character-selection") {
     renderSelection();
