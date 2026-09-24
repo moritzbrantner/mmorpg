@@ -310,40 +310,37 @@ function updateObjective() {
 }
 
 function dynamicNodes(position: Vector3): RendererSceneNode[] {
+  const character = selectedCharacter();
+  const visuals = characterVisualProfile(character);
   const x = position[0] / UNITS_PER_METRE;
   const y = position[1] / UNITS_PER_METRE;
   const z = position[2] / UNITS_PER_METRE;
   const halfYaw = facing / 2;
   const rotationQuaternion: RotationQuaternion = [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)];
-  const [swordOffsetX, swordOffsetZ] = rotateYawOffset(facing, 0.58, 0.04);
   return [
     {
       id: "player",
-      geometry: { kind: "cylinder", radius: 0.42, height: 1.65 },
-      color: "#718d84",
+      geometry: {
+        kind: "cylinder",
+        radius: visuals.bodyRadius * 0.88,
+        height: visuals.bodyHeight * 0.97,
+      },
+      color: visuals.bodyColor,
       transform: { translation: [x, y, z], rotationQuaternion },
     },
     {
       id: "player-head",
-      geometry: { kind: "sphere", radius: 0.34 },
+      geometry: { kind: "sphere", radius: visuals.headRadius },
       color: "#c49b78",
       transform: { translation: [x, y + 1.07, z] },
     },
     {
       id: "player-shoulders",
-      geometry: { kind: "box", size: [1.08, 0.24, 0.42] },
-      color: "#6e8f84",
+      geometry: { kind: "box", size: [visuals.shoulderSpan * 2.08, 0.24, 0.42] },
+      color: visuals.shoulderColor,
       transform: { translation: [x, y + 0.56, z], rotationQuaternion },
     },
-    {
-      id: "player-sword",
-      geometry: { kind: "box", size: [0.12, 1.35, 0.08] },
-      color: "#c7b66d",
-      transform: {
-        translation: [x + swordOffsetX, y + 0.15, z + swordOffsetZ],
-        rotationQuaternion,
-      },
-    },
+    ...worldWeaponNodes(x, y, z, rotationQuaternion, visuals),
     ...worldHatNodes(x, y, z, rotationQuaternion, characterAppearance.hat),
     {
       id: "waystone",
@@ -358,6 +355,69 @@ function dynamicNodes(position: Vector3): RendererSceneNode[] {
       transform: { translation: [waystone.x, 2.75, waystone.z] },
     },
   ];
+}
+
+function worldWeaponNodes(
+  x: number,
+  y: number,
+  z: number,
+  rotationQuaternion: RotationQuaternion,
+  visuals: CharacterVisualProfile,
+): RendererSceneNode[] {
+  const [weaponX, weaponZ] = rotateYawOffset(facing, 0.58, 0.04);
+  if (visuals.weapon === "bow") {
+    const [stringX, stringZ] = rotateYawOffset(facing, 0.48, 0.04);
+    return [
+      {
+        id: "player-bow",
+        geometry: { kind: "box", size: [0.09, 1.45, 0.08] },
+        color: visuals.weaponColor,
+        transform: {
+          translation: [x + weaponX, y + 0.15, z + weaponZ],
+          rotationQuaternion,
+        },
+      },
+      {
+        id: "player-bow-string",
+        geometry: { kind: "box", size: [0.025, 1.32, 0.025] },
+        color: "#d8d5c7",
+        transform: {
+          translation: [x + stringX, y + 0.15, z + stringZ],
+          rotationQuaternion,
+        },
+      },
+    ];
+  }
+  if (visuals.weapon === "staff") {
+    return [
+      {
+        id: "player-staff",
+        geometry: { kind: "box", size: [0.1, 1.75, 0.1] },
+        color: visuals.weaponColor,
+        transform: {
+          translation: [x + weaponX, y + 0.18, z + weaponZ],
+          rotationQuaternion,
+        },
+      },
+      {
+        id: "player-staff-focus",
+        geometry: { kind: "sphere", radius: 0.19 },
+        color: "#d6a677",
+        transform: {
+          translation: [x + weaponX, y + 1.07, z + weaponZ],
+        },
+      },
+    ];
+  }
+  return [{
+    id: "player-sword",
+    geometry: { kind: "box", size: [0.12, 1.35, 0.08] },
+    color: visuals.weaponColor,
+    transform: {
+      translation: [x + weaponX, y + 0.15, z + weaponZ],
+      rotationQuaternion,
+    },
+  }];
 }
 
 function worldHatNodes(
