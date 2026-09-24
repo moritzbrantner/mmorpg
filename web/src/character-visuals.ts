@@ -73,6 +73,6 @@ export function characterVisualProfile(
   return {
     ...frame,
     ...classVisuals,
-    chestSize: [...frame.chestSize],
+    chestSize: [frame.chestSize[0], frame.chestSize[1], frame.chestSize[2]],
   };
 }

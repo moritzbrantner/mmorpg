@@ -98,6 +98,7 @@ test("roster parsing fails closed for corrupt schema, duplicate identity, and in
     JSON.stringify({ schemaVersion: 2, characters: [] }),
     JSON.stringify({ schemaVersion: 1, characters: [{ id: "local-1", name: "Alina", classId: "mage", sex: "female" }] }),
     JSON.stringify({ schemaVersion: 1, characters: [{ id: "local-1", name: "Alina", classId: "ranger", sex: "other" }] }),
+    JSON.stringify({ schemaVersion: 1, characters: [{ id: "local-1", name: "AELRIC STORMWARD", classId: "ranger", sex: "female" }] }),
     JSON.stringify({ schemaVersion: 1, characters: [
       { id: "local-1", name: "Alina", classId: "ranger", sex: "female" },
       { id: "local-1", name: "Dorian", classId: "warden", sex: "male" },

@@ -68,11 +68,11 @@ export function loadCreatedCharacters(storage: CharacterRosterStorage): Characte
   }
 
   const characters = envelope.characters.map(decodeStoredCharacter);
-  const ids = new Set<string>();
-  const names = new Set<string>();
+  const ids = new Set<string>([PREVIEW_CHARACTER.id]);
+  const names = new Set<string>([PREVIEW_CHARACTER.name.normalize("NFKC").toLowerCase()]);
   for (const character of characters) {
     const name = character.name.normalize("NFKC").toLowerCase();
-    if (ids.has(character.id) || names.has(name) || character.id === PREVIEW_CHARACTER.id) {
+    if (ids.has(character.id) || names.has(name)) {
       throw new Error("Local character roster contains duplicate identity.");
     }
     ids.add(character.id);
