@@ -20,7 +20,7 @@
           <div class="character-identity">
             <p class="selection-kicker">Selected character</p>
             <h1 id="character-name">Aelric Stormward</h1>
-            <p id="character-subtitle" class="character-subtitle">Level 18 · Human Warden</p>
+            <p id="character-subtitle" class="character-subtitle">Level 18 · Male Human Warden</p>
           </div>
           <div class="equipment-heading"><span>Equipped</span><span class="preview-label">preview loadout</span></div>
           <div id="equipment-list" class="equipment-list"></div>
@@ -42,13 +42,20 @@
         </section>
 
         <div class="selection-sidebar">
-          <aside class="roster-panel" aria-label="Character roster and customization">
+          <aside id="roster-panel" class="roster-panel" aria-label="Character roster and customization">
             <p class="panel-label">Characters</p>
-            <button class="roster-character is-selected" type="button" data-character-id="aelric-stormward" aria-pressed="true">
-              <span class="roster-portrait">AS</span>
-              <span class="roster-copy"><strong>Aelric Stormward</strong><small>18 Warden · Greyhaven</small></span>
-              <span class="roster-check" aria-hidden="true">◆</span>
+            <div id="character-roster" class="character-roster">
+              <button class="roster-character is-selected" type="button" data-character-id="aelric-stormward" aria-pressed="true">
+                <span class="roster-portrait">AS</span>
+                <span class="roster-copy"><strong>Aelric Stormward</strong><small>18 Warden · Male · Greyhaven</small></span>
+                <span class="roster-check" aria-hidden="true">◆</span>
+              </button>
+            </div>
+            <button id="create-character" class="new-character" type="button">
+              <span aria-hidden="true">＋</span>
+              <span class="roster-copy"><strong>Create character</strong><small>Choose class and sex</small></span>
             </button>
+            <p id="roster-status" class="roster-status" role="status" aria-live="polite"></p>
             <div class="customization-block">
               <div class="customization-heading"><p class="panel-label">Head style</p><span>Preview appearance</span></div>
               <div class="hat-options" aria-label="Choose a hat">
@@ -64,10 +71,62 @@
               </details>
             </div>
           </aside>
-          <footer class="selection-actions">
+
+          <section id="character-creation" class="character-creation" aria-labelledby="character-creation-title" hidden>
+            <form id="character-creation-form">
+              <div class="creation-heading">
+                <div>
+                  <p class="panel-label">New character</p>
+                  <h2 id="character-creation-title">Create character</h2>
+                </div>
+                <button id="cancel-character-creation" class="creation-close" type="button" aria-label="Cancel character creation">×</button>
+              </div>
+
+              <label class="creation-name">
+                <span>Name</span>
+                <input id="new-character-name" name="characterName" type="text" minlength="2" maxlength="24"
+                  autocomplete="off" spellcheck="false" placeholder="Character name" required />
+              </label>
+
+              <fieldset class="creation-options">
+                <legend>Class</legend>
+                <div class="class-options">
+                  <label class="class-option">
+                    <input type="radio" name="characterClass" value="warden" checked />
+                    <span><strong>Warden</strong><small>Armored frontline fighter</small></span>
+                  </label>
+                  <label class="class-option">
+                    <input type="radio" name="characterClass" value="ranger" />
+                    <span><strong>Ranger</strong><small>Mobile ranged scout</small></span>
+                  </label>
+                  <label class="class-option">
+                    <input type="radio" name="characterClass" value="arcanist" />
+                    <span><strong>Arcanist</strong><small>Arcane ranged spellcaster</small></span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="creation-options">
+                <legend>Sex</legend>
+                <div class="sex-options">
+                  <label class="sex-option"><input type="radio" name="characterSex" value="male" checked /><span>Male</span></label>
+                  <label class="sex-option"><input type="radio" name="characterSex" value="female" /><span>Female</span></label>
+                </div>
+              </fieldset>
+
+              <p id="character-creation-status" class="creation-status" role="alert" aria-live="polite"></p>
+              <div class="creation-actions">
+                <button id="cancel-character-creation-secondary" type="button">Cancel</button>
+                <button class="create-confirm" type="submit">Create character</button>
+              </div>
+              <p class="creation-note">Characters created here are local to this browser prototype. Class and sex currently change the preview and starter loadout; online account persistence remains server-side roadmap work.</p>
+            </form>
+          </section>
+
+          <footer id="selection-actions" class="selection-actions">
             <div class="world-destination"><small>Destination</small><strong id="character-location">Greyhaven Outpost</strong></div>
             <button id="enter-world" class="enter-world" type="button"><span id="enter-world-label">Enter World</span><small id="enter-world-note">Start exploring Greyhaven</small></button>
-            <p class="selection-note">Offline prototype. Load game resumes the local checkpoint; Enter World uses your current session. No account-backed multiplayer saves.</p>
+            <p class="selection-note">Offline prototype. Load game resumes the selected character's local checkpoint; Enter World uses that character's current session.</p>
           </footer>
         </div>
       </section>

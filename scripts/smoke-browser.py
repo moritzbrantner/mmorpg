@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import http.server
 import json
+import re
 from pathlib import Path
 import threading
 import unittest
@@ -19,6 +20,7 @@ from playwright.sync_api import expect, sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts" / "browser"
 KEY = "mmorpg.offline-demo.v1.aelric-stormward"
+ROSTER_KEY = "mmorpg.offline-roster.v1"
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -288,6 +290,50 @@ class BrowserAcceptance(unittest.TestCase):
         self.frames()
         self.page.screenshot(path=str(ARTIFACTS / "character-selection-mobile-resume.png"))
         session.detach()
+
+    def test_character_creation_classes_sex_roster_persistence_and_save_isolation(self):
+        self.open()
+        self.page.get_by_role("button", name="Create character", exact=True).click()
+        expect(self.page.get_by_role("heading", name="Create character")).to_be_visible()
+        class_radios = self.page.get_by_role("group", name="Class").get_by_role("radio")
+        self.assertEqual(class_radios.count(), 3)
+        expect(self.page.get_by_role("radio", name=re.compile("^Warden"))).to_be_checked()
+        expect(self.page.get_by_role("radio", name="Male")).to_be_checked()
+
+        self.page.get_by_label("Name").fill("Lyra Vale")
+        self.page.get_by_role("radio", name=re.compile("^Ranger")).check()
+        self.page.get_by_role("radio", name="Female").check()
+        expect(self.page.locator("#character-subtitle")).to_contain_text("Female Human Ranger")
+        expect(self.page.locator("#equipment-list")).to_contain_text("Ashwood Longbow")
+        self.page.get_by_role("button", name="Create character", exact=True).filter(visible=True).click()
+
+        expect(self.page.get_by_role("button", name=re.compile("Lyra Vale"))).to_be_visible()
+        expect(self.page.locator("#character-name")).to_have_text("Lyra Vale")
+        roster = self.page.evaluate("key => JSON.parse(localStorage.getItem(key))", ROSTER_KEY)
+        self.assertEqual(roster["characters"], [{
+            "id": "local-1", "name": "Lyra Vale", "classId": "ranger", "sex": "female",
+        }])
+
+        self.save()
+        self.assertIsNotNone(self.page.evaluate("() => localStorage.getItem('mmorpg.offline-demo.v1.local-1')"))
+        self.assertIsNone(self.checkpoint(), "A created character must not write the built-in character save slot")
+        self.page.get_by_role("button", name=re.compile("Aelric Stormward")).click()
+        expect(self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True)).to_be_disabled()
+        self.page.get_by_role("button", name=re.compile("Lyra Vale")).click()
+        expect(self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True)).to_be_enabled()
+
+        self.page.reload()
+        self.page.wait_for_function("window.__calls.draws > 0")
+        expect(self.page.get_by_role("button", name=re.compile("Lyra Vale"))).to_be_visible()
+        self.page.get_by_role("button", name="Create character", exact=True).click()
+        self.page.get_by_label("Name").fill("Dorian Voss")
+        self.page.get_by_role("radio", name=re.compile("^Arcanist")).check()
+        expect(self.page.get_by_role("radio", name="Male")).to_be_checked()
+        expect(self.page.locator("#character-subtitle")).to_contain_text("Male Human Arcanist")
+        expect(self.page.locator("#equipment-list")).to_contain_text("Emberglass Staff")
+        self.page.get_by_role("button", name="Create character", exact=True).filter(visible=True).click()
+        expect(self.page.get_by_role("button", name=re.compile("Dorian Voss"))).to_be_visible()
+        self.page.screenshot(path=str(ARTIFACTS / "character-creation-roster.png"))
 
     def assert_selection_layout(self):
         selectors = [".selection-brand", "#preview-surface", ".turntable-controls", ".roster-panel", ".selection-actions", ".character-details"]

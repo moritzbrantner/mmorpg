@@ -6,6 +6,7 @@ import {
 } from "@moritzbrantner/three-d-renderer";
 import {
   DEFAULT_CHARACTER_APPEARANCE,
+  defaultAppearanceForClass,
   equipmentForAppearance,
   hatOption,
   isHatStyle,
@@ -16,9 +17,15 @@ import {
   type HatStyle,
 } from "./character-customization";
 import {
+  MAX_CHARACTER_SLOTS,
   PREVIEW_CHARACTER,
+  createCharacterPreview,
+  draftCharacterPreview,
   enterPreviewWorld,
   initialEntryState,
+  isCharacterClassId,
+  isCharacterSex,
+  type CharacterCreationDraft,
   type CharacterPreview,
   type EntryState,
 } from "./character-selection";
@@ -28,7 +35,10 @@ import { DEMO_WORLD_HALF_EXTENT, type DemoProgress } from "./demo-save";
 import { installDemoSaveControls } from "./demo-save-controls";
 import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, type Vector3 } from "./replication";
 import { installCharacterTurntable } from "./character-turntable";
+import { characterRosterStorageKey, loadCreatedCharacters, saveCreatedCharacters } from "./character-roster";
+import { characterVisualProfile, type CharacterVisualProfile } from "./character-visuals";
 import "./character-selection-layout.css";
+import "./character-creation.css";
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -54,6 +64,21 @@ const characterLocation = requireElement<HTMLElement>("#character-location");
 const fallbackCharacter = requireElement<HTMLElement>("#character-stage-fallback");
 const previewSurface = requireElement<HTMLElement>("#preview-surface");
 const returnButton = requireElement<HTMLButtonElement>("#return-to-characters");
+const rosterPanel = requireElement<HTMLElement>("#roster-panel");
+const rosterContainer = requireElement<HTMLElement>("#character-roster");
+const rosterStatus = requireElement<HTMLElement>("#roster-status");
+const createCharacterButton = requireElement<HTMLButtonElement>("#create-character");
+const creationPanel = requireElement<HTMLElement>("#character-creation");
+const creationForm = requireElement<HTMLFormElement>("#character-creation-form");
+const creationName = requireElement<HTMLInputElement>("#new-character-name");
+const creationStatus = requireElement<HTMLElement>("#character-creation-status");
+const cancelCreationButtons = [
+  requireElement<HTMLButtonElement>("#cancel-character-creation"),
+  requireElement<HTMLButtonElement>("#cancel-character-creation-secondary"),
+];
+const selectionActions = requireElement<HTMLElement>("#selection-actions");
+const classInputs = [...document.querySelectorAll<HTMLInputElement>('input[name="characterClass"]')];
+const sexInputs = [...document.querySelectorAll<HTMLInputElement>('input[name="characterSex"]')];
 const hatButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-hat-style]")];
 const worldUi = [...document.querySelectorAll<HTMLElement>("[data-world-ui]")];
 
@@ -74,8 +99,14 @@ let facing = Math.PI * 0.15;
 let waystoneActive = false;
 let lastTime = performance.now();
 const keys = new Set<string>();
-let entryState: EntryState = initialEntryState();
+let rosterStorageHealthy = true;
+let characters: CharacterPreview[] = [PREVIEW_CHARACTER, ...loadCreatedRoster()];
+let entryState: EntryState = initialEntryState(PREVIEW_CHARACTER);
+let activeSessionCharacterId = PREVIEW_CHARACTER.id;
+let creationDraft: CharacterCreationDraft | null = null;
 let characterAppearance: CharacterAppearance = { ...DEFAULT_CHARACTER_APPEARANCE };
+const sessionByCharacterId = new Map<string, DemoProgress>();
+const enteredCharacterIds = new Set<string>();
 const turntable = installCharacterTurntable(previewSurface, {
   left: requireElement<HTMLButtonElement>("#rotate-left"),
   right: requireElement<HTMLButtonElement>("#rotate-right"),
@@ -87,6 +118,81 @@ const turntable = installCharacterTurntable(previewSurface, {
 const snapshots = new SnapshotBuffer();
 let demoTick = 0n;
 let accumulatedTicks = 0;
+
+function loadCreatedRoster(): CharacterPreview[] {
+  try {
+    return loadCreatedCharacters(window.localStorage);
+  } catch {
+    rosterStorageHealthy = false;
+    return [];
+  }
+}
+
+function selectedCharacterId(): string {
+  return entryState.phase === "character-selection" ? entryState.selectedCharacterId : entryState.characterId;
+}
+
+function selectedCharacter(): CharacterPreview {
+  const id = selectedCharacterId();
+  const character = characters.find((candidate) => candidate.id === id);
+  if (!character) {
+    throw new Error(`Selected character ${id} is missing from the local roster.`);
+  }
+  return character;
+}
+
+function previewCharacter(): CharacterPreview {
+  return creationDraft ? draftCharacterPreview(creationDraft) : selectedCharacter();
+}
+
+function defaultAppearanceForCharacter(character: CharacterPreview): CharacterAppearance {
+  return character.id === PREVIEW_CHARACTER.id
+    ? { ...DEFAULT_CHARACTER_APPEARANCE }
+    : defaultAppearanceForClass(character.classId);
+}
+
+function captureProgress(): DemoProgress {
+  return {
+    position: { ...player },
+    facing,
+    waystoneActive,
+    appearance: { ...characterAppearance },
+    tick: demoTick,
+    tickFraction: accumulatedTicks,
+  };
+}
+
+function applyProgress(progress: DemoProgress): void {
+  player.x = progress.position.x;
+  player.z = progress.position.z;
+  facing = progress.facing;
+  waystoneActive = progress.waystoneActive;
+  characterAppearance = { ...progress.appearance };
+  demoTick = progress.tick;
+  accumulatedTicks = progress.tickFraction;
+}
+
+function initialProgress(character: CharacterPreview): DemoProgress {
+  return {
+    position: { x: -5.5, z: 4.5 },
+    facing: Math.PI * 0.15,
+    waystoneActive: false,
+    appearance: defaultAppearanceForCharacter(character),
+    tick: 0n,
+    tickFraction: 0,
+  };
+}
+
+function rememberActiveSession(): void {
+  sessionByCharacterId.set(activeSessionCharacterId, captureProgress());
+}
+
+function activateCharacterSession(character: CharacterPreview): void {
+  activeSessionCharacterId = character.id;
+  applyProgress(sessionByCharacterId.get(character.id) ?? initialProgress(character));
+  snapshots.reset();
+  publishDemoSnapshot();
+}
 
 function publishDemoSnapshot() {
   snapshots.push({
@@ -302,6 +408,8 @@ function worldHatNodes(
 }
 
 function selectionCharacterNodes(): RendererSceneNode[] {
+  const character = previewCharacter();
+  const visuals = characterVisualProfile(character);
   const baseX = -1.2;
   const yaw = turntable.yaw;
   const halfYaw = yaw / 2;
@@ -311,56 +419,57 @@ function selectionCharacterNodes(): RendererSceneNode[] {
     const sin = Math.sin(yaw);
     return [baseX + x * cos + z * sin, y, -x * sin + z * cos];
   };
+  const bodyY = 1.28 - (1.7 - visuals.bodyHeight) / 2;
 
   return [
     {
       id: "preview-body",
-      geometry: { kind: "cylinder", radius: 0.48, height: 1.7 },
-      color: "#718d84",
-      transform: { translation: localPoint(0, 1.28, 0), rotationQuaternion },
+      geometry: { kind: "cylinder", radius: visuals.bodyRadius, height: visuals.bodyHeight },
+      color: visuals.bodyColor,
+      transform: { translation: localPoint(0, bodyY, 0), rotationQuaternion },
     },
     {
       id: "preview-chest",
-      geometry: { kind: "box", size: [0.86, 0.82, 0.5] },
-      color: "#58746b",
+      geometry: { kind: "box", size: [visuals.chestSize[0], visuals.chestSize[1], visuals.chestSize[2]] },
+      color: visuals.chestColor,
       transform: { translation: localPoint(0, 1.58, 0), rotationQuaternion },
     },
     {
       id: "preview-head",
-      geometry: { kind: "sphere", radius: 0.34 },
+      geometry: { kind: "sphere", radius: visuals.headRadius },
       color: "#c49b78",
       transform: { translation: localPoint(0, 2.48, 0), rotationQuaternion },
     },
     ...previewHatNodes(characterAppearance.hat, localPoint, rotationQuaternion),
     {
       id: "preview-face",
-      geometry: { kind: "sphere", radius: 0.27 },
+      geometry: { kind: "sphere", radius: visuals.headRadius * 0.8 },
       color: "#c49b78",
       transform: { translation: localPoint(0, 2.46, -0.18), rotationQuaternion },
     },
     {
       id: "preview-shoulder-left",
       geometry: { kind: "box", size: [0.42, 0.28, 0.62] },
-      color: "#6e8f84",
-      transform: { translation: localPoint(-0.52, 1.96, 0), rotationQuaternion },
+      color: visuals.shoulderColor,
+      transform: { translation: localPoint(-visuals.shoulderSpan, 1.96, 0), rotationQuaternion },
     },
     {
       id: "preview-shoulder-right",
       geometry: { kind: "box", size: [0.42, 0.28, 0.62] },
-      color: "#6e8f84",
-      transform: { translation: localPoint(0.52, 1.96, 0), rotationQuaternion },
+      color: visuals.shoulderColor,
+      transform: { translation: localPoint(visuals.shoulderSpan, 1.96, 0), rotationQuaternion },
     },
     {
       id: "preview-arm-left",
-      geometry: { kind: "cylinder", radius: 0.16, height: 1.02 },
-      color: "#718d84",
-      transform: { translation: localPoint(-0.52, 1.37, 0), rotationQuaternion },
+      geometry: { kind: "cylinder", radius: visuals.armRadius, height: 1.02 },
+      color: visuals.bodyColor,
+      transform: { translation: localPoint(-visuals.shoulderSpan, 1.37, 0), rotationQuaternion },
     },
     {
       id: "preview-arm-right",
-      geometry: { kind: "cylinder", radius: 0.16, height: 1.02 },
-      color: "#718d84",
-      transform: { translation: localPoint(0.52, 1.37, 0), rotationQuaternion },
+      geometry: { kind: "cylinder", radius: visuals.armRadius, height: 1.02 },
+      color: visuals.bodyColor,
+      transform: { translation: localPoint(visuals.shoulderSpan, 1.37, 0), rotationQuaternion },
     },
     {
       id: "preview-boot-left",
@@ -377,13 +486,61 @@ function selectionCharacterNodes(): RendererSceneNode[] {
     {
       id: "preview-cloak",
       geometry: { kind: "box", size: [0.82, 1.45, 0.08] },
-      color: "#425c56",
+      color: visuals.cloakColor,
       transform: { translation: localPoint(0, 1.37, 0.34), rotationQuaternion },
     },
+    ...previewWeaponNodes(visuals, localPoint, rotationQuaternion),
+  ];
+}
+
+function previewWeaponNodes(
+  visuals: CharacterVisualProfile,
+  localPoint: LocalPoint,
+  rotationQuaternion: RotationQuaternion,
+): RendererSceneNode[] {
+  if (visuals.weapon === "bow") {
+    return [
+      {
+        id: "preview-bow-upper",
+        geometry: { kind: "box", size: [0.09, 0.9, 0.08] },
+        color: visuals.weaponColor,
+        transform: { translation: localPoint(0.82, 1.62, 0), rotationQuaternion },
+      },
+      {
+        id: "preview-bow-lower",
+        geometry: { kind: "box", size: [0.09, 0.9, 0.08] },
+        color: visuals.weaponColor,
+        transform: { translation: localPoint(0.82, 0.78, 0), rotationQuaternion },
+      },
+      {
+        id: "preview-bow-string",
+        geometry: { kind: "box", size: [0.025, 1.65, 0.025] },
+        color: "#d8d5c7",
+        transform: { translation: localPoint(0.7, 1.2, 0), rotationQuaternion },
+      },
+    ];
+  }
+  if (visuals.weapon === "staff") {
+    return [
+      {
+        id: "preview-staff",
+        geometry: { kind: "box", size: [0.1, 1.9, 0.1] },
+        color: visuals.weaponColor,
+        transform: { translation: localPoint(0.82, 1.2, 0), rotationQuaternion },
+      },
+      {
+        id: "preview-staff-focus",
+        geometry: { kind: "sphere", radius: 0.22 },
+        color: "#d6a677",
+        transform: { translation: localPoint(0.82, 2.18, 0), rotationQuaternion },
+      },
+    ];
+  }
+  return [
     {
       id: "preview-sword-blade",
       geometry: { kind: "box", size: [0.13, 1.78, 0.09] },
-      color: "#d3d6cf",
+      color: visuals.weaponColor,
       transform: { translation: localPoint(0.82, 1.1, -0.02), rotationQuaternion },
     },
     {
@@ -454,7 +611,8 @@ function previewHatNodes(
 
 function renderCharacterDetails(character: CharacterPreview, appearance: CharacterAppearance) {
   characterName.textContent = character.name;
-  characterSubtitle.textContent = `Level ${character.level} · ${character.race} ${character.className}`;
+  const sex = character.sex === "male" ? "Male" : "Female";
+  characterSubtitle.textContent = `Level ${character.level} · ${sex} ${character.race} ${character.className}`;
   characterLocation.textContent = character.location;
   const equipment = equipmentForAppearance(character, appearance);
   equipmentList.replaceChildren(...equipment.map((item) => {
@@ -477,7 +635,7 @@ function renderCharacterDetails(character: CharacterPreview, appearance: Charact
 function applyAppearance(nextAppearance: CharacterAppearance, message: string) {
   characterAppearance = { ...nextAppearance };
   characterSelect.dataset.hat = characterAppearance.hat;
-  renderCharacterDetails(PREVIEW_CHARACTER, characterAppearance);
+  renderCharacterDetails(previewCharacter(), characterAppearance);
   for (const button of hatButtons) {
     const selected = button.dataset.hatStyle === characterAppearance.hat;
     button.classList.toggle("is-selected", selected);
@@ -489,7 +647,7 @@ function applyAppearance(nextAppearance: CharacterAppearance, message: string) {
 function saveCurrentCharacter() {
   saveControls.cancelPending();
   try {
-    const saved = saveCharacter(localStorage, PREVIEW_CHARACTER.id, characterAppearance);
+    const saved = saveCharacter(localStorage, selectedCharacter().id, characterAppearance);
     saveStatus.textContent = `Saved locally · ${hatOption(saved.appearance.hat).name}`;
   } catch {
     saveStatus.textContent = "Browser storage is unavailable; character was not saved.";
@@ -499,7 +657,7 @@ function saveCurrentCharacter() {
 function loadSavedCharacter() {
   saveControls.cancelPending();
   try {
-    const saved = loadCharacter(localStorage, PREVIEW_CHARACTER.id);
+    const saved = loadCharacter(localStorage, selectedCharacter().id);
     if (!saved) {
       saveStatus.textContent = "No local save exists for this character yet.";
       return;
@@ -507,6 +665,182 @@ function loadSavedCharacter() {
     applyAppearance(saved.appearance, `Loaded local save · ${hatOption(saved.appearance.hat).name}`);
   } catch {
     saveStatus.textContent = "Local save is invalid and was not loaded.";
+  }
+}
+
+function renderRoster(): void {
+  const selectedId = selectedCharacterId();
+  const buttons = characters.map((character) => {
+    const button = document.createElement("button");
+    button.className = "roster-character";
+    button.type = "button";
+    button.dataset.characterId = character.id;
+    const selected = character.id === selectedId;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+
+    const portrait = document.createElement("span");
+    portrait.className = "roster-portrait";
+    portrait.textContent = character.name.split(" ").map((part) => part[0] ?? "").join("").slice(0, 2).toUpperCase();
+    const copy = document.createElement("span");
+    copy.className = "roster-copy";
+    const name = document.createElement("strong");
+    name.textContent = character.name;
+    const detail = document.createElement("small");
+    detail.textContent = `${character.level} ${character.className} · ${character.sex === "male" ? "Male" : "Female"} · Greyhaven`;
+    copy.append(name, detail);
+    const check = document.createElement("span");
+    check.className = "roster-check";
+    check.setAttribute("aria-hidden", "true");
+    check.textContent = selected ? "◆" : "";
+    button.append(portrait, copy, check);
+    button.addEventListener("click", () => selectCharacter(character.id));
+    return button;
+  });
+  rosterContainer.replaceChildren(...buttons);
+  createCharacterButton.disabled = characters.length >= MAX_CHARACTER_SLOTS;
+  createCharacterButton.title = createCharacterButton.disabled ? "All character slots are full." : "";
+}
+
+function updateEntryButton(): void {
+  const character = selectedCharacter();
+  const resume = enteredCharacterIds.has(character.id);
+  requireElement<HTMLElement>("#enter-world-label").textContent = resume ? "Resume exploration" : "Enter World";
+  requireElement<HTMLElement>("#enter-world-note").textContent = resume
+    ? "Current session paused · not automatically saved"
+    : `Start ${character.name} in Greyhaven`;
+}
+
+function refreshSelectionPresentation(): void {
+  const character = previewCharacter();
+  characterSelect.dataset.hat = characterAppearance.hat;
+  characterSelect.dataset.sex = character.sex;
+  characterSelect.dataset.characterClass = character.classId;
+  renderCharacterDetails(character, characterAppearance);
+  for (const button of hatButtons) {
+    const selected = button.dataset.hatStyle === characterAppearance.hat;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+}
+
+function selectCharacter(characterId: string): void {
+  if (creationDraft) {
+    return;
+  }
+  const character = characters.find((candidate) => candidate.id === characterId);
+  if (!character || character.id === selectedCharacterId()) {
+    return;
+  }
+  saveControls.cancelPending();
+  rememberActiveSession();
+  entryState = initialEntryState(character);
+  activateCharacterSession(character);
+  refreshSelectionPresentation();
+  renderRoster();
+  updateEntryButton();
+  saveControls.refresh();
+  layoutPreview();
+}
+
+function setCreationMode(active: boolean): void {
+  creationPanel.hidden = !active;
+  rosterPanel.hidden = active;
+  selectionActions.hidden = active;
+}
+
+function syncCreationDraft(): void {
+  if (!creationDraft) {
+    return;
+  }
+  const classId = classInputs.find((input) => input.checked)?.value;
+  const sex = sexInputs.find((input) => input.checked)?.value;
+  if (!isCharacterClassId(classId) || !isCharacterSex(sex)) {
+    return;
+  }
+  const classChanged = creationDraft.classId !== classId;
+  creationDraft = { name: creationName.value, classId, sex };
+  if (classChanged) {
+    characterAppearance = defaultAppearanceForClass(classId);
+  }
+  refreshSelectionPresentation();
+}
+
+function openCharacterCreation(): void {
+  if (characters.length >= MAX_CHARACTER_SLOTS) {
+    rosterStatus.textContent = `All ${MAX_CHARACTER_SLOTS} character slots are full.`;
+    return;
+  }
+  saveControls.cancelPending();
+  rememberActiveSession();
+  creationDraft = { name: "", classId: "warden", sex: "male" };
+  characterAppearance = defaultAppearanceForClass("warden");
+  creationForm.reset();
+  creationName.value = "";
+  creationStatus.textContent = "";
+  setCreationMode(true);
+  refreshSelectionPresentation();
+  turntable.cancel();
+  layoutPreview();
+  creationName.focus();
+}
+
+function cancelCharacterCreation(): void {
+  if (!creationDraft) {
+    return;
+  }
+  creationDraft = null;
+  setCreationMode(false);
+  activateCharacterSession(selectedCharacter());
+  refreshSelectionPresentation();
+  renderRoster();
+  updateEntryButton();
+  saveControls.refresh();
+  layoutPreview();
+  createCharacterButton.focus();
+}
+
+function persistCreatedRoster(): boolean {
+  if (!rosterStorageHealthy) {
+    return false;
+  }
+  try {
+    saveCreatedCharacters(window.localStorage, characters.filter((character) => character.id.startsWith("local-")));
+    return true;
+  } catch {
+    rosterStorageHealthy = false;
+    return false;
+  }
+}
+
+function finishCharacterCreation(): void {
+  if (!creationDraft) {
+    return;
+  }
+  syncCreationDraft();
+  if (!creationDraft) {
+    return;
+  }
+  try {
+    const character = createCharacterPreview(creationDraft, characters);
+    characters = [...characters, character];
+    const persisted = persistCreatedRoster();
+    creationDraft = null;
+    setCreationMode(false);
+    entryState = initialEntryState(character);
+    activateCharacterSession(character);
+    refreshSelectionPresentation();
+    renderRoster();
+    updateEntryButton();
+    saveControls.refresh();
+    rosterStatus.textContent = persisted
+      ? `${character.name} created locally.`
+      : `${character.name} created for this session only; browser roster storage is unavailable.`;
+    layoutPreview();
+    rosterContainer.querySelector<HTMLButtonElement>(`[data-character-id="${character.id}"]`)?.focus();
+  } catch (error) {
+    creationStatus.textContent = error instanceof Error ? error.message : "Character could not be created.";
+    creationName.focus();
   }
 }
 
@@ -587,10 +921,21 @@ function frame(now: number) {
 }
 
 function enterWorld() {
+  if (creationDraft) {
+    return;
+  }
   turntable.cancel();
-  entryState = enterPreviewWorld(entryState);
+  const character = selectedCharacter();
+  if (activeSessionCharacterId !== character.id) {
+    rememberActiveSession();
+    activateCharacterSession(character);
+  }
+  entryState = enterPreviewWorld(entryState, character);
+  enteredCharacterIds.add(character.id);
   characterSelect.hidden = true;
-  for (const element of worldUi) element.hidden = false;
+  for (const element of worldUi) {
+    element.hidden = false;
+  }
   camera.position.set(player.x + 8.5, 7.6, player.z + 10.5);
   updateObjective();
   keys.clear();
@@ -606,13 +951,20 @@ function resumeWorld() {
 function returnToCharacters() {
   saveControls.cancelPending();
   turntable.cancel();
-  entryState = initialEntryState();
+  const character = selectedCharacter();
+  rememberActiveSession();
+  entryState = initialEntryState(character);
   keys.clear();
   characterSelect.hidden = false;
-  for (const element of worldUi) element.hidden = true;
+  for (const element of worldUi) {
+    element.hidden = true;
+  }
   prompt.hidden = true;
-  requireElement<HTMLElement>("#enter-world-label").textContent = "Resume exploration";
-  requireElement<HTMLElement>("#enter-world-note").textContent = "Current session paused · not automatically saved";
+  setCreationMode(false);
+  creationDraft = null;
+  refreshSelectionPresentation();
+  renderRoster();
+  updateEntryButton();
   lastTime = performance.now();
   saveControls.refresh();
   characterSelect.scrollTop = 0;
@@ -620,27 +972,18 @@ function returnToCharacters() {
   previewSurface.focus({ preventScroll: true });
 }
 
-applyAppearance(DEFAULT_CHARACTER_APPEARANCE, "Not saved yet.");
+refreshSelectionPresentation();
 const saveControls = installDemoSaveControls(
   [...document.querySelectorAll<HTMLElement>("[data-game-save-controls]")],
-  PREVIEW_CHARACTER.id,
-  (): DemoProgress => ({
-    position: { ...player },
-    facing,
-    waystoneActive,
-    appearance: { ...characterAppearance },
-    tick: demoTick,
-    tickFraction: accumulatedTicks,
-  }),
+  () => selectedCharacter().id,
+  captureProgress,
   (saved) => {
     // The controller validates the entire document before invoking this commit boundary.
-    player.x = saved.position.x;
-    player.z = saved.position.z;
-    facing = saved.facing;
-    waystoneActive = saved.waystoneActive;
-    demoTick = saved.tick;
-    accumulatedTicks = saved.tickFraction;
-    applyAppearance(saved.appearance, "Appearance restored from game save.");
+    const character = selectedCharacter();
+    activeSessionCharacterId = character.id;
+    applyProgress(saved);
+    sessionByCharacterId.set(character.id, captureProgress());
+    refreshSelectionPresentation();
     keys.clear();
     snapshots.reset();
     publishDemoSnapshot();
@@ -648,10 +991,18 @@ const saveControls = installDemoSaveControls(
   },
 );
 
+renderRoster();
+updateEntryButton();
+if (!rosterStorageHealthy) {
+  rosterStatus.textContent = "Saved local roster could not be read; new characters will remain in this session only.";
+}
+
 for (const button of hatButtons) {
   button.addEventListener("click", () => {
     const style = button.dataset.hatStyle;
-    if (!isHatStyle(style)) return;
+    if (!isHatStyle(style)) {
+      return;
+    }
     saveControls.cancelPending();
     applyAppearance({ hat: style }, `Unsaved change · ${hatOption(style).name}`);
   });
@@ -660,14 +1011,41 @@ saveCharacterButton.addEventListener("click", saveCurrentCharacter);
 loadCharacterButton.addEventListener("click", loadSavedCharacter);
 enterWorldButton.addEventListener("click", resumeWorld);
 returnButton.addEventListener("click", returnToCharacters);
-canvas.addEventListener("pointerdown", () => { if (entryState.phase === "world") canvas.focus(); });
+createCharacterButton.addEventListener("click", openCharacterCreation);
+for (const button of cancelCreationButtons) {
+  button.addEventListener("click", cancelCharacterCreation);
+}
+creationName.addEventListener("input", syncCreationDraft);
+for (const input of [...classInputs, ...sexInputs]) {
+  input.addEventListener("change", syncCreationDraft);
+}
+creationForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  finishCharacterCreation();
+});
+canvas.addEventListener("pointerdown", () => {
+  if (entryState.phase === "world") {
+    canvas.focus();
+  }
+});
 
 window.addEventListener("keydown", (event) => {
-  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.altKey || event.ctrlKey || event.metaKey) {
+    return;
+  }
   // Native controls and the turntable own their keyboard input.
   if (event.target instanceof HTMLElement &&
-      event.target.closest("button, input, select, textarea, summary, a, [contenteditable=true], [role=slider], [data-game-save-controls]")) return;
+      event.target.closest("button, input, select, textarea, summary, a, [contenteditable=true], [role=slider], [data-game-save-controls]")) {
+    return;
+  }
   if (entryState.phase === "character-selection") {
+    if (creationDraft) {
+      if (event.code === "Escape" && !event.repeat) {
+        event.preventDefault();
+        cancelCharacterCreation();
+      }
+      return;
+    }
     if (event.code === "Enter" && !event.repeat) {
       event.preventDefault();
       resumeWorld();
@@ -680,7 +1058,9 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   keys.add(event.code);
-  if (event.code === "KeyE" && !event.repeat) interact();
+  if (event.code === "KeyE" && !event.repeat) {
+    interact();
+  }
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(event.code)) {
     event.preventDefault();
   }
@@ -689,7 +1069,29 @@ window.addEventListener("keyup", (event) => keys.delete(event.code));
 window.addEventListener("blur", () => keys.clear());
 window.addEventListener("resize", resize);
 document.addEventListener("focusin", () => keys.clear());
-document.addEventListener("visibilitychange", () => { if (document.hidden) keys.clear(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    keys.clear();
+  }
+});
+window.addEventListener("storage", (event) => {
+  if (event.key !== characterRosterStorageKey() || !rosterStorageHealthy || creationDraft) {
+    return;
+  }
+  try {
+    const currentId = selectedCharacterId();
+    const created = loadCreatedCharacters(window.localStorage);
+    const next = [PREVIEW_CHARACTER, ...created];
+    if (!next.some((character) => character.id === currentId)) {
+      return;
+    }
+    characters = next;
+    renderRoster();
+  } catch {
+    rosterStorageHealthy = false;
+    rosterStatus.textContent = "Saved local roster became invalid; current in-memory characters were retained.";
+  }
+});
 characterSelect.addEventListener("scroll", layoutPreview, { passive: true });
 new ResizeObserver(layoutPreview).observe(previewSurface);
 
