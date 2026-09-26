@@ -87,6 +87,12 @@ This builds the client and host, creates disposable development TLS credentials,
 
 For persistent interactive play, see [native setup and controls](docs/NATIVE_CLIENT.md). Tauri is a possible future launcher shell; the gameplay window uses a native GPU surface. See [the decision](docs/adr/0001-native-client.md).
 
+Start the complete local native development environment with:
+
+```sh
+./scripts/dev-native.sh
+```
+
 ## Browser tech demo
 
 `web/` is a small, intentionally non-authoritative GitHub Pages client. It provides a tiny world slice with local movement, a follow camera, and an interactable waystone so browser/client work can advance before online session integration. It does **not** simulate distributed ownership, persistence, handoffs, or authoritative multiplayer state. Those remain in the Rust/server boundaries above.
