@@ -79,8 +79,12 @@ pub const fn direction(yaw: u16) -> (i32, i32) {
 
 /// Scales a Q16 unit component by an integer magnitude, rounding half away
 /// from zero so opposite directions produce exactly negated results.
+///
+/// Returns `None` when the rounded result does not fit in `i32`, for example
+/// `i32::MIN` scaled by `-TRIG_ONE`; it never wraps.
 #[must_use]
-pub const fn scale(magnitude: i32, unit: i32) -> i32 {
+pub const fn checked_scale(magnitude: i32, unit: i32) -> Option<i32> {
+    // |magnitude · unit| <= 2^62, so the product and the rounding never overflow.
     let product = magnitude as i64 * unit as i64;
     let half = (TRIG_ONE / 2) as i64;
     let rounded = if product >= 0 {
@@ -88,8 +92,11 @@ pub const fn scale(magnitude: i32, unit: i32) -> i32 {
     } else {
         (product - half) / TRIG_ONE as i64
     };
-    // |unit| <= TRIG_ONE, so |rounded| <= |magnitude| and always fits.
-    rounded as i32
+    if rounded < i32::MIN as i64 || rounded > i32::MAX as i64 {
+        None
+    } else {
+        Some(rounded as i32)
+    }
 }
 
 #[cfg(test)]
@@ -165,16 +172,41 @@ mod tests {
 
     #[test]
     fn scaling_rounds_half_away_from_zero_symmetrically() {
-        assert_eq!(scale(21, TRIG_ONE), 21);
-        assert_eq!(scale(21, -TRIG_ONE), -21);
-        assert_eq!(scale(21, 0), 0);
-        assert_eq!(scale(21, TRIG_ONE / 2), 11, "10.5 rounds away from zero");
-        assert_eq!(scale(21, -TRIG_ONE / 2), -11);
-        assert_eq!(scale(21, 46_341), 15);
-        assert_eq!(scale(i32::MAX, TRIG_ONE), i32::MAX);
-        assert_eq!(scale(i32::MIN, TRIG_ONE), i32::MIN);
+        assert_eq!(checked_scale(21, TRIG_ONE), Some(21));
+        assert_eq!(checked_scale(21, -TRIG_ONE), Some(-21));
+        assert_eq!(checked_scale(21, 0), Some(0));
+        assert_eq!(
+            checked_scale(21, TRIG_ONE / 2),
+            Some(11),
+            "10.5 rounds away from zero"
+        );
+        assert_eq!(checked_scale(21, -TRIG_ONE / 2), Some(-11));
+        assert_eq!(checked_scale(21, 46_341), Some(15));
         for unit in [-TRIG_ONE, -46_341, -1, 1, 777, 46_341, TRIG_ONE] {
-            assert_eq!(scale(13, -unit), -scale(13, unit));
+            let scaled = checked_scale(13, unit).unwrap();
+            assert_eq!(checked_scale(13, -unit), Some(-scaled));
         }
+    }
+
+    #[test]
+    fn scaling_reports_results_outside_i32_instead_of_wrapping() {
+        assert_eq!(checked_scale(i32::MAX, TRIG_ONE), Some(i32::MAX));
+        assert_eq!(checked_scale(i32::MAX, -TRIG_ONE), Some(-i32::MAX));
+        assert_eq!(checked_scale(i32::MIN, TRIG_ONE), Some(i32::MIN));
+        // An ordinary lookup yields exactly -1.0: cos 180° and sin 270°.
+        let (_, toward_negative_z) = direction(HALF_TURN);
+        let (toward_negative_x, _) = direction(3 * YAW_QUARTER_TURN);
+        assert_eq!(toward_negative_z, -TRIG_ONE);
+        assert_eq!(toward_negative_x, -TRIG_ONE);
+        assert_eq!(
+            checked_scale(i32::MIN, toward_negative_z),
+            None,
+            "+2^31 must not wrap"
+        );
+        assert_eq!(checked_scale(i32::MIN, toward_negative_x), None);
+        // Units beyond ±1.0 are outside a direction's range but still never wrap.
+        assert_eq!(checked_scale(i32::MAX, TRIG_ONE + 1), None);
+        assert_eq!(checked_scale(i32::MIN, i32::MIN), None);
+        assert_eq!(checked_scale(1, i32::MIN), Some(-32_768));
     }
 }

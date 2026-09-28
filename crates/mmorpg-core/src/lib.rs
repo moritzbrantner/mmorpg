@@ -409,7 +409,7 @@ impl ZoneSimulation {
             } else {
                 body.velocity().y
             };
-            let mut velocity = movement_velocity(*state);
+            let mut velocity = movement_velocity(*state)?;
             velocity.y = vertical_velocity;
             self.world
                 .set_velocity(body_id, velocity)
@@ -608,13 +608,13 @@ impl ZoneSimulation {
 /// Horizontal controller velocity: `speed × direction(facing + local offset)`,
 /// where the offset is one of eight multiples of 45°. The character's right is
 /// `direction(facing - 90°)`. Zero intent yields zero horizontal velocity.
-fn movement_velocity(state: PlayerState) -> Vec3i {
+fn movement_velocity(state: PlayerState) -> Result<Vec3i, ZoneError> {
     const FORWARD: u16 = 0;
     const LEFT: u16 = YAW_QUARTER_TURN;
     const BACKWARD: u16 = 2 * YAW_QUARTER_TURN;
     const RIGHT: u16 = 3 * YAW_QUARTER_TURN;
     let offset = match (state.forward, state.strafe) {
-        (Axis::Zero, Axis::Zero) => return Vec3i::ZERO,
+        (Axis::Zero, Axis::Zero) => return Ok(Vec3i::ZERO),
         (Axis::Positive, Axis::Zero) => FORWARD,
         (Axis::Positive, Axis::Negative) => FORWARD + YAW_EIGHTH_TURN,
         (Axis::Zero, Axis::Negative) => LEFT,
@@ -629,7 +629,10 @@ fn movement_velocity(state: PlayerState) -> Vec3i {
         Axis::Zero | Axis::Positive => RUN_SPEED_UNITS_PER_TICK,
     };
     let (x, z) = trig::direction(state.facing.wrapping_add(offset));
-    Vec3i::new(trig::scale(speed, x), 0, trig::scale(speed, z))
+    let component = |unit| {
+        trig::checked_scale(speed, unit).ok_or_else(|| ZoneError::new("movement velocity overflow"))
+    };
+    Ok(Vec3i::new(component(x)?, 0, component(z)?))
 }
 
 /// A thin probe directly under the feet, inset by one unit horizontally so
