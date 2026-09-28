@@ -130,9 +130,11 @@ pub fn build_zone_matches(
         .into_iter()
         .map(|zone_id| {
             let match_id = zone_match_id(zone_id).map_err(ZoneHostBuildError::MatchId)?;
-            let simulation =
-                ZoneGameServerAdapter::with_definition(zone_id, mmorpg_core::outpost_definition())
-                    .map_err(ZoneHostBuildError::Content)?;
+            let simulation = ZoneGameServerAdapter::with_definition(
+                zone_id,
+                mmorpg_core::greyhaven_vale_definition(),
+            )
+            .map_err(ZoneHostBuildError::Content)?;
             Ok((match_id, simulation))
         })
         .collect()
@@ -410,11 +412,19 @@ mod tests {
         let first_snapshot = decode_snapshot(&first_snapshot.payload).unwrap();
         let second_snapshot = decode_snapshot(&second_snapshot.payload).unwrap();
 
+        // Each first player starts on spawn slot 0 of the hosted vale.
+        let [spawn_x, spawn_z] = mmorpg_core::greyhaven_vale::SPAWN_GRID.origin;
         assert_eq!(first_snapshot.zone_id, first_zone);
         assert_eq!(first_snapshot.tick, 3);
-        assert!(first_snapshot.entities[0].position[0] > 0);
+        assert_eq!(
+            first_snapshot.entities[0].position,
+            [spawn_x + 3 * 21, 90, spawn_z]
+        );
         assert_eq!(second_snapshot.zone_id, second_zone);
         assert_eq!(second_snapshot.tick, 1);
-        assert!(second_snapshot.entities[0].position[2] < 0);
+        assert_eq!(
+            second_snapshot.entities[0].position,
+            [spawn_x, 90, spawn_z - 21]
+        );
     }
 }

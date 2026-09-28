@@ -17,7 +17,7 @@ use std::sync::OnceLock;
 
 use mmorpg_core::{
     PLAYER_HALF_EXTENTS_UNITS, StaticCollider, UNITS_PER_METRE, ZoneAreas, ZoneDefinition,
-    outpost_areas,
+    greyhaven_vale,
 };
 use serde::Serialize;
 
@@ -111,10 +111,9 @@ pub struct AreaExport {
     pub max_xz: [i32; 2],
 }
 
-/// The areas of the hosted content, built once.
+/// The areas of the hosted content.
 pub fn hosted_areas() -> &'static ZoneAreas {
-    static AREAS: OnceLock<ZoneAreas> = OnceLock::new();
-    AREAS.get_or_init(outpost_areas)
+    greyhaven_vale::areas()
 }
 
 /// Presentation relief at `(x, z)` in units. Clients offset units by it
@@ -291,7 +290,7 @@ mod tests {
                 .colliders()
                 .iter()
                 .any(|collider| top(collider) <= 0),
-            "the outpost has a ground slab"
+            "the vale has a ground slab"
         );
         for prop in &scenery.props {
             let collider = definition
@@ -330,7 +329,7 @@ mod tests {
             let row = u32::try_from((z - terrain.origin_xz[1]) / terrain.step).unwrap();
             terrain.biomes[usize::try_from(row * terrain.columns + column).unwrap()]
         };
-        assert_eq!(biome_at(0, 0), BIOME_COURTYARD, "spawn stands on the slab");
+        assert_eq!(biome_at(0, 0), BIOME_COURTYARD, "the hub is on the slab");
         assert_eq!(
             biome_at(terrain.origin_xz[0], terrain.origin_xz[1]),
             BIOME_WILDS
@@ -354,8 +353,9 @@ mod tests {
         assert_eq!(value["areas"][0]["name"], "Greyhaven Outpost");
         assert_eq!(
             value["areas"][0]["minXz"],
-            serde_json::json!([-1_100, -1_100])
+            serde_json::json!([-3_500, -1_300])
         );
+        assert_eq!(value["areas"].as_array().unwrap().len(), 5);
         assert_eq!(value["props"][0]["kind"], "block");
         assert!(value["water"].as_array().unwrap().is_empty());
     }
@@ -370,8 +370,17 @@ mod tests {
                 .unwrap()
                 .color
         };
-        assert_eq!(colour(6), colour(8), "boundary walls share a colour");
-        assert_ne!(colour(2), colour(6), "buildings differ from walls");
+        let walls = greyhaven_vale::ids::BOUNDARY_WALLS;
+        assert_eq!(
+            colour(*walls.start()),
+            colour(*walls.end()),
+            "boundary walls share a colour"
+        );
+        assert_ne!(
+            colour(greyhaven_vale::ids::KEEP),
+            colour(*walls.start()),
+            "buildings differ from walls"
+        );
     }
 
     #[test]

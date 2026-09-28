@@ -83,4 +83,4 @@ sequence = 5
 kind = "position"
 bot = "alice"
 tick = 6
-position = [126, 90, 0]
+position = [-1424, 90, 1250]

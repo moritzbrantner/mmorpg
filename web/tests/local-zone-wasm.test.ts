@@ -30,10 +30,10 @@ describe("WASM local zone host", () => {
   test("loads under Bun and hosts zone 1 with the shared content revision", () => {
     const zone = new wasm.LocalZone() as InstanceType<typeof wasm.LocalZone> & { zoneId(): number };
     expect(zone.zoneId()).toBe(1);
-    expect(zone.contentRevision()).toBe(1n);
+    expect(zone.contentRevision()).toBe(2n);
     const player = zone.join();
     const projection = decodeSnapshot(zone.projection(player));
-    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 1n, viewerId: player });
+    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 2n, viewerId: player });
     expect(() => zone.submit(player, 1, Uint8Array.of(1, 1, 0, 0, 0, 0))).toThrow();
     expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(true);
     expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(false);
@@ -95,7 +95,7 @@ describe("WASM local zone host", () => {
 
   test("scenery and areas come from the same content as the zone", () => {
     const { source, scenery } = createLocalWorld(wasm);
-    expect(scenery.scenery.contentRevision).toBe(1n);
+    expect(scenery.scenery.contentRevision).toBe(2n);
     expect(scenery.scenery.source).toBe("core-collider-blockout");
     expect(scenery.scenery.playerHalfExtents).toEqual([30, 90, 30]);
     source.join();

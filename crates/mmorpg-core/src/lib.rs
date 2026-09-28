@@ -4,10 +4,11 @@ mod areas;
 mod content;
 mod interest;
 pub mod trig;
-pub use areas::{Area, AreaId, MAX_AREA_NAME_BYTES, MAX_ZONE_AREAS, ZoneAreas, outpost_areas};
+pub use areas::{Area, AreaId, MAX_AREA_NAME_BYTES, MAX_ZONE_AREAS, ZoneAreas};
+pub use content::greyhaven_vale::{self, greyhaven_vale_definition};
 pub use content::{
     MAX_CONTENT_COORDINATE_UNITS, MAX_STATIC_COLLIDERS, SpawnGrid, StaticCollider, UNITS_PER_METRE,
-    ZoneDefinition, outpost_definition,
+    XzBounds, ZoneDefinition,
 };
 use interest::InterestIndex;
 pub use interest::{InterestMaintenanceStats, InterestQueryStats, PlayerProjection};

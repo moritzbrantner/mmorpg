@@ -100,7 +100,7 @@ Start the complete local native development environment with:
 
 ## Browser tech demo
 
-`web/` is the GitHub Pages client. It runs the shared Rust zone simulation in the page as a **local single-player zone host** ([ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md)): the `mmorpg-wasm` crate compiles `mmorpg-core` and `mmorpg-protocol` to WebAssembly and builds the same `ZoneSimulation` and content revision as `mmorpg-zone-host` (zone 1, the shared outpost). There is one implementation of the movement rules; the browser owns none.
+`web/` is the GitHub Pages client. It runs the shared Rust zone simulation in the page as a **local single-player zone host** ([ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md)): the `mmorpg-wasm` crate compiles `mmorpg-core` and `mmorpg-protocol` to WebAssembly and builds the same `ZoneSimulation` and content revision as `mmorpg-zone-host` (zone 1, Greyhaven Vale). There is one implementation of the movement rules; the browser owns none.
 
 - **Enter World** joins the local zone and spawns the selected character; **Characters** (or Escape) leaves it and removes the unit. The next entry is a new player at the spawn. A projection the strict decoder rejects fails closed: entry is refused, or the page leaves the world, and the reason appears under **Enter World**.
 - W/S run and backpedal, A/D (or Q/E) strafe relative to the orbit camera, Space jumps; drag the world to orbit and use the wheel to zoom. The page encodes command wire v2 with strictly increasing sequences and resends the current intent like the native client.
@@ -110,7 +110,7 @@ Start the complete local native development environment with:
 
 Building the page requires the Rust toolchain from `rust-toolchain.toml` (with the `wasm32-unknown-unknown` target) and the `wasm-bindgen` CLI at the crate's exact version: `cargo install wasm-bindgen-cli --version =0.2.129 --locked`. `bun test` and `bun run build` compile the module first; the generated bindings are ignored build output.
 
-Snapshot schema/wire version 4 carries compact, priority-ordered entity records within a one-datagram byte budget, and command wire version 2 carries `Move`/`Jump`; v3 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
+The standalone host, the native client and the browser's WASM local host share the Rust Greyhaven Vale content (`mmorpg_core::greyhaven_vale`). Snapshot schema/wire version 4 carries compact, priority-ordered entity records within a one-datagram byte budget, and command wire version 2 carries `Move`/`Jump`; v3 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
 
 ## Scaling model
 

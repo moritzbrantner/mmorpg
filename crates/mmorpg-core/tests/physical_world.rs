@@ -3,9 +3,8 @@ use mmorpg_core::{
     ZoneDefinition, ZoneId, ZoneSimulation,
 };
 
-/// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
+/// World-axis heading for forward movement: yaw 0 faces +Z, 90° faces +X.
 const EAST: u16 = 16_384;
-const SOUTH: u16 = 32_768;
 
 fn run(facing: u16) -> ZoneCommand {
     ZoneCommand::Move {
@@ -239,35 +238,4 @@ fn exhausted_tick_does_not_move_physics() {
     let mut zone = ZoneSimulation::from_snapshot(snapshot.clone()).unwrap();
     assert!(zone.advance_tick().is_err());
     assert_eq!(zone.snapshot().unwrap(), snapshot);
-}
-
-#[test]
-fn shared_outpost_ground_and_perimeter_stop_authoritative_movement() {
-    let mut zone =
-        ZoneSimulation::with_definition(ZoneId::new(1), mmorpg_core::outpost_definition()).unwrap();
-    zone.add_player(1).unwrap();
-    zone.apply_command(1, 1, run(SOUTH)).unwrap();
-    for _ in 0..150 {
-        zone.advance_tick().unwrap();
-    }
-    let player = &zone.snapshot().unwrap().players[0];
-    assert_eq!(player.position, [0, 90, -1040]);
-    assert_eq!(player.velocity, [0, 0, 0]);
-}
-
-#[test]
-fn outpost_spawn_grid_is_supported_by_physics_at_configured_capacity() {
-    let mut zone =
-        ZoneSimulation::with_definition(ZoneId::new(1), mmorpg_core::outpost_definition()).unwrap();
-    for id in 0..mmorpg_core::MAX_PLAYERS_PER_ZONE {
-        zone.add_player(u32::try_from(id).unwrap()).unwrap();
-    }
-    let before = zone.snapshot().unwrap();
-    zone.advance_tick().unwrap();
-    let after = zone.snapshot().unwrap();
-    assert_eq!(after.players.len(), before.players.len());
-    for (before, after) in before.players.iter().zip(after.players) {
-        assert_eq!(after.position, before.position);
-        assert_eq!(after.velocity, [0, 0, 0]);
-    }
 }

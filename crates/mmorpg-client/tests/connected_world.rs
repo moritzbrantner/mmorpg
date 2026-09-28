@@ -9,7 +9,7 @@ use mmorpg_client::{
 };
 use mmorpg_core::{
     EntitySnapshot, MAX_VISIBLE_ENTITIES, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, ZoneId, ZoneSnapshot,
-    outpost_definition,
+    greyhaven_vale_definition,
 };
 use mmorpg_game_server::{ZoneGameServerAdapter, zone_match_id};
 use mmorpg_protocol::{
@@ -113,7 +113,7 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
     let local = LocalHost::start(host, zone_id);
     let (url, certificate) = (local.url.clone(), local.certificate.clone());
     let result = tokio::time::timeout(Duration::from_secs(20), async {
-        let revision = outpost_definition().revision();
+        let revision = greyhaven_vale_definition().revision();
         let mut first = ClientSession::connect(&url, Some(&certificate), zone_id, revision).await?;
         let second = ClientSession::connect(&url, Some(&certificate), zone_id, revision).await?;
         // Path MTU discovery only grows this above the measured floor.
@@ -339,7 +339,7 @@ async fn datagram_budget_floor_matches_the_pinned_transport() {
 #[tokio::test]
 async fn a_projection_at_the_relevance_cap_reaches_a_client() {
     let zone_id = ZoneId::new(1);
-    let definition = outpost_definition();
+    let definition = greyhaven_vale_definition();
     let revision = definition.revision();
     let mut adapter = ZoneGameServerAdapter::with_definition(zone_id, definition).unwrap();
     // Resting players without sessions crowd the spawn area beyond the cap.

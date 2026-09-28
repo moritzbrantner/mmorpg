@@ -3,7 +3,7 @@ mod visibility_oracle;
 
 use mmorpg_core::{
     CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS, SNAPSHOT_SCHEMA_VERSION,
-    ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation, outpost_definition,
+    ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation, greyhaven_vale_definition,
 };
 use mmorpg_protocol::encode_snapshot;
 use visibility_oracle::exhaustive_projection;
@@ -106,13 +106,17 @@ fn multi_tick_membership_transitions_match_exhaustive_wire_output() {
 
 #[test]
 fn collision_corrections_and_failed_step_preserve_reference_parity() {
-    let mut colliding = zone_at(&[[0, 90, 0], [2000, 90, 0]], outpost_definition());
+    // Player 2 runs from the hub plaza into the keep's south face at z = 700.
+    let mut colliding = zone_at(
+        &[[-1_550, 90, 1_250], [450, 90, 1_250]],
+        greyhaven_vale_definition(),
+    );
     colliding.apply_command(2, 4, run(SOUTH)).unwrap();
     for _ in 0..120 {
         colliding.advance_tick().unwrap();
         assert_wire_parity(&colliding);
     }
-    assert!(
+    assert_eq!(
         colliding
             .snapshot()
             .unwrap()
@@ -120,8 +124,8 @@ fn collision_corrections_and_failed_step_preserve_reference_parity() {
             .iter()
             .find(|player| player.player_id == 2)
             .unwrap()
-            .position[2]
-            > -1440,
+            .position,
+        [-1_550, 90, 730],
         "the shared physics collider must correct the nominal movement"
     );
 

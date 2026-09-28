@@ -10,7 +10,7 @@ use mmorpg_client::{
     presentation::Presentation,
     session::{MovementInput, NetworkUpdate, run_session},
 };
-use mmorpg_core::{ZoneId, outpost_definition};
+use mmorpg_core::{ZoneId, greyhaven_vale_definition};
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -73,7 +73,7 @@ fn main() -> Result<(), ClientError> {
         return Ok(());
     };
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
-    let definition = outpost_definition();
+    let definition = greyhaven_vale_definition();
     let mut session = runtime.block_on(ClientSession::connect(
         &options.url,
         options.certificate.as_deref(),

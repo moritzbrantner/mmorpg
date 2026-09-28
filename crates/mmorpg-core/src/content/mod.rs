@@ -1,5 +1,8 @@
 //! Immutable collision content, shared by simulation construction and scene export.
 //! Render meshes/materials are presentation data; these boxes define physical truth.
+//! Generic validation lives here; each authored zone is its own submodule.
+
+pub mod greyhaven_vale;
 
 use crate::{MAX_PLAYERS_PER_ZONE, PLAYER_HALF_EXTENTS_UNITS, ZoneError};
 
@@ -10,6 +13,28 @@ pub const UNITS_PER_METRE: i32 = 100;
 /// each axis. Player projections carry positions as `i16`; walls inside this
 /// range keep every reachable position representable with headroom.
 pub const MAX_CONTENT_COORDINATE_UNITS: i32 = 32_000;
+
+/// Half-open XZ rectangle `[min, max)` in units.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct XzBounds {
+    pub min: [i32; 2],
+    pub max: [i32; 2],
+}
+
+impl XzBounds {
+    #[must_use]
+    pub const fn contains(self, x: i32, z: i32) -> bool {
+        self.min[0] <= x && x < self.max[0] && self.min[1] <= z && z < self.max[1]
+    }
+
+    #[must_use]
+    pub const fn overlaps(self, other: Self) -> bool {
+        self.min[0] < other.max[0]
+            && other.min[0] < self.max[0]
+            && self.min[1] < other.max[1]
+            && other.min[1] < self.max[1]
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StaticCollider {
@@ -181,62 +206,4 @@ fn validate_spawn_grid(grid: SpawnGrid, colliders: &[StaticCollider]) -> Result<
         }
     }
     Ok(())
-}
-
-/// The first shared playable scene. Both hosts and native clients consume this
-/// exact definition; changing geometry requires a new immutable revision.
-#[must_use]
-pub fn outpost_definition() -> ZoneDefinition {
-    ZoneDefinition::new(
-        1,
-        [0, -1, 0],
-        vec![
-            StaticCollider {
-                id: 1,
-                position: [3_100, -50, 1_500],
-                half_extents: [4_200, 50, 2_600],
-            },
-            StaticCollider {
-                id: 2,
-                position: [-650, 150, -500],
-                half_extents: [180, 150, 170],
-            },
-            StaticCollider {
-                id: 3,
-                position: [650, 120, -500],
-                half_extents: [160, 120, 190],
-            },
-            StaticCollider {
-                id: 4,
-                position: [300, 55, -250],
-                half_extents: [55, 55, 55],
-            },
-            StaticCollider {
-                id: 5,
-                position: [-300, 135, -300],
-                half_extents: [45, 135, 40],
-            },
-            StaticCollider {
-                id: 6,
-                position: [-1_100, 200, 1_500],
-                half_extents: [30, 200, 2_600],
-            },
-            StaticCollider {
-                id: 7,
-                position: [7_300, 200, 1_500],
-                half_extents: [30, 200, 2_600],
-            },
-            StaticCollider {
-                id: 8,
-                position: [3_100, 200, -1_100],
-                half_extents: [4_200, 200, 30],
-            },
-            StaticCollider {
-                id: 9,
-                position: [3_100, 200, 4_100],
-                half_extents: [4_200, 200, 30],
-            },
-        ],
-    )
-    .expect("built-in outpost geometry is valid")
 }

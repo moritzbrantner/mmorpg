@@ -1,9 +1,10 @@
 # Two bots walk apart until player-scoped interest (4500 units) drops them
-# from each other's snapshots; alice is stopped by the west wall. They turn
-# around at tick 170 and must re-enter each other's snapshots by tick 190.
+# from each other's snapshots; alice is stopped by the outpost's west
+# palisade. They turn around at tick 150 and must re-enter each other's
+# snapshots by tick 170.
 name = "interest-exit-enter"
 zone = 1
-ticks = 195
+ticks = 175
 digest_interval = 10
 
 [[bots]]
@@ -39,7 +40,7 @@ strafe = 0
 facing = 16384
 
 [[steps]]
-tick = 170
+tick = 150
 bot = "alice"
 action = "move"
 forward = 1
@@ -47,7 +48,7 @@ strafe = 0
 facing = 16384
 
 [[steps]]
-tick = 170
+tick = 150
 bot = "bob"
 action = "move"
 forward = 1
@@ -58,24 +59,24 @@ facing = 49152
 kind = "not_sees"
 bot = "alice"
 target = "bob"
-tick = 170
+tick = 150
 
 [[expect]]
 kind = "visible_count"
 bot = "bob"
-tick = 170
+tick = 150
 count = 1
 
 [[expect]]
 kind = "sees"
 bot = "alice"
 target = "bob"
-from_tick = 171
-by_tick = 190
+from_tick = 151
+by_tick = 170
 
 [[expect]]
 kind = "sees"
 bot = "bob"
 target = "alice"
-from_tick = 171
-by_tick = 190
+from_tick = 151
+by_tick = 170

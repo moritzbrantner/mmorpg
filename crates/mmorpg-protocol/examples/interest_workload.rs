@@ -4,7 +4,7 @@ use std::error::Error;
 use mmorpg_core::{
     CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE,
     PLAYER_HALF_EXTENTS_UNITS, SNAPSHOT_SCHEMA_VERSION, ZoneDefinition, ZoneId, ZoneSimulation,
-    outpost_definition,
+    greyhaven_vale, greyhaven_vale_definition,
 };
 use mmorpg_protocol::{SNAPSHOT_WIRE_VERSION, encode_canonical_snapshot, encode_snapshot};
 #[path = "../tests/support/visibility_oracle.rs"]
@@ -12,7 +12,7 @@ mod visibility_oracle;
 use visibility_oracle::exhaustive_projection;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    for name in ["sparse-grid-512", "dense-hub-512", "outpost-spawn-512"] {
+    for name in ["sparse-grid-512", "dense-hub-512", "vale-spawn-512"] {
         measure(name)?;
     }
     Ok(())
@@ -26,7 +26,7 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
         tick: 0,
         players: Vec::new(),
     };
-    // Feet rest on y = 0, the outpost ground; the empty workloads have no gravity.
+    // Feet rest on y = 0, the vale ground; the empty workloads have no gravity.
     let y = PLAYER_HALF_EXTENTS_UNITS[1];
     for index in 0..MAX_PLAYERS_PER_ZONE {
         let value = i32::try_from(index)?;
@@ -38,7 +38,12 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
                 (value / 23) * 2_800 - 30_800,
             ],
             "dense-hub-512" => [(value % 23) * 64 - 704, y, (value / 23) * 64 - 704],
-            "outpost-spawn-512" => [(value % 32) * 200, y, (value / 32) * 200],
+            "vale-spawn-512" => {
+                let feet = greyhaven_vale::SPAWN_GRID
+                    .feet(u16::try_from(index)?)
+                    .ok_or("spawn slot overflows")?;
+                [feet[0], y, feet[2]]
+            }
             _ => return Err("unknown workload".into()),
         };
         canonical.players.push(CanonicalPlayerSnapshot {
@@ -53,8 +58,8 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
             spawn_slot: u16::try_from(index)?,
         });
     }
-    if name == "outpost-spawn-512" {
-        canonical.definition = outpost_definition();
+    if name == "vale-spawn-512" {
+        canonical.definition = greyhaven_vale_definition();
     }
     let mut zone = ZoneSimulation::from_snapshot(canonical)?;
     // Exclude checkpoint construction from the measured tick maintenance.

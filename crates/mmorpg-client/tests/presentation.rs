@@ -1,6 +1,7 @@
 use mmorpg_client::presentation::Presentation;
 use mmorpg_core::{
-    EntityKind, EntitySnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneId, ZoneSnapshot, outpost_definition,
+    EntityKind, EntitySnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneId, ZoneSnapshot,
+    greyhaven_vale_definition,
 };
 use std::{
     f32::consts::{FRAC_PI_2, TAU},
@@ -16,7 +17,7 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
         schema_version: SNAPSHOT_SCHEMA_VERSION,
         zone_id: ZoneId::new(1),
         tick,
-        content_revision: outpost_definition().revision(),
+        content_revision: greyhaven_vale_definition().revision(),
         acknowledged_sequence: 1,
         viewer_id: 1,
         entities: vec![EntitySnapshot {
@@ -32,7 +33,7 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
 #[test]
 fn interpolation_preserves_large_ticks_holds_on_loss_and_ignores_old_packets() {
     let now = Instant::now();
-    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    let mut presentation = Presentation::new(1, greyhaven_vale_definition(), now);
     presentation
         .push(snapshot(u64::MAX - 4, [0, 50, 0]), now)
         .unwrap();
@@ -55,7 +56,7 @@ fn interpolation_preserves_large_ticks_holds_on_loss_and_ignores_old_packets() {
 #[test]
 fn rendering_uses_the_servers_collision_geometry_and_entity_dimensions() {
     let now = Instant::now();
-    let definition = outpost_definition();
+    let definition = greyhaven_vale_definition();
     let mut presentation = Presentation::new(1, definition.clone(), now);
     presentation
         .push(facing_snapshot(1, [100, 90, -200], 16_384), now)
@@ -91,7 +92,7 @@ fn rendering_uses_the_servers_collision_geometry_and_entity_dimensions() {
 #[test]
 fn facing_interpolates_along_the_shorter_arc() {
     let now = Instant::now();
-    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    let mut presentation = Presentation::new(1, greyhaven_vale_definition(), now);
     presentation
         .push(facing_snapshot(10, [0, 90, 0], 65_000), now)
         .unwrap();
@@ -109,7 +110,7 @@ fn facing_interpolates_along_the_shorter_arc() {
 #[test]
 fn incompatible_content_zones_and_duplicate_entities_fail_closed() {
     let now = Instant::now();
-    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    let mut presentation = Presentation::new(1, greyhaven_vale_definition(), now);
     presentation.push(snapshot(1, [0; 3]), now).unwrap();
     let mut wrong_content = snapshot(2, [0; 3]);
     wrong_content.content_revision += 1;
@@ -128,7 +129,7 @@ fn incompatible_content_zones_and_duplicate_entities_fail_closed() {
 #[test]
 fn a_resumed_connection_discards_old_interpolation_even_when_ticks_regress() {
     let now = Instant::now();
-    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    let mut presentation = Presentation::new(1, greyhaven_vale_definition(), now);
     presentation.push(snapshot(100, [0, 50, 0]), now).unwrap();
     presentation.push(snapshot(104, [400, 50, 0]), now).unwrap();
     presentation.reset(now);

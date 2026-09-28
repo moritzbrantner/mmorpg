@@ -18,7 +18,7 @@ The runners own no rules. They drive the existing authorities and compare what t
 
 ## Bot scenarios
 
-A bot scenario advances one zone hosted with the shared outpost content. Ticks are stepped explicitly with `MatchRuntime::advance_tick`. Each bot's snapshot bytes come from `MatchRuntime::snapshot_for` and are decoded with `mmorpg_protocol::decode_snapshot`; a snapshot for another zone, tick or viewer is an error. Reconnect tokens are deterministic per bot.
+A bot scenario advances one zone hosted with the shared Greyhaven Vale content; bots spawn on the hub plaza (slot 0 at (−1550, 1250), then 100 units apart along +X). Ticks are stepped explicitly with `MatchRuntime::advance_tick`. Each bot's snapshot bytes come from `MatchRuntime::snapshot_for` and are decoded with `mmorpg_protocol::decode_snapshot`; a snapshot for another zone, tick or viewer is an error. Reconnect tokens are deterministic per bot.
 
 ```toml
 name = "two-bots-move"      # [A-Za-z0-9_-]
@@ -63,7 +63,7 @@ Step outcome tags are `joined`, `applied`, `ignored_stale`, `disconnected`, `res
 | `acknowledged` | `sequence`, `tick` | acknowledges that command sequence |
 | `identity` | `tick` | shows the bot under the player ID from its first join |
 | `visible_count` | `count`, `tick` | contains exactly `count` players, including itself |
-| `area` | `area`, `tick`, optional `target` | shows the target (default: itself) inside the named core area (`outpost_areas`, the areas of the hosted outpost content) |
+| `area` | `area`, `tick`, optional `target` | shows the target (default: itself) inside the named core area (`greyhaven_vale::areas()`, the areas of the hosted vale content) |
 
 A `jump` step submits the `Jump` command; like `move` it takes optional `seq` and `connection_epoch` overrides and no intent fields.
 

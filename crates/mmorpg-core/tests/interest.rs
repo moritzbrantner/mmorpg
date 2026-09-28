@@ -211,7 +211,8 @@ fn sparse_work_is_bounded_and_dense_visibility_is_capped_by_priority() {
 #[test]
 fn projection_tracks_collision_resolution_and_failed_physics_steps() {
     let mut zone =
-        ZoneSimulation::with_definition(ZoneId::new(7), mmorpg_core::outpost_definition()).unwrap();
+        ZoneSimulation::with_definition(ZoneId::new(7), mmorpg_core::greyhaven_vale_definition())
+            .unwrap();
     zone.add_player(1).unwrap();
     zone.add_player(2).unwrap();
     zone.apply_command(1, 1, run(SOUTH)).unwrap();

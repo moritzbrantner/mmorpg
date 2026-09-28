@@ -1,6 +1,7 @@
 //! Named areas of zone content. Clients read area names from here instead of
 //! inventing their own, and later "explore" objectives decide membership with
-//! the same table. Areas never affect movement or collision.
+//! the same table. Areas never affect movement or collision. Each content
+//! revision publishes its table, such as `greyhaven_vale::areas()`.
 
 use crate::ZoneError;
 
@@ -118,20 +119,6 @@ impl ZoneAreas {
     }
 }
 
-/// Named areas of [`crate::outpost_definition`] (content revision 1): the
-/// walled courtyard is the Greyhaven Outpost hub.
-#[must_use]
-pub fn outpost_areas() -> ZoneAreas {
-    let outpost = Area::new(
-        AreaId::new(1),
-        "Greyhaven Outpost",
-        [-1_100, -1_100],
-        [7_300, 4_100],
-    )
-    .expect("built-in outpost area is valid");
-    ZoneAreas::new(vec![outpost]).expect("built-in outpost areas are valid")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,41 +164,5 @@ mod tests {
             .map(|id| area(id, &format!("Area {id}"), [0, 0], [1, 1]))
             .collect();
         assert!(ZoneAreas::new(too_many).is_err());
-    }
-
-    #[test]
-    fn the_outpost_courtyard_and_every_spawn_are_named() {
-        let areas = outpost_areas();
-        let walls = crate::outpost_definition();
-        let ground = &walls.colliders()[0];
-        // The area covers exactly the ground slab the walls enclose.
-        assert_eq!(
-            areas.areas()[0].min_xz(),
-            [
-                ground.position[0] - ground.half_extents[0],
-                ground.position[2] - ground.half_extents[2]
-            ]
-        );
-        assert_eq!(
-            areas.areas()[0].max_xz(),
-            [
-                ground.position[0] + ground.half_extents[0],
-                ground.position[2] + ground.half_extents[2]
-            ]
-        );
-        let mut zone =
-            crate::ZoneSimulation::with_definition(crate::ZoneId::new(1), walls).unwrap();
-        for player_id in 1..=u32::try_from(crate::MAX_PLAYERS_PER_ZONE).unwrap() {
-            zone.add_player(player_id).unwrap();
-        }
-        for player in zone.snapshot().unwrap().players {
-            let [x, _, z] = player.position;
-            assert_eq!(
-                areas.area_at(x, z).map(Area::name),
-                Some("Greyhaven Outpost"),
-                "spawn slot {}",
-                player.spawn_slot
-            );
-        }
     }
 }
