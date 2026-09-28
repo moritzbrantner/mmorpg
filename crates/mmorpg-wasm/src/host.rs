@@ -296,6 +296,53 @@ mod tests {
         }
     }
 
+    /// Targeting and attack intents, including refused ones, produce the
+    /// same projection bytes (events included) on both hosts.
+    #[test]
+    fn combat_intents_project_identically_on_both_hosts() {
+        use mmorpg_core::{EntityRef, NpcId};
+        let mut local = LocalZoneHost::new().unwrap();
+        let (_, adapter) = build_zone_matches([LOCAL_ZONE_ID])
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let mut network = MatchRuntime::new(adapter, 120);
+        let lease = network
+            .admit(ReconnectToken([4; RECONNECT_TOKEN_BYTES]))
+            .unwrap();
+        let player = local.join().unwrap();
+        let commands = [
+            ZoneCommand::StartAttack,
+            ZoneCommand::SelectTarget(Some(EntityRef::Npc(NpcId::new(1)))),
+            ZoneCommand::StartAttack,
+            ZoneCommand::ReleaseSpirit,
+            ZoneCommand::SelectTarget(None),
+        ];
+        for (sequence, command) in (1..).zip(commands) {
+            let payload = encode_command(command);
+            assert_eq!(
+                network.submit_command(lease.player_id, lease.connection_epoch, sequence, &payload),
+                Ok(CommandOutcome::Applied)
+            );
+            assert_eq!(
+                local.submit(player, sequence, &payload),
+                Ok(SubmitOutcome::Applied)
+            );
+        }
+        for _ in 0..30 {
+            network.advance_tick().unwrap();
+            local.tick().unwrap();
+            assert_eq!(
+                network.snapshot_for(lease.player_id).unwrap().payload,
+                local.projection(player).unwrap()
+            );
+        }
+        let first = decode_snapshot(&local.projection(player).unwrap()).unwrap();
+        assert_eq!(first.viewer.target, None);
+        assert!(first.events.is_empty(), "events last one tick");
+    }
+
     /// A step of `scenarios/bots/browser-local-session.toml`.
     enum SessionStep {
         Join,
