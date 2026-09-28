@@ -5,7 +5,7 @@
     "": {
       "name": "mmorpg-pages-tech-demo",
       "dependencies": {
-        "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#8187e506f24682dae550284070e45ac33e53ad9c",
+        "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#f484db8a3d2a7a555fa463eddf9c28790b240ce0",
         "three": "0.185.1",
       },
       "devDependencies": {
@@ -70,7 +70,7 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.28.2", "", { "os": "win32", "cpu": "x64" }, "sha512-5ebpxr3nWMzrL/rnUI755Jkuee0bHL/Gq0WTF9lvcpv73wAp5eu8MfBUgWK9bhWvZjj7yX8etf/8tI8Ney695g=="],
 
-    "@moritzbrantner/three-d-renderer": ["@moritzbrantner/three-d-renderer@github:moritzbrantner/3d-lab#8187e50", { "dependencies": { "three": "0.185.1" } }, "moritzbrantner-3d-lab-8187e50", "sha512-ITRohyUNxGntpC73qDS8oUxA1p7YCjwbEsRYkzDeDCYqqne6zvER47jTOCg/IGCO1fqLbvbUx09UOFHhl42gWg=="],
+    "@moritzbrantner/three-d-renderer": ["@moritzbrantner/three-d-renderer@github:moritzbrantner/3d-lab#f484db8", { "dependencies": { "three": "0.185.1" } }, "moritzbrantner-3d-lab-f484db8", "sha512-HTl0mxMWJ/mNBRwB+kXgGu/LfceFIRFlxr2LvAlXV/rGnvKui0jpz+WcBAou1IiQSIAqL0TXQ9WLVASf2xGkhQ=="],
 
     "@napi-rs/lzma-linux-x64-gnu": ["@napi-rs/lzma-linux-x64-gnu@1.5.1", "", { "os": "linux", "cpu": "x64" }, "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="],
 
