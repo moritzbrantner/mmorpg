@@ -11,7 +11,6 @@ import {
   hatOption,
   isHatStyle,
   loadCharacter,
-  rotateYawOffset,
   saveCharacter,
   type CharacterAppearance,
   type HatStyle,
@@ -30,10 +29,7 @@ import {
   type EntryState,
 } from "./character-selection";
 import "./styles.css";
-import { advanceDemoTick, frameDeltaSeconds } from "./demo-clock";
-import { DEMO_WORLD_HALF_EXTENT, type DemoProgress } from "./demo-save";
-import { installDemoSaveControls } from "./demo-save-controls";
-import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, yawFromRadians, type Vector3 } from "./replication";
+import { frameDeltaSeconds } from "./demo-clock";
 import { installCharacterTurntable } from "./character-turntable";
 import {
   characterRosterStorageKey,
@@ -43,6 +39,12 @@ import {
   saveCreatedCharacters,
 } from "./character-roster";
 import { characterVisualProfile, type CharacterVisualProfile } from "./character-visuals";
+import type { LocalWorld } from "./world/local-world";
+import { MovementOutbox, type MovementInput } from "./world/movement-outbox";
+import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput } from "./world/orbit-camera";
+import { buildSceneryNodes } from "./world/scenery-nodes";
+import { placeUnit, unitNodes, type UnitLook } from "./world/unit-nodes";
+import { loadLocalWorld } from "./world/wasm-runtime";
 import "./character-selection-layout.css";
 import "./character-creation.css";
 
@@ -55,11 +57,12 @@ function requireElement<T extends Element>(selector: string): T {
 }
 
 const canvas = requireElement<HTMLCanvasElement>("#world");
-const prompt = requireElement<HTMLElement>("#prompt");
+const areaName = requireElement<HTMLElement>("#area-name");
 const objective = requireElement<HTMLElement>("#objective");
-const status = requireElement<HTMLElement>("#status");
 const characterSelect = requireElement<HTMLElement>("#character-select");
 const enterWorldButton = requireElement<HTMLButtonElement>("#enter-world");
+const enterWorldLabel = requireElement<HTMLElement>("#enter-world-label");
+const enterWorldNote = requireElement<HTMLElement>("#enter-world-note");
 const saveCharacterButton = requireElement<HTMLButtonElement>("#save-character");
 const loadCharacterButton = requireElement<HTMLButtonElement>("#load-character");
 const saveStatus = requireElement<HTMLElement>("#save-status");
@@ -96,34 +99,40 @@ const renderer = createThreeSceneRenderer(canvas, {
 
 fallbackCharacter.hidden = true;
 
-type Vec2 = { x: number; z: number };
 type RotationQuaternion = [number, number, number, number];
 type LocalPoint = (x: number, y: number, z: number) => [number, number, number];
 
-const player: Vec2 = { x: -5.5, z: 4.5 };
-let facing = Math.PI * 0.15;
-let waystoneActive = false;
+/** Outside every named area the HUD names the zone itself. */
+const ZONE_NAME = "Greyhaven Vale";
+
 let lastTime = performance.now();
 const keys = new Set<string>();
 let rosterStorageHealthy = true;
 let characters: CharacterPreview[] = [PREVIEW_CHARACTER, ...loadCreatedRoster()];
 let entryState: EntryState = initialEntryState(PREVIEW_CHARACTER);
-let activeSessionCharacterId = PREVIEW_CHARACTER.id;
 let creationDraft: CharacterCreationDraft | null = null;
 let characterAppearance: CharacterAppearance = { ...DEFAULT_CHARACTER_APPEARANCE };
-const sessionByCharacterId = new Map<string, DemoProgress>();
-const enteredCharacterIds = new Set<string>();
+// Unsaved appearance edits survive switching characters within this page session.
+const appearanceByCharacterId = new Map<string, CharacterAppearance>();
 const turntable = installCharacterTurntable(previewSurface, {
   left: requireElement<HTMLButtonElement>("#rotate-left"),
   right: requireElement<HTMLButtonElement>("#rotate-right"),
   reset: requireElement<HTMLButtonElement>("#reset-rotation"),
 }, () => entryState.phase === "character-selection");
 
-// Offline demo source. An online source supplies decoded player-scoped snapshots
-// to the same presentation buffer and sends input commands to the zone host.
-const snapshots = new SnapshotBuffer();
-let demoTick = 0n;
-let accumulatedTicks = 0;
+// The world: the shared Rust zone simulation, hosted locally through WASM.
+// Presentation reads only decoded player-scoped projections from `world.source`.
+let world: LocalWorld | null = null;
+let worldLoadError: string | null = null;
+/** Why the last entry failed or the world was left after an error; cleared by the next entry. */
+let worldFailure: string | null = null;
+let sceneryNodes: RendererSceneNode[] = [];
+let orbit = new OrbitCamera();
+let movementFacing = 0;
+let jumps = 0;
+const outbox = new MovementOutbox(currentMovementInput());
+let orbitDrag: { pointerId: number; x: number; y: number } | null = null;
+let shownAreaName: string | null = null;
 
 function loadCreatedRoster(): CharacterPreview[] {
   try {
@@ -157,90 +166,16 @@ function defaultAppearanceForCharacter(character: CharacterPreview): CharacterAp
     : defaultAppearanceForClass(character.classId);
 }
 
-function captureProgress(): DemoProgress {
-  return {
-    position: { ...player },
-    facing,
-    waystoneActive,
-    appearance: { ...characterAppearance },
-    tick: demoTick,
-    tickFraction: accumulatedTicks,
-  };
+function rememberAppearance(): void {
+  appearanceByCharacterId.set(selectedCharacterId(), { ...characterAppearance });
 }
 
-function applyProgress(progress: DemoProgress): void {
-  player.x = progress.position.x;
-  player.z = progress.position.z;
-  facing = progress.facing;
-  waystoneActive = progress.waystoneActive;
-  characterAppearance = { ...progress.appearance };
-  demoTick = progress.tick;
-  accumulatedTicks = progress.tickFraction;
+function restoreAppearance(character: CharacterPreview): void {
+  characterAppearance = { ...(appearanceByCharacterId.get(character.id) ?? defaultAppearanceForCharacter(character)) };
 }
 
-function initialProgress(character: CharacterPreview): DemoProgress {
-  return {
-    position: { x: -5.5, z: 4.5 },
-    facing: Math.PI * 0.15,
-    waystoneActive: false,
-    appearance: defaultAppearanceForCharacter(character),
-    tick: 0n,
-    tickFraction: 0,
-  };
-}
-
-function rememberActiveSession(): void {
-  sessionByCharacterId.set(activeSessionCharacterId, captureProgress());
-}
-
-function activateCharacterSession(character: CharacterPreview): void {
-  activeSessionCharacterId = character.id;
-  applyProgress(sessionByCharacterId.get(character.id) ?? initialProgress(character));
-  snapshots.reset();
-  publishDemoSnapshot();
-}
-
-function publishDemoSnapshot() {
-  snapshots.push({
-    zoneId: 1,
-    tick: demoTick,
-    contentRevision: 0n,
-    acknowledgedSequence: 0,
-    viewerId: 1,
-    entities: [{
-      kind: "player",
-      entityId: 1,
-      position: [Math.round(player.x * UNITS_PER_METRE), 83, Math.round(player.z * UNITS_PER_METRE)],
-      velocity: [0, 0, 0],
-      facing: yawFromRadians(facing),
-    }],
-  });
-}
-
-publishDemoSnapshot();
-
-const worldHalfExtent = DEMO_WORLD_HALF_EXTENT;
-const waystone = { x: 4.8, z: -3.5 };
-const interactRadius = 2.1;
-const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 80);
+const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 600);
 const previewCamera = new THREE.PerspectiveCamera(48, 1, 0.1, 80);
-const target = new THREE.Vector3();
-
-const staticNodes: RendererSceneNode[] = [
-  node("ground", "box", [0, -0.3, 0], "#6d7d62", [24, 0.6, 24]),
-  node("road-a", "box", [0, 0.02, 0], "#8d806a", [4.2, 0.08, 22]),
-  node("road-b", "box", [2.8, 0.03, -3.2], "#8d806a", [9.5, 0.09, 3.2]),
-  node("hut-1", "box", [-6.8, 1.2, -4.8], "#775b45", [3.6, 2.4, 3.4]),
-  node("hut-2", "box", [6.8, 1.0, 4.7], "#6f5845", [3.2, 2.0, 3.8]),
-  node("crate-1", "box", [-2.5, 0.55, -3.9], "#8a6444", [1.1, 1.1, 1.1]),
-  node("crate-2", "box", [-1.2, 0.45, -4.2], "#75543d", [0.9, 0.9, 0.9]),
-  node("tree-1-trunk", "cylinder", [-8.3, 1.25, 2.8], "#5f4634", [0.35, 2.5, 0]),
-  node("tree-1-crown", "sphere", [-8.3, 3.25, 2.8], "#365e3d", [1.55, 0, 0]),
-  node("tree-2-trunk", "cylinder", [8.0, 1.2, -7.3], "#5f4634", [0.32, 2.4, 0]),
-  node("tree-2-crown", "sphere", [8.0, 3.05, -7.3], "#31583a", [1.4, 0, 0]),
-  node("stone-a", "box", [5.9, 0.3, -4.1], "#777e78", [1.4, 0.6, 0.7]),
-  node("stone-b", "box", [4.2, 0.25, -5.0], "#727972", [0.8, 0.5, 1.1]),
-];
 
 const selectionStageNodes: RendererSceneNode[] = [
   node("selection-floor", "cylinder", [-1.2, -0.12, 0], "#27332f", [3.0, 0.28, 0]),
@@ -281,199 +216,6 @@ function webGpuProjectionFromThree(source = camera): Matrix4Values {
     gpu[index] = (z + w) / 2;
   }
   return gpu as Matrix4Values;
-}
-
-function updateMovement(deltaSeconds: number) {
-  let dx = 0;
-  let dz = 0;
-  if (keys.has("KeyW") || keys.has("ArrowUp")) dz -= 1;
-  if (keys.has("KeyS") || keys.has("ArrowDown")) dz += 1;
-  if (keys.has("KeyA") || keys.has("ArrowLeft")) dx -= 1;
-  if (keys.has("KeyD") || keys.has("ArrowRight")) dx += 1;
-  if (dx === 0 && dz === 0) return;
-
-  const length = Math.hypot(dx, dz);
-  dx /= length;
-  dz /= length;
-  const speed = keys.has("ShiftLeft") || keys.has("ShiftRight") ? 6.3 : 3.8;
-  player.x = THREE.MathUtils.clamp(player.x + dx * speed * deltaSeconds, -worldHalfExtent, worldHalfExtent);
-  player.z = THREE.MathUtils.clamp(player.z + dz * speed * deltaSeconds, -worldHalfExtent, worldHalfExtent);
-  facing = Math.atan2(dx, dz);
-}
-
-function nearWaystone() {
-  return Math.hypot(player.x - waystone.x, player.z - waystone.z) <= interactRadius;
-}
-
-function interact() {
-  if (!nearWaystone()) return;
-  waystoneActive = !waystoneActive;
-  updateObjective();
-}
-
-function updateObjective() {
-  status.textContent = waystoneActive ? "Waystone active" : "Exploring";
-  objective.textContent = waystoneActive
-    ? "Waystone activated. Explore the outpost."
-    : "Reach the old waystone and activate it.";
-}
-
-function dynamicNodes(position: Vector3): RendererSceneNode[] {
-  const character = selectedCharacter();
-  const visuals = characterVisualProfile(character);
-  const x = position[0] / UNITS_PER_METRE;
-  const y = position[1] / UNITS_PER_METRE;
-  const z = position[2] / UNITS_PER_METRE;
-  const halfYaw = facing / 2;
-  const rotationQuaternion: RotationQuaternion = [0, Math.sin(halfYaw), 0, Math.cos(halfYaw)];
-  return [
-    {
-      id: "player",
-      geometry: {
-        kind: "cylinder",
-        radius: visuals.bodyRadius * 0.88,
-        height: visuals.bodyHeight * 0.97,
-      },
-      color: visuals.bodyColor,
-      transform: { translation: [x, y, z], rotationQuaternion },
-    },
-    {
-      id: "player-head",
-      geometry: { kind: "sphere", radius: visuals.headRadius },
-      color: "#c49b78",
-      transform: { translation: [x, y + 1.07, z] },
-    },
-    {
-      id: "player-shoulders",
-      geometry: { kind: "box", size: [visuals.shoulderSpan * 2.08, 0.24, 0.42] },
-      color: visuals.shoulderColor,
-      transform: { translation: [x, y + 0.56, z], rotationQuaternion },
-    },
-    ...worldWeaponNodes(x, y, z, rotationQuaternion, visuals),
-    ...worldHatNodes(x, y, z, rotationQuaternion, characterAppearance.hat),
-    {
-      id: "waystone",
-      geometry: { kind: "box", size: [0.9, 2.7, 0.75] },
-      color: waystoneActive ? "#91d8bb" : "#68736f",
-      transform: { translation: [waystone.x, 1.35, waystone.z] },
-    },
-    {
-      id: "waystone-cap",
-      geometry: { kind: "sphere", radius: 0.42 },
-      color: waystoneActive ? "#d5fff0" : "#8a9690",
-      transform: { translation: [waystone.x, 2.75, waystone.z] },
-    },
-  ];
-}
-
-function worldWeaponNodes(
-  x: number,
-  y: number,
-  z: number,
-  rotationQuaternion: RotationQuaternion,
-  visuals: CharacterVisualProfile,
-): RendererSceneNode[] {
-  const [weaponX, weaponZ] = rotateYawOffset(facing, 0.58, 0.04);
-  if (visuals.weapon === "bow") {
-    const [stringX, stringZ] = rotateYawOffset(facing, 0.48, 0.04);
-    return [
-      {
-        id: "player-bow",
-        geometry: { kind: "box", size: [0.09, 1.45, 0.08] },
-        color: visuals.weaponColor,
-        transform: {
-          translation: [x + weaponX, y + 0.15, z + weaponZ],
-          rotationQuaternion,
-        },
-      },
-      {
-        id: "player-bow-string",
-        geometry: { kind: "box", size: [0.025, 1.32, 0.025] },
-        color: "#d8d5c7",
-        transform: {
-          translation: [x + stringX, y + 0.15, z + stringZ],
-          rotationQuaternion,
-        },
-      },
-    ];
-  }
-  if (visuals.weapon === "staff") {
-    return [
-      {
-        id: "player-staff",
-        geometry: { kind: "box", size: [0.1, 1.75, 0.1] },
-        color: visuals.weaponColor,
-        transform: {
-          translation: [x + weaponX, y + 0.18, z + weaponZ],
-          rotationQuaternion,
-        },
-      },
-      {
-        id: "player-staff-focus",
-        geometry: { kind: "sphere", radius: 0.19 },
-        color: "#d6a677",
-        transform: {
-          translation: [x + weaponX, y + 1.07, z + weaponZ],
-        },
-      },
-    ];
-  }
-  return [{
-    id: "player-sword",
-    geometry: { kind: "box", size: [0.12, 1.35, 0.08] },
-    color: visuals.weaponColor,
-    transform: {
-      translation: [x + weaponX, y + 0.15, z + weaponZ],
-      rotationQuaternion,
-    },
-  }];
-}
-
-function worldHatNodes(
-  x: number,
-  y: number,
-  z: number,
-  rotationQuaternion: RotationQuaternion,
-  hat: HatStyle,
-): RendererSceneNode[] {
-  if (hat === "wayfarer-hood") {
-    return [{
-      id: "player-hat-hood",
-      geometry: { kind: "cylinder", radius: 0.36, height: 0.2 },
-      color: "#b7c6bd",
-      transform: { translation: [x, y + 1.34, z], rotationQuaternion },
-    }];
-  }
-  if (hat === "ranger-cap") {
-    return [
-      {
-        id: "player-hat-cap-brim",
-        geometry: { kind: "cylinder", radius: 0.45, height: 0.08 },
-        color: "#6f875f",
-        transform: { translation: [x, y + 1.32, z], rotationQuaternion },
-      },
-      {
-        id: "player-hat-cap-crown",
-        geometry: { kind: "cylinder", radius: 0.29, height: 0.2 },
-        color: "#5d7351",
-        transform: { translation: [x, y + 1.42, z], rotationQuaternion },
-      },
-    ];
-  }
-  return [
-    {
-      id: "player-hat-helm",
-      geometry: { kind: "cylinder", radius: 0.35, height: 0.28 },
-      color: "#858e91",
-      transform: { translation: [x, y + 1.33, z], rotationQuaternion },
-    },
-    {
-      id: "player-hat-crest",
-      geometry: { kind: "box", size: [0.1, 0.36, 0.34] },
-      color: "#aab0b2",
-      transform: { translation: [x, y + 1.58, z], rotationQuaternion },
-    },
-  ];
 }
 
 function selectionCharacterNodes(): RendererSceneNode[] {
@@ -714,7 +456,6 @@ function applyAppearance(nextAppearance: CharacterAppearance, message: string) {
 }
 
 function saveCurrentCharacter() {
-  saveControls.cancelPending();
   try {
     const saved = saveCharacter(localStorage, selectedCharacter().id, characterAppearance);
     saveStatus.textContent = `Saved locally · ${hatOption(saved.appearance.hat).name}`;
@@ -724,7 +465,6 @@ function saveCurrentCharacter() {
 }
 
 function loadSavedCharacter() {
-  saveControls.cancelPending();
   try {
     const saved = loadCharacter(localStorage, selectedCharacter().id);
     if (!saved) {
@@ -773,11 +513,13 @@ function renderRoster(): void {
 
 function updateEntryButton(): void {
   const character = selectedCharacter();
-  const resume = enteredCharacterIds.has(character.id);
-  requireElement<HTMLElement>("#enter-world-label").textContent = resume ? "Resume exploration" : "Enter World";
-  requireElement<HTMLElement>("#enter-world-note").textContent = resume
-    ? "Current session paused · not automatically saved"
-    : `Start ${character.name} in Greyhaven`;
+  enterWorldButton.disabled = world === null;
+  enterWorldLabel.textContent = "Enter World";
+  enterWorldNote.textContent = world
+    ? worldFailure ?? `Start ${character.name} in Greyhaven Outpost`
+    : worldLoadError
+      ? `The zone simulation could not load: ${worldLoadError}`
+      : "Loading the zone simulation…";
 }
 
 function refreshSelectionPresentation(): void {
@@ -801,14 +543,12 @@ function selectCharacter(characterId: string): void {
   if (!character || character.id === selectedCharacterId()) {
     return;
   }
-  saveControls.cancelPending();
-  rememberActiveSession();
+  rememberAppearance();
   entryState = initialEntryState(character);
-  activateCharacterSession(character);
+  restoreAppearance(character);
   refreshSelectionPresentation();
   renderRoster();
   updateEntryButton();
-  saveControls.refresh();
   layoutPreview();
 }
 
@@ -840,8 +580,7 @@ function openCharacterCreation(): void {
     rosterStatus.textContent = `All ${MAX_CHARACTER_SLOTS} character slots are full.`;
     return;
   }
-  saveControls.cancelPending();
-  rememberActiveSession();
+  rememberAppearance();
   creationDraft = { name: "", classId: "warden", sex: "male" };
   characterAppearance = defaultAppearanceForClass("warden");
   creationForm.reset();
@@ -860,11 +599,10 @@ function cancelCharacterCreation(): void {
   }
   creationDraft = null;
   setCreationMode(false);
-  activateCharacterSession(selectedCharacter());
+  restoreAppearance(selectedCharacter());
   refreshSelectionPresentation();
   renderRoster();
   updateEntryButton();
-  saveControls.refresh();
   layoutPreview();
   createCharacterButton.focus();
 }
@@ -919,11 +657,10 @@ function finishCharacterCreation(): void {
     creationDraft = null;
     setCreationMode(false);
     entryState = initialEntryState(character);
-    activateCharacterSession(character);
+    restoreAppearance(character);
     refreshSelectionPresentation();
     renderRoster();
     updateEntryButton();
-    saveControls.refresh();
     rosterStatus.textContent = persisted
       ? `${character.name} created locally.`
       : `${character.name} created for this session only; browser roster storage is unavailable.`;
@@ -967,121 +704,165 @@ function renderSelection() {
   });
 }
 
-function renderWorld(deltaSeconds: number) {
-  accumulatedTicks += deltaSeconds * TICK_HZ;
-  while (accumulatedTicks >= 1) {
-    updateMovement(1 / TICK_HZ);
-    accumulatedTicks -= 1;
-    demoTick = advanceDemoTick(demoTick, snapshots);
-    publishDemoSnapshot();
+function currentMovementInput(): MovementInput {
+  const input = movementInput(keys, orbit.facing(), movementFacing, jumps);
+  movementFacing = input.facing;
+  return input;
+}
+
+function localLook(): UnitLook {
+  return { visuals: characterVisualProfile(selectedCharacter()), hat: characterAppearance.hat };
+}
+
+/** Projections carry no appearance yet, so other players share a neutral look. */
+const otherPlayerLook: UnitLook = {
+  visuals: { ...characterVisualProfile({ classId: "warden", sex: "male" }), bodyColor: "#8b9094", shoulderColor: "#9aa0a4" },
+  hat: null,
+};
+
+function showArea(name: string): void {
+  if (name === shownAreaName) {
+    return;
   }
-  const rendered = snapshots.sample(demoTick > 0n ? demoTick - 1n : 0n, accumulatedTicks)[0];
-  if (!rendered) throw new Error("Demo snapshot is missing its player");
-  const renderX = rendered.position[0] / UNITS_PER_METRE;
-  const renderZ = rendered.position[2] / UNITS_PER_METRE;
-  target.set(renderX, 0.9, renderZ);
-  const desiredCamera = new THREE.Vector3(renderX + 8.5, 7.6, renderZ + 10.5);
-  camera.position.lerp(desiredCamera, 1 - Math.pow(0.001, deltaSeconds));
-  camera.lookAt(target);
+  shownAreaName = name;
+  areaName.textContent = name;
+  // A placeholder objective until quests exist; area names come from core content.
+  objective.textContent = name === ZONE_NAME
+    ? "Explore Greyhaven Vale. Quests are not in this build yet."
+    : `Explore Greyhaven Vale — you are in ${name}. Quests are not in this build yet.`;
+}
+
+function renderWorld(activeWorld: LocalWorld, deltaSeconds: number, now: number) {
+  const { source, scenery } = activeWorld;
+  for (const command of outbox.update(currentMovementInput(), now)) {
+    source.sendCommand(command);
+  }
+  source.advance(deltaSeconds);
+  const projection = source.latestProjection();
+  if (!projection) {
+    throw new Error("The local zone has no projection for the joined player.");
+  }
+  const { unitsPerMetre, playerHalfExtents } = scenery.scenery;
+  const entities = source.sample();
+  const nodes = [...sceneryNodes];
+  let focus: [number, number, number] | null = null;
+  for (const entity of entities) {
+    const placement = placeUnit(entity, playerHalfExtents[1], scenery.reliefAt(entity.position[0], entity.position[2]), unitsPerMetre);
+    const self = entity.kind === "player" && entity.entityId === projection.viewerId;
+    if (self) {
+      focus = [placement.x, placement.feetY + playerHalfExtents[1] / unitsPerMetre, placement.z];
+      showArea(scenery.areaAt(entity.position[0], entity.position[2])?.name ?? ZONE_NAME);
+    }
+    nodes.push(...unitNodes(`unit-${entity.kind}-${entity.entityId}`, placement, self ? localLook() : otherPlayerLook));
+  }
+  if (!focus) {
+    throw new Error("The projection is missing the viewer's own unit.");
+  }
+  const view = orbit.view(focus);
+  camera.position.set(...view.eye);
+  camera.lookAt(...view.target);
   camera.updateMatrixWorld(true);
-
-  const nearby = nearWaystone();
-  prompt.hidden = !nearby;
-  prompt.innerHTML = waystoneActive
-    ? "<kbd>E</kbd> deactivate waystone"
-    : "<kbd>E</kbd> activate waystone";
-
   renderer.render({
     camera: {
       viewMatrix: [...camera.matrixWorldInverse.elements] as Matrix4Values,
       projectionMatrix: webGpuProjectionFromThree(),
     },
-    nodes: [...staticNodes, ...dynamicNodes(rendered.position)],
+    nodes,
   });
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function frame(now: number) {
+  // Re-arm first: one failed frame must never stop the render loop.
+  requestAnimationFrame(frame);
   const deltaSeconds = frameDeltaSeconds(now, lastTime);
   lastTime = now;
-  if (entryState.phase === "character-selection") {
-    renderSelection();
-  } else {
-    renderWorld(deltaSeconds);
+  if (entryState.phase === "world" && world) {
+    try {
+      renderWorld(world, deltaSeconds, now);
+    } catch (error) {
+      // Fail closed and visibly: leave the world and say why on the selection screen.
+      console.error(error);
+      returnToCharacters(`Left the world after an error: ${errorMessage(error)}`);
+    }
+    return;
   }
-  requestAnimationFrame(frame);
+  renderSelection();
+}
+
+function endOrbitDrag(): void {
+  if (orbitDrag && canvas.hasPointerCapture(orbitDrag.pointerId)) {
+    canvas.releasePointerCapture(orbitDrag.pointerId);
+  }
+  orbitDrag = null;
 }
 
 function enterWorld() {
-  if (creationDraft) {
+  if (creationDraft || !world || entryState.phase === "world") {
     return;
   }
-  turntable.cancel();
-  const character = selectedCharacter();
-  if (activeSessionCharacterId !== character.id) {
-    rememberActiveSession();
-    activateCharacterSession(character);
+  const next = enterPreviewWorld(entryState, selectedCharacter());
+  // Join before switching the page: a refused join leaves the source unjoined, so
+  // the page stays on selection, says why, and entry can be retried.
+  try {
+    world.source.join();
+  } catch (error) {
+    console.error(error);
+    worldFailure = `Could not enter the world: ${errorMessage(error)}`;
+    updateEntryButton();
+    return;
   }
-  entryState = enterPreviewWorld(entryState, character);
-  enteredCharacterIds.add(character.id);
+  worldFailure = null;
+  turntable.cancel();
+  entryState = next;
+  keys.clear();
+  endOrbitDrag();
+  orbit = new OrbitCamera();
+  movementFacing = orbit.facing();
+  outbox.reset(currentMovementInput());
+  shownAreaName = null;
   characterSelect.hidden = true;
   for (const element of worldUi) {
     element.hidden = false;
   }
-  camera.position.set(player.x + 8.5, 7.6, player.z + 10.5);
-  updateObjective();
-  keys.clear();
   lastTime = performance.now();
   canvas.focus();
 }
 
-function resumeWorld() {
-  saveControls.cancelPending();
-  enterWorld();
-}
-
-function returnToCharacters() {
-  saveControls.cancelPending();
+/** Back to selection; `failure` says why when the world was left after an error. */
+function returnToCharacters(failure: string | null = null) {
   turntable.cancel();
   const character = selectedCharacter();
-  rememberActiveSession();
+  try {
+    // Leaving removes the unit from the local zone; the next entry spawns a new one.
+    world?.source.leave();
+  } catch (error) {
+    console.error(error);
+    failure ??= `Could not leave the world cleanly: ${errorMessage(error)}`;
+  }
+  worldFailure = failure;
   entryState = initialEntryState(character);
   keys.clear();
+  endOrbitDrag();
   characterSelect.hidden = false;
   for (const element of worldUi) {
     element.hidden = true;
   }
-  prompt.hidden = true;
   setCreationMode(false);
   creationDraft = null;
   refreshSelectionPresentation();
   renderRoster();
   updateEntryButton();
   lastTime = performance.now();
-  saveControls.refresh();
   characterSelect.scrollTop = 0;
   layoutPreview();
   previewSurface.focus({ preventScroll: true });
 }
 
 refreshSelectionPresentation();
-const saveControls = installDemoSaveControls(
-  [...document.querySelectorAll<HTMLElement>("[data-game-save-controls]")],
-  () => selectedCharacter().id,
-  captureProgress,
-  (saved) => {
-    // The controller validates the entire document before invoking this commit boundary.
-    const character = selectedCharacter();
-    activeSessionCharacterId = character.id;
-    applyProgress(saved);
-    sessionByCharacterId.set(character.id, captureProgress());
-    refreshSelectionPresentation();
-    keys.clear();
-    snapshots.reset();
-    publishDemoSnapshot();
-    enterWorld();
-  },
-);
-
 renderRoster();
 updateEntryButton();
 if (!rosterStorageHealthy) {
@@ -1094,14 +875,13 @@ for (const button of hatButtons) {
     if (!isHatStyle(style)) {
       return;
     }
-    saveControls.cancelPending();
     applyAppearance({ hat: style }, `Unsaved change · ${hatOption(style).name}`);
   });
 }
 saveCharacterButton.addEventListener("click", saveCurrentCharacter);
 loadCharacterButton.addEventListener("click", loadSavedCharacter);
-enterWorldButton.addEventListener("click", resumeWorld);
-returnButton.addEventListener("click", returnToCharacters);
+enterWorldButton.addEventListener("click", enterWorld);
+returnButton.addEventListener("click", () => returnToCharacters());
 createCharacterButton.addEventListener("click", openCharacterCreation);
 for (const button of cancelCreationButtons) {
   button.addEventListener("click", cancelCharacterCreation);
@@ -1114,11 +894,53 @@ creationForm.addEventListener("submit", (event) => {
   event.preventDefault();
   finishCharacterCreation();
 });
-canvas.addEventListener("pointerdown", () => {
+// Drag with the primary or secondary button to orbit; the wheel zooms.
+canvas.addEventListener("pointerdown", (event) => {
+  if (entryState.phase !== "world") {
+    return;
+  }
+  canvas.focus();
+  if (orbitDrag || (event.button !== 0 && event.button !== 2)) {
+    return;
+  }
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch {
+    return;
+  }
+  orbitDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (!orbitDrag || orbitDrag.pointerId !== event.pointerId) {
+    return;
+  }
+  orbit.orbit(event.clientX - orbitDrag.x, event.clientY - orbitDrag.y);
+  orbitDrag.x = event.clientX;
+  orbitDrag.y = event.clientY;
+});
+for (const name of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
+  canvas.addEventListener(name, (event) => {
+    if (orbitDrag?.pointerId === event.pointerId) {
+      endOrbitDrag();
+    }
+  });
+}
+canvas.addEventListener("contextmenu", (event) => {
   if (entryState.phase === "world") {
-    canvas.focus();
+    event.preventDefault();
   }
 });
+canvas.addEventListener("wheel", (event) => {
+  if (entryState.phase !== "world") {
+    return;
+  }
+  event.preventDefault();
+  const lines = event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
+    ? event.deltaY / PIXELS_PER_WHEEL_LINE
+    : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY : event.deltaY * 3;
+  // Scrolling up (negative delta) zooms in.
+  orbit.zoom(-lines);
+}, { passive: false });
 
 window.addEventListener("keydown", (event) => {
   if (event.altKey || event.ctrlKey || event.metaKey) {
@@ -1126,7 +948,7 @@ window.addEventListener("keydown", (event) => {
   }
   // Native controls and the turntable own their keyboard input.
   if (event.target instanceof HTMLElement &&
-      event.target.closest("button, input, select, textarea, summary, a, [contenteditable=true], [role=slider], [data-game-save-controls]")) {
+      event.target.closest("button, input, select, textarea, summary, a, [contenteditable=true], [role=slider]")) {
     return;
   }
   if (entryState.phase === "character-selection") {
@@ -1139,7 +961,7 @@ window.addEventListener("keydown", (event) => {
     }
     if (event.code === "Enter" && !event.repeat) {
       event.preventDefault();
-      resumeWorld();
+      enterWorld();
     }
     return;
   }
@@ -1149,8 +971,9 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   keys.add(event.code);
-  if (event.code === "KeyE" && !event.repeat) {
-    interact();
+  if (event.code === "Space" && !event.repeat) {
+    // The outbox sends one Jump per counted press; the zone decides whether it lifts off.
+    jumps += 1;
   }
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(event.code)) {
     event.preventDefault();
@@ -1188,3 +1011,11 @@ new ResizeObserver(layoutPreview).observe(previewSurface);
 
 resize();
 requestAnimationFrame(frame);
+void loadLocalWorld().then((loaded) => {
+  world = loaded;
+  sceneryNodes = buildSceneryNodes(loaded.scenery.scenery);
+  updateEntryButton();
+}, (error: unknown) => {
+  worldLoadError = errorMessage(error);
+  updateEntryButton();
+});

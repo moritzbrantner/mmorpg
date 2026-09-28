@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
+mod areas;
 mod content;
 mod interest;
 pub mod trig;
+pub use areas::{Area, AreaId, MAX_AREA_NAME_BYTES, MAX_ZONE_AREAS, ZoneAreas, outpost_areas};
 pub use content::{
     MAX_STATIC_COLLIDERS, StaticCollider, UNITS_PER_METRE, ZoneDefinition, outpost_definition,
 };

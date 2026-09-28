@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
-    "dev": "vite",
+    "build": "bun scripts/build-wasm.ts && tsc --noEmit && vite build",
+    "build:wasm": "bun scripts/build-wasm.ts",
+    "dev": "bun scripts/build-wasm.ts && vite",
     "test": "bun test"
   },
   "dependencies": {

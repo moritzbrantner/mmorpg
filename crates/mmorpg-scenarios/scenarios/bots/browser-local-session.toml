@@ -1,0 +1,116 @@
+# The browser demo's session, end to end through the hosted runtime: enter,
+# run and strafe relative to a camera heading, jump mid-run, report the core
+# area, stop, leave (disconnect until grace expiry removes the unit), and
+# enter again as a new player at the free spawn. mmorpg-wasm's host test
+# browser_local_session_projections_match_the_network_runtime replays these
+# steps against the WASM local host and requires byte-identical projections
+# every tick while joined; leave differs there (the local host removes the
+# unit at once), so the away ticks are not compared. Keep both in step.
+name = "browser-local-session"
+zone = 1
+ticks = 54
+reconnect_grace_ticks = 3
+digest_interval = 5
+
+[[bots]]
+name = "alice"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "join"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "move"
+forward = 1
+strafe = 0
+facing = 16384
+
+[[steps]]
+tick = 10
+bot = "alice"
+action = "jump"
+
+[[steps]]
+tick = 20
+bot = "alice"
+action = "move"
+forward = 0
+strafe = 1
+facing = 16384
+
+[[steps]]
+tick = 30
+bot = "alice"
+action = "move"
+forward = 0
+strafe = 0
+facing = 16384
+
+[[steps]]
+tick = 44
+bot = "alice"
+action = "disconnect"
+
+[[steps]]
+tick = 50
+bot = "alice"
+action = "join"
+
+[[expect]]
+kind = "area"
+bot = "alice"
+tick = 1
+area = "Greyhaven Outpost"
+
+[[expect]]
+kind = "position"
+bot = "alice"
+tick = 10
+position = [210, 90, 0]
+
+[[expect]]
+kind = "acknowledged"
+bot = "alice"
+tick = 11
+sequence = 2
+
+# The grounded jump lifts off while the run continues, peaks, then lands.
+[[expect]]
+kind = "position"
+bot = "alice"
+tick = 11
+position = [231, 105, 0]
+
+[[expect]]
+kind = "position"
+bot = "alice"
+tick = 25
+position = [420, 210, 105]
+
+[[expect]]
+kind = "position"
+bot = "alice"
+tick = 44
+position = [420, 90, 210]
+
+[[expect]]
+kind = "area"
+bot = "alice"
+tick = 31
+area = "Greyhaven Outpost"
+
+# Re-entry is a new player alone at the freed spawn slot.
+[[expect]]
+kind = "visible_count"
+bot = "alice"
+tick = 51
+count = 1
+
+[[expect]]
+kind = "position"
+bot = "alice"
+tick = 51
+position = [0, 90, 0]

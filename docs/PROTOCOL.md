@@ -18,6 +18,8 @@ The shared session runtime supplies player identity, connection epoch and comman
 
 Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, and only version 2. Version 1 (`SetMovement`) payloads are rejected.
 
+The shared command fixture is `fixtures/protocol/commands-v2.hex`: one encoded command per line followed by its fields. `mmorpg-protocol` renders and verifies it, and the browser encoder (`web/src/command-wire.ts`) must produce the same bytes.
+
 ## Common snapshot prefix (16 bytes)
 
 | Offset | Width | Field |

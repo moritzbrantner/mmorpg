@@ -74,17 +74,13 @@
 .turntable-hint { text-align: center; font-size: .75rem; color: #c1cec6; line-height: 1.5; }
 .appearance-storage { margin-top: .8rem; font-size: .75rem; color: #aabbb1; }
 .appearance-storage summary { cursor: pointer; padding: .4rem 0; }
-.game-save-summary { font-size: .75rem; line-height: 1.5; color: #ded7bf; overflow-wrap: anywhere; }
-.game-save-actions button { min-height: 2.75rem; }
-.game-save-actions button:disabled { opacity: .45; cursor: not-allowed; background: #202e2a; }
-.game-save-status { min-height: 2.8em; }
 .world-toolbar { display: flex; align-items: center; gap: .8rem; }
 .preview-loading { margin: auto; text-align: center; }
 .selection-note { font-size: .7rem; color: #a3b1a7; }
 
 @media (max-width: 1000px) {
   .character-select {
-    /* Content-sized rows must not collapse the equipment panel below a tall save sidebar. */
+    /* Content-sized rows must not collapse the equipment panel below a tall sidebar. */
     grid-template: "brand" max-content "preview" minmax(min-content, clamp(22rem, 48vh, 28rem)) "sidebar" max-content "details" max-content / minmax(0, 1fr);
     align-content: start;
     pointer-events: auto;
@@ -103,5 +99,4 @@
   .selection-sidebar { grid-template-columns: minmax(0, 1fr); }
   .equipment-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .world-toolbar { flex-direction: column; gap: .3rem; align-items: end; }
-  .prompt { bottom: 18rem; max-width: calc(100vw - 2rem); }
 }

@@ -11,12 +11,12 @@ import {
 import {
   characterRosterStorageKey,
   hasRetainedCharacterSaves,
+  legacyCheckpointKey,
   loadCreatedCharacters,
   mergeStoredRoster,
   saveCreatedCharacters,
 } from "../src/character-roster";
 import { storageKeyForCharacter } from "../src/character-customization";
-import { demoSaveKey } from "../src/demo-save";
 import { characterVisualProfile } from "../src/character-visuals";
 
 function memory() {
@@ -126,9 +126,10 @@ test("sex affects presentation geometry while class changes palette and main-han
   assert.notEqual(warden.chestColor, arcanist.chestColor);
 });
 
-test("never reissues an identity whose checkpoint or appearance save still exists", () => {
+test("never reissues an identity whose legacy checkpoint or appearance save still exists", () => {
   const storage = memory();
-  storage.setItem(demoSaveKey("local-1"), "{}");
+  assert.equal(legacyCheckpointKey("local-1"), "mmorpg.offline-demo.v1.local-1");
+  storage.setItem(legacyCheckpointKey("local-1"), "{}");
   storage.setItem(storageKeyForCharacter("local-2"), "{}");
   const retained = (id: string) => hasRetainedCharacterSaves(storage, id);
   assert.ok(retained("local-1"));

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Real Chromium acceptance against the production bundle; no mocked renderer.
+"""Real Chromium acceptance against the production bundle; no mocked renderer or simulation.
 
-Prerequisites: build web/, pip install playwright==1.57.0, then
+The bundle embeds the shared Rust zone simulation as a WASM local host, so these
+tests drive real movement, jumps and zone entry/exit through the page.
+
+Prerequisites: build web/ (bun run build), pip install playwright==1.57.0, then
 python -m playwright install --with-deps chromium.
 Run from the repository root: python scripts/smoke-browser.py
 """
@@ -19,8 +22,9 @@ from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts" / "browser"
-KEY = "mmorpg.offline-demo.v1.aelric-stormward"
 ROSTER_KEY = "mmorpg.offline-roster.v1"
+# The retired offline checkpoint key; nothing may write it any more.
+LEGACY_CHECKPOINT_PREFIX = "mmorpg.offline-demo.v1."
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -89,7 +93,37 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.wait_for_function("window.__calls.draws > 0")
         expect(self.page.locator("#character-stage-fallback")).to_be_hidden()
         expect(self.page.get_by_role("slider", name="Character rotation")).to_be_visible()
+        self.wait_for_zone()
         self.frames()
+
+    def wait_for_zone(self):
+        """The WASM local zone host loads asynchronously; entry is disabled until it is ready."""
+        expect(self.enter_button()).to_be_enabled(timeout=20_000)
+        expect(self.page.locator("#enter-world-note")).to_contain_text("Start ")
+
+    def enter_button(self):
+        return self.page.get_by_role("button", name=re.compile("^Enter World"))
+
+    def enter_world(self):
+        self.enter_button().click()
+        expect(self.page.locator("#character-select")).to_be_hidden()
+        expect(self.page.locator(".hud")).to_be_visible()
+        self.page.locator("#world").focus()
+        self.frames(4)
+
+    def world_view(self):
+        """The world canvas between the HUD panels; the camera follows the character."""
+        return self.page.screenshot(clip={"x": 200, "y": 120, "width": 1040, "height": 560})
+
+    def wait_for_view(self, expected, timeout_frames=240):
+        for _ in range(timeout_frames):
+            self.frames(2)
+            if self.world_view() == expected:
+                return True
+        return False
+
+    def legacy_checkpoints(self):
+        return self.page.evaluate("prefix => Object.keys(localStorage).filter(key => key.startsWith(prefix))", LEGACY_CHECKPOINT_PREFIX)
 
     def frames(self, count=3):
         self.page.evaluate("""count => new Promise(resolve => {
@@ -97,28 +131,12 @@ class BrowserAcceptance(unittest.TestCase):
           requestAnimationFrame(next);
         })""", count)
 
-    def export(self):
-        with self.page.expect_download() as info:
-            self.page.get_by_role("button", name="Export save", exact=True).filter(visible=True).click()
-        return json.loads(Path(info.value.path()).read_text())
-
-    def import_raw(self, raw: str):
-        self.page.locator("[data-game-save-controls]:visible input[type=file]").set_input_files({
-            "name": "save.json", "mimeType": "application/json", "buffer": raw.encode(),
-        })
-
-    def save(self):
-        self.page.get_by_role("button", name="Save game", exact=True).filter(visible=True).click()
-        expect(self.page.locator("[data-game-save-controls]:visible .game-save-status")).to_contain_text("Game saved")
-
-    def checkpoint(self):
-        return self.page.evaluate("key => localStorage.getItem(key)", KEY)
-
     def test_rotation_mouse_keyboard_reset_and_rendered_pixels(self):
         self.open()
         surface = self.page.get_by_role("slider", name="Character rotation")
-        expect(self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True)).to_be_disabled()
-        before_save = self.export()
+        # Reach the front view the way the reset check below does (a mouse click, then
+        # focus), so both screenshots share the same :focus-visible state.
+        self.page.get_by_role("button", name="Reset view").click()
         surface.focus()
         box = surface.bounding_box()
         clip = {"x": box["x"] + 5, "y": box["y"] + 5, "width": box["width"] - 10, "height": box["height"] - 10}
@@ -144,8 +162,6 @@ class BrowserAcceptance(unittest.TestCase):
         surface.focus()
         self.frames()
         self.assertEqual(self.page.screenshot(clip=clip), front, "Reset restores the rendered front view")
-        self.assertEqual(self.export(), before_save, "Inspection cannot mutate gameplay, tick, or facing")
-        self.assertIsNone(self.checkpoint(), "Inspect/export must not create a local save")
         reads = self.page.evaluate("window.__calls.reads")
         writes = self.page.evaluate("window.__calls.writes")
         self.frames(15)
@@ -182,84 +198,126 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.locator('[data-hat-style="ranger-cap"]').press("Enter")
         expect(self.page.locator("#character-select")).to_be_visible()
         expect(surface).to_have_attribute("aria-valuenow", "0")
-        self.page.get_by_role("button", name="Save game", exact=True).filter(visible=True).press("Enter")
+        self.page.get_by_role("button", name="Reset view").press("Enter")
         expect(self.page.locator("#character-select")).to_be_visible()
         expect(surface).to_have_attribute("aria-valuenow", "0")
 
-    def test_save_reload_resume_import_and_paused_selection(self):
+    def test_enter_world_move_jump_orbit_and_leave(self):
         self.open()
+        self.assertEqual(self.page.get_by_role("button", name=re.compile("^(Save|Load|Export|Import) (game|save)$")).count(), 0,
+                         "No control may claim to save world progress the demo cannot persist")
+        self.assertNotRegex(self.page.locator("body").text_content(), re.compile(r"saved (facing|position)", re.IGNORECASE),
+                            "No text may claim world state is saved; the demo cannot persist it")
         self.page.locator('[data-hat-style="ironcrest-helm"]').click()
-        self.page.get_by_role("button", name="Enter World").click()
-        # Exercise actual movement; the fixture import below then reaches the waystone deterministically.
-        self.page.keyboard.down("KeyD")
-        self.frames(15)
-        self.page.keyboard.up("KeyD")
+        writes = self.page.evaluate("window.__calls.writes")
+        self.enter_world()
+        expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
+        expect(self.page.locator("#objective")).to_contain_text("Explore Greyhaven Vale")
+        expect(self.page.locator("#objective")).to_contain_text("Greyhaven Outpost")
+        self.frames(6)
+        spawn = self.world_view()
+        self.page.screenshot(path=str(ARTIFACTS / "world-spawn.png"))
+        self.frames(6)
+        self.assertEqual(self.world_view(), spawn, "An idle character in a static zone renders identically")
+
+        # W runs forward along the camera heading through the WASM zone; the camera follows.
+        self.page.keyboard.down("KeyW")
+        self.frames(24)
+        self.page.keyboard.up("KeyW")
+        self.frames(4)
+        moved = self.world_view()
+        self.assertNotEqual(moved, spawn, "Holding W must move the character and its follow camera")
+        self.page.screenshot(path=str(ARTIFACTS / "world-moved.png"))
+
+        # Space jumps: body and camera rise, then physics lands the unit where it took off.
+        self.page.keyboard.press("Space")
+        self.frames(3)
+        self.assertNotEqual(self.world_view(), moved, "A grounded jump must lift the character")
+        self.page.screenshot(path=str(ARTIFACTS / "world-jump.png"))
+        self.assertTrue(self.wait_for_view(moved), "The character lands back on the ground it jumped from")
+
+        # Dragging the canvas orbits the camera; the wheel zooms.
+        box = self.page.locator("#world").bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        self.page.mouse.move(x, y)
+        self.page.mouse.down()
+        self.page.mouse.move(x + 180, y - 40, steps=6)
+        self.page.mouse.up()
+        self.page.mouse.wheel(0, -240)
+        self.frames(4)
+        self.assertNotEqual(self.world_view(), moved, "Orbit and zoom must change the view")
+        self.page.screenshot(path=str(ARTIFACTS / "world-orbit.png"))
+        self.assertEqual(self.page.evaluate("window.__calls.writes"), writes, "Playing never writes browser storage")
+
+        # Leaving removes the unit from the local zone; re-entry spawns a fresh character at the spawn.
         self.page.get_by_role("button", name="Characters", exact=True).click()
-        moved = self.export()
-        self.assertGreater(moved["progress"]["position"]["x"], -5.5)
-        self.frames(15)
-        self.assertEqual(self.export(), moved, "Character selection must pause the simulation")
-        moved["progress"].update({"position": {"x": 4.8, "z": -3.5}, "waystoneActive": False})
-        self.import_raw(json.dumps(moved))
-        expect(self.page.locator("#character-select")).to_be_hidden()
-        self.page.keyboard.press("KeyE")
-        expect(self.page.locator("#objective")).to_contain_text("Waystone activated")
-        self.save()
-        saved = self.checkpoint()
-        self.page.keyboard.press("Escape")  # Save control owns keys; focus the world first.
+        expect(self.page.locator("#character-select")).to_be_visible()
+        expect(self.enter_button()).to_be_enabled()
+        self.enter_world()
+        self.assertTrue(self.wait_for_view(spawn, timeout_frames=20),
+                        "Re-entering must show a new character alone at the spawn with a reset camera")
         self.page.locator("#world").focus()
         self.page.keyboard.press("Escape")
-        expect(self.page.locator("#enter-world-label")).to_have_text("Resume exploration")
-        expect(self.page.locator("#character-select .game-save-summary")).to_contain_text("Waystone active")
-        self.assertEqual(self.checkpoint(), saved)
-        self.page.reload()
-        self.page.wait_for_function("window.__calls.draws > 0")
-        expect(self.page.locator("#character-select .game-save-summary")).to_contain_text("Ironcrest Helm")
-        self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True).click()
-        expect(self.page.locator("#objective")).to_contain_text("Waystone activated")
-        self.page.get_by_role("button", name="Characters", exact=True).click()
-        restored = self.export()
-        for field in ["position", "facing", "waystoneActive", "appearance"]:
-            self.assertEqual(restored["progress"][field], json.loads(saved)["progress"][field])
-        self.assertEqual(self.checkpoint(), saved)
-        self.page.screenshot(path=str(ARTIFACTS / "saved-character-selection.png"))
-        self.import_raw("{")
-        expect(self.page.locator("#character-select .game-save-status")).to_contain_text("not valid JSON")
-        self.assertEqual(self.export(), restored)
-        self.assertEqual(self.checkpoint(), saved)
-
-    def test_navigation_fences_delayed_import(self):
-        self.open()
-        imported = self.export()
-        imported["progress"]["waystoneActive"] = True
-        self.page.get_by_role("button", name="Enter World").click()
-        self.page.evaluate("""() => {
-          const original = File.prototype.text;
-          File.prototype.text = function() { return new Promise(resolve => {
-            window.__finishImport = async () => resolve(await original.call(this));
-          }); };
-        }""")
-        self.import_raw(json.dumps(imported))
-        expect(self.page.locator(".hud .game-save-status")).to_contain_text("Reading")
-        self.page.get_by_role("button", name="Characters", exact=True).click()
-        self.page.evaluate("() => window.__finishImport()")
-        self.frames()
         expect(self.page.locator("#character-select")).to_be_visible()
-        self.assertFalse(self.export()["progress"]["waystoneActive"], "Navigation alone must retire the pending import")
-        self.assertIsNone(self.checkpoint())
+        self.assertEqual(self.legacy_checkpoints(), [])
 
-    def test_storage_denial_keeps_file_backups_working(self):
+    def test_rejected_projections_fail_closed_without_freezing_the_page(self):
+        # Byte 2 of a snapshot header is its schema version. While the flag is set the
+        # strict decoder sees an unknown version, as after a WASM/decoder version skew.
+        self.context.add_init_script("""(() => {
+          window.__rejectSnapshots = false;
+          const original = DataView.prototype.getUint16;
+          DataView.prototype.getUint16 = function(offset, ...rest) {
+            return window.__rejectSnapshots && offset === 2 ? 0xffff : original.call(this, offset, ...rest);
+          };
+        })();""")
+        self.open()
+        note = self.page.locator("#enter-world-note")
+
+        # A refused entry keeps the page on selection, says why, and keeps rendering.
+        self.page.evaluate("window.__rejectSnapshots = true")
+        self.enter_button().click()
+        expect(note).to_contain_text("Could not enter the world: Unsupported snapshot version")
+        expect(self.page.locator("#character-select")).to_be_visible()
+        expect(self.page.locator(".hud")).to_be_hidden()
+        self.assert_rendering()
+
+        # The refused join left nothing joined, so entry works once projections decode.
+        self.page.evaluate("window.__rejectSnapshots = false")
+        self.enter_world()
+        expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
+
+        # A projection rejected while playing leaves the world instead of stopping the loop.
+        self.page.evaluate("window.__rejectSnapshots = true")
+        expect(self.page.locator("#character-select")).to_be_visible()
+        expect(self.page.locator(".hud")).to_be_hidden()
+        expect(note).to_contain_text("Left the world after an error: Unsupported snapshot version")
+        self.page.evaluate("window.__rejectSnapshots = false")
+        self.assert_rendering()
+        self.enter_world()
+        expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
+        self.page.keyboard.press("Escape")
+        expect(note).to_contain_text("Start ")
+
+    def assert_rendering(self):
+        draws = self.page.evaluate("window.__calls.draws")
+        self.frames(3)
+        self.assertGreater(self.page.evaluate("window.__calls.draws"), draws, "The render loop must keep running")
+
+    def test_storage_denial_keeps_the_world_playable(self):
         self.context.add_init_script("Object.defineProperty(window, 'localStorage', {get() { throw new DOMException('Storage denied', 'SecurityError'); }});")
         self.open()
-        expect(self.page.locator("#character-select .game-save-summary")).to_contain_text("unavailable")
-        expect(self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True)).to_be_disabled()
-        before = self.export()
-        self.page.get_by_role("button", name="Save game", exact=True).filter(visible=True).click()
-        expect(self.page.locator("#character-select .game-save-status")).to_contain_text("Storage denied")
-        self.assertEqual(self.export(), before)
-        self.import_raw(json.dumps(before))
-        expect(self.page.locator("#character-select")).to_be_hidden()
-        expect(self.page.locator(".hud .game-save-status")).to_contain_text("Imported game restored")
+        expect(self.page.locator("#roster-status")).to_contain_text("could not be read")
+        self.page.locator(".appearance-storage summary").click()
+        self.page.get_by_role("button", name="Save appearance").click()
+        expect(self.page.locator("#save-status")).to_contain_text("storage is unavailable")
+        self.enter_world()
+        expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
+        self.page.keyboard.down("KeyD")
+        self.frames(10)
+        self.page.keyboard.up("KeyD")
+        self.page.get_by_role("button", name="Characters", exact=True).click()
+        expect(self.page.locator("#character-select")).to_be_visible()
 
     def test_mobile_touch_rotation_scroll_and_layout(self):
         self.context.close()
@@ -281,17 +339,13 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.screenshot(path=str(ARTIFACTS / "character-selection-mobile.png"))
         overflow = self.page.locator("#character-select").evaluate("el => el.scrollWidth > el.clientWidth + 1")
         self.assertFalse(overflow, "Mobile selection must not scroll horizontally")
-        self.page.get_by_role("button", name="Save game", exact=True).filter(visible=True).scroll_into_view_if_needed()
-        self.save()
-        self.page.screenshot(path=str(ARTIFACTS / "character-selection-mobile-saves.png"))
-        expect(self.page.locator("#character-select .game-save-summary")).to_contain_text("Local checkpoint")
         self.assert_selection_layout()
         self.page.locator(".selection-actions").scroll_into_view_if_needed()
         self.frames()
         self.page.screenshot(path=str(ARTIFACTS / "character-selection-mobile-resume.png"))
         session.detach()
 
-    def test_character_creation_classes_sex_roster_persistence_and_save_isolation(self):
+    def test_character_creation_classes_sex_and_roster_persistence(self):
         self.open()
         self.page.get_by_role("button", name="Create character", exact=True).click()
         expect(self.page.get_by_role("heading", name="Create character")).to_be_visible()
@@ -317,19 +371,15 @@ class BrowserAcceptance(unittest.TestCase):
             "id": "local-1", "name": "Lyra Vale", "classId": "ranger", "sex": "female",
         }])
 
-        self.page.get_by_role("button", name="Enter World").click()
+        self.enter_world()
         self.frames(8)
         self.page.screenshot(path=str(ARTIFACTS / "character-ranger-world.png"))
-        self.page.locator("#world").focus()
         self.page.keyboard.press("Escape")
         expect(self.page.locator("#character-name")).to_have_text("Lyra Vale")
-        self.save()
-        self.assertIsNotNone(self.page.evaluate("() => localStorage.getItem('mmorpg.offline-demo.v1.local-1')"))
-        self.assertIsNone(self.checkpoint(), "A created character must not write the built-in character save slot")
+        self.assertEqual(self.legacy_checkpoints(), [], "Entering the world must not write any progress save")
         roster_buttons.get_by_role("button", name=re.compile("Aelric Stormward")).click()
-        expect(self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True)).to_be_disabled()
+        expect(self.page.locator("#character-name")).to_have_text("Aelric Stormward")
         roster_buttons.get_by_role("button", name=re.compile("Lyra Vale")).click()
-        expect(self.page.get_by_role("button", name="Load game", exact=True).filter(visible=True)).to_be_enabled()
 
         self.page.reload()
         self.page.wait_for_function("window.__calls.draws > 0")
