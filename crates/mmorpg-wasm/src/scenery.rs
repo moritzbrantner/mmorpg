@@ -1,42 +1,36 @@
 //! Versioned presentation scenery for the browser's `SceneryProvider`.
 //!
 //! The export is JSON (format [`SCENERY_FORMAT`], version
-//! [`SCENERY_FORMAT_VERSION`]) so `mmorpg-core` stays free of serde. It
-//! describes a terrain grid, props, water and the core's named areas.
+//! [`SCENERY_FORMAT_VERSION`]) so `mmorpg-core` stays free of serde. It maps
+//! the hosted content's `mmorpg-scenery` value, the same one the native
+//! client draws, onto that format:
 //!
-//! `mmorpg-scenery` is not part of the workspace yet, so this module derives
-//! a **collider blockout** from the hosted `ZoneDefinition`: a flat terrain
-//! grid around the colliders and one coloured box per collider standing
-//! above walkable ground. Colliders whose top is at or below `y = 0` are
-//! ground support and appear as the terrain's courtyard biome instead. When
-//! the scenery crate lands, it replaces this mapping behind the same format;
-//! the browser's render loop does not change. None of this is gameplay: it
-//! only decides what the static world looks like.
+//! - **terrain**: [`Scenery::terrain_grid`] every [`TERRAIN_STEP_UNITS`]
+//!   over ±200 m, with one biome ID per sample. The browser renderer has no
+//!   vertex colours, so each biome draws in its untinted base colour;
+//! - **props**: one `block` per scenery prop, its body box standing on the
+//!   relief at its feet, turned by the prop's yaw and coloured by its kind.
+//!   A structure's block is exactly its core collider. The native client
+//!   adds kind-specific parts (roofs, canopies) above the same bodies;
+//! - **water** and the core's named **areas**.
+//!
+//! [`relief_at`] answers from the same `Scenery::height_at`, so browser and
+//! native units stand on the same ground. None of this is gameplay: the
+//! local zone host ([`crate::host`]) never reads it, and network hosts never
+//! link `mmorpg-scenery`.
 
 use std::sync::OnceLock;
 
-use mmorpg_core::{
-    PLAYER_HALF_EXTENTS_UNITS, StaticCollider, UNITS_PER_METRE, ZoneAreas, ZoneDefinition,
-    greyhaven_vale,
-};
+use mmorpg_core::{PLAYER_HALF_EXTENTS_UNITS, UNITS_PER_METRE, ZoneAreas, greyhaven_vale};
+use mmorpg_scenery::{PropKind, RockSize, Scenery, TreeVariant, greyhaven_vale_scenery};
 use serde::Serialize;
-
-use crate::host::hosted_definition;
 
 pub const SCENERY_FORMAT: &str = "mmorpg.scenery";
 pub const SCENERY_FORMAT_VERSION: u32 = 1;
 /// Where this export's props and terrain come from.
-pub const SCENERY_SOURCE: &str = "core-collider-blockout";
-
-/// Terrain sample spacing: 4 m.
-const TERRAIN_STEP_UNITS: i32 = 400;
-/// Terrain extends this far beyond the outermost collider: 40 m.
-const TERRAIN_MARGIN_UNITS: i32 = 4_000;
-/// A collider this much longer than it is thick reads as a wall.
-const WALL_ASPECT: i32 = 8;
-
-const BIOME_WILDS: u8 = 0;
-const BIOME_COURTYARD: u8 = 1;
+pub const SCENERY_SOURCE: &str = "mmorpg-scenery";
+/// Terrain sample spacing: 4 m, 101 × 101 samples over ±200 m.
+pub const TERRAIN_STEP_UNITS: i32 = 400;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,7 +69,7 @@ pub struct Terrain {
 pub struct Biome {
     pub id: u8,
     pub name: &'static str,
-    pub color: &'static str,
+    pub color: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -116,17 +110,21 @@ pub fn hosted_areas() -> &'static ZoneAreas {
     greyhaven_vale::areas()
 }
 
-/// Presentation relief at `(x, z)` in units. Clients offset units by it
-/// vertically; the blockout is flat. `mmorpg-scenery`'s shared relief
-/// function replaces this.
+/// The presentation scenery of the hosted content, built once.
+pub fn hosted_scenery() -> &'static Scenery {
+    static SCENERY: OnceLock<Scenery> = OnceLock::new();
+    SCENERY.get_or_init(greyhaven_vale_scenery)
+}
+
+/// Presentation relief at `(x, z)` in units; clients raise units by it.
 #[must_use]
-pub const fn relief_at(_x: i32, _z: i32) -> i32 {
-    0
+pub fn relief_at(x: i32, z: i32) -> i32 {
+    hosted_scenery().height_at(x, z)
 }
 
 #[must_use]
-pub fn hosted_scenery() -> SceneryExport {
-    blockout(&hosted_definition(), hosted_areas())
+pub fn hosted_export() -> SceneryExport {
+    export(hosted_scenery(), hosted_areas())
 }
 
 /// The serialized export. Serializing plain data cannot fail.
@@ -134,37 +132,41 @@ pub fn hosted_scenery() -> SceneryExport {
 pub fn hosted_scenery_json() -> &'static str {
     static JSON: OnceLock<String> = OnceLock::new();
     JSON.get_or_init(|| {
-        serde_json::to_string(&hosted_scenery()).expect("scenery export is plain serializable data")
+        serde_json::to_string(&hosted_export()).expect("scenery export is plain serializable data")
     })
 }
 
-fn blockout(definition: &ZoneDefinition, areas: &ZoneAreas) -> SceneryExport {
-    let (ground, standing): (Vec<_>, Vec<_>) = definition
-        .colliders()
-        .iter()
-        .partition(|collider| top(collider) <= 0);
+fn export(scenery: &Scenery, areas: &ZoneAreas) -> SceneryExport {
     SceneryExport {
         format: SCENERY_FORMAT,
         version: SCENERY_FORMAT_VERSION,
         source: SCENERY_SOURCE,
-        content_revision: definition.revision().to_string(),
+        content_revision: scenery.content_revision.to_string(),
         units_per_metre: UNITS_PER_METRE,
         player_half_extents: PLAYER_HALF_EXTENTS_UNITS,
-        terrain: terrain(definition.colliders(), &ground),
-        biomes: vec![
-            Biome {
-                id: BIOME_WILDS,
-                name: "wilds",
-                color: "#4c6b3f",
-            },
-            Biome {
-                id: BIOME_COURTYARD,
-                name: "courtyard",
-                color: "#7d8a63",
-            },
-        ],
-        props: standing.into_iter().map(block).collect(),
-        water: Vec::new(),
+        terrain: terrain(scenery),
+        biomes: mmorpg_scenery::Biome::ALL
+            .iter()
+            .map(|biome| Biome {
+                id: biome.id(),
+                name: biome.name(),
+                color: hex(biome.base_color()),
+            })
+            .collect(),
+        props: scenery
+            .props
+            .iter()
+            .map(|prop| block(scenery, prop))
+            .collect(),
+        water: scenery
+            .water
+            .iter()
+            .map(|water| Water {
+                center_xz: water.centre,
+                radii_xz: water.radii,
+                surface_y: water.surface,
+            })
+            .collect(),
         areas: areas
             .areas()
             .iter()
@@ -178,217 +180,256 @@ fn blockout(definition: &ZoneDefinition, areas: &ZoneAreas) -> SceneryExport {
     }
 }
 
-fn top(collider: &StaticCollider) -> i32 {
-    collider.position[1].saturating_add(collider.half_extents[1])
+fn terrain(scenery: &Scenery) -> Terrain {
+    let grid = scenery.terrain_grid(TERRAIN_STEP_UNITS);
+    let count = |samples: usize| u32::try_from(samples).expect("terrain sample count fits u32");
+    Terrain {
+        origin_xz: grid.origin,
+        step: grid.step,
+        columns: count(grid.columns),
+        rows: count(grid.rows),
+        heights: grid.heights,
+        biomes: grid.biomes.iter().map(|biome| biome.id()).collect(),
+    }
 }
 
-fn block(collider: &StaticCollider) -> Prop {
-    let [half_x, _, half_z] = collider.half_extents;
-    let thin = half_x.min(half_z);
-    let long = half_x.max(half_z);
-    let color = if long >= thin.saturating_mul(WALL_ASPECT) {
-        "#8b8375"
-    } else {
-        "#8a6446"
-    };
+/// The prop's body box, standing on the relief at its feet.
+fn block(scenery: &Scenery, prop: &mmorpg_scenery::Prop) -> Prop {
+    let [x, feet, z] = prop.position;
+    let base = feet + scenery.height_at(x, z);
     Prop {
         kind: "block",
-        collider_id: Some(collider.id),
-        position: collider.position,
-        yaw: 0,
-        half_extents: collider.half_extents,
-        color,
+        collider_id: prop.collider,
+        position: [x, base + prop.half_extents[1], z],
+        yaw: prop.yaw,
+        half_extents: prop.half_extents,
+        color: body_color(prop),
     }
 }
 
-fn terrain(colliders: &[StaticCollider], ground: &[&StaticCollider]) -> Terrain {
-    let (mut min, mut max) = ([0_i32; 2], [0_i32; 2]);
-    for collider in colliders {
-        for (axis, component) in [(0, 0), (1, 2)] {
-            min[axis] = min[axis]
-                .min(collider.position[component].saturating_sub(collider.half_extents[component]));
-            max[axis] = max[axis]
-                .max(collider.position[component].saturating_add(collider.half_extents[component]));
-        }
-    }
-    let origin_xz = min.map(|value| snap_down(value.saturating_sub(TERRAIN_MARGIN_UNITS)));
-    let far_xz = max.map(|value| snap_up(value.saturating_add(TERRAIN_MARGIN_UNITS)));
-    let samples = |axis: usize| {
-        u32::try_from((far_xz[axis] - origin_xz[axis]) / TERRAIN_STEP_UNITS + 1)
-            .expect("terrain spans a positive sample count")
-    };
-    let (columns, rows) = (samples(0), samples(1));
-    let mut heights = Vec::new();
-    let mut biomes = Vec::new();
-    for row in 0..rows {
-        for column in 0..columns {
-            let x = origin_xz[0] + offset(column);
-            let z = origin_xz[1] + offset(row);
-            let supported = ground.iter().any(|collider| {
-                (x - collider.position[0]).abs() <= collider.half_extents[0]
-                    && (z - collider.position[2]).abs() <= collider.half_extents[2]
-            });
-            heights.push(relief_at(x, z));
-            biomes.push(if supported {
-                BIOME_COURTYARD
-            } else {
-                BIOME_WILDS
-            });
-        }
-    }
-    Terrain {
-        origin_xz,
-        step: TERRAIN_STEP_UNITS,
-        columns,
-        rows,
-        heights,
-        biomes,
+// Body colours in sRGB: the native client's linear blockout body colours
+// (`mmorpg-client/src/world.rs`), encoded for the browser renderer.
+const STONE: &str = "#adaca6";
+const DARK_STONE: &str = "#8e8b89";
+const WOOD: &str = "#a28461";
+const DARK_WOOD: &str = "#816950";
+const PLASTER: &str = "#ddd4bf";
+const FLOWERS: [&str; 4] = ["#f3e159", "#c489e1", "#f6f6f1", "#e76c61"];
+
+fn body_color(prop: &mmorpg_scenery::Prop) -> &'static str {
+    match prop.kind {
+        PropKind::Keep
+        | PropKind::Windmill
+        | PropKind::Well
+        | PropKind::Rock(RockSize::Small | RockSize::Medium) => STONE,
+        PropKind::Smithy
+        | PropKind::Gravestone
+        | PropKind::Cliff
+        | PropKind::Campfire
+        | PropKind::Rock(RockSize::Large) => DARK_STONE,
+        PropKind::Inn | PropKind::House | PropKind::Farmhouse => PLASTER,
+        PropKind::PalisadeSegment
+        | PropKind::Fence
+        | PropKind::Cart
+        | PropKind::Signpost
+        | PropKind::MineEntrance
+        | PropKind::Dock
+        | PropKind::Tree(TreeVariant::Oak | TreeVariant::Pine) => WOOD,
+        PropKind::GatePost | PropKind::Barrel | PropKind::Lamp => DARK_WOOD,
+        PropKind::Barn => "#b35945",
+        PropKind::Waystone => "#959eaa",
+        PropKind::Tree(TreeVariant::Birch) => "#e1dfd7",
+        PropKind::Bush => "#598b4b",
+        PropKind::GrassTuft => "#6f9e4b",
+        PropKind::Flowers => FLOWERS[usize::from(prop.yaw % 4)],
+        PropKind::Reeds => "#a2ad6f",
+        PropKind::Tent => "#cec4ad",
+        PropKind::Crate => "#bca276",
+        PropKind::CropRow => "#cebf6f",
     }
 }
 
-fn offset(samples: u32) -> i32 {
-    i32::try_from(samples).expect("terrain sample count fits i32") * TERRAIN_STEP_UNITS
-}
-
-fn snap_down(value: i32) -> i32 {
-    value.div_euclid(TERRAIN_STEP_UNITS) * TERRAIN_STEP_UNITS
-}
-
-fn snap_up(value: i32) -> i32 {
-    snap_down(value)
-        + if value.rem_euclid(TERRAIN_STEP_UNITS) == 0 {
-            0
-        } else {
-            TERRAIN_STEP_UNITS
-        }
+fn hex([red, green, blue]: [u8; 3]) -> String {
+    format!("#{red:02x}{green:02x}{blue:02x}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mmorpg_core::{MAX_PLAYERS_PER_ZONE, greyhaven_vale::SPAWN_GRID};
+    use mmorpg_scenery::visual_kind;
     use serde_json::Value;
 
+    use crate::host::hosted_definition;
+
     #[test]
-    fn every_standing_collider_has_exactly_one_block_and_ground_is_terrain() {
+    fn scenery_comes_from_the_hosted_content_revision() {
         let definition = hosted_definition();
-        let scenery = hosted_scenery();
-        let mut visualised = scenery
+        assert_eq!(hosted_scenery().content_revision, definition.revision());
+        assert_eq!(
+            hosted_export().content_revision,
+            definition.revision().to_string()
+        );
+    }
+
+    #[test]
+    fn every_structure_collider_is_one_block_on_its_exact_collider() {
+        let definition = hosted_definition();
+        let export = hosted_export();
+        let mut visualised: Vec<u32> = export
             .props
             .iter()
-            .map(|prop| prop.collider_id.unwrap())
-            .collect::<Vec<_>>();
+            .filter_map(|prop| prop.collider_id)
+            .collect();
         visualised.sort_unstable();
-        let standing = definition
+        let structures: Vec<u32> = definition
             .colliders()
             .iter()
-            .filter(|collider| top(collider) > 0)
+            .filter(|collider| visual_kind(collider).is_some())
             .map(|collider| collider.id)
-            .collect::<Vec<_>>();
-        assert_eq!(visualised, standing);
+            .collect();
+        assert_eq!(visualised, structures, "one block per structure collider");
         assert!(
-            definition
-                .colliders()
+            visualised
                 .iter()
-                .any(|collider| top(collider) <= 0),
-            "the vale has a ground slab"
+                .all(|id| *id != greyhaven_vale::ids::GROUND
+                    && !greyhaven_vale::ids::BOUNDARY_WALLS.contains(id)),
+            "the ground is terrain and the boundary walls are invisible"
         );
-        for prop in &scenery.props {
+        for prop in &export.props {
+            let Some(id) = prop.collider_id else {
+                continue;
+            };
             let collider = definition
                 .colliders()
                 .iter()
-                .find(|collider| Some(collider.id) == prop.collider_id)
+                .find(|collider| collider.id == id)
                 .unwrap();
-            assert_eq!(prop.position, collider.position);
-            assert_eq!(prop.half_extents, collider.half_extents);
+            assert_eq!(prop.position, collider.position, "collider {id}");
+            assert_eq!(prop.half_extents, collider.half_extents, "collider {id}");
+            assert_eq!(prop.yaw, 0, "collider {id}");
         }
     }
 
     #[test]
-    fn terrain_covers_every_collider_and_marks_supported_ground() {
+    fn every_scenery_prop_is_one_block_standing_on_the_relief() {
         let scenery = hosted_scenery();
-        let terrain = &scenery.terrain;
+        let export = hosted_export();
+        assert_eq!(export.props.len(), scenery.props.len());
+        for (block, prop) in export.props.iter().zip(&scenery.props) {
+            let [x, feet, z] = prop.position;
+            assert_eq!(block.kind, "block");
+            assert_eq!(block.collider_id, prop.collider);
+            assert_eq!(
+                block.position,
+                [x, feet + relief_at(x, z) + prop.half_extents[1], z]
+            );
+            assert_eq!(block.yaw, prop.yaw);
+            assert_eq!(block.half_extents, prop.half_extents);
+            assert!(block.color.len() == 7 && block.color.starts_with('#'));
+        }
+        let colour = |kind: PropKind| {
+            export
+                .props
+                .iter()
+                .zip(&scenery.props)
+                .find(|(_, prop)| prop.kind == kind)
+                .map(|(block, _)| block.color)
+                .unwrap()
+        };
+        assert_ne!(colour(PropKind::Keep), colour(PropKind::Inn));
+        assert_ne!(colour(PropKind::Bush), colour(PropKind::Keep));
+    }
+
+    #[test]
+    fn terrain_samples_the_shared_relief_and_biomes() {
+        let export = hosted_export();
+        let terrain = &export.terrain;
+        assert_eq!((terrain.columns, terrain.rows), (101, 101));
+        assert_eq!(terrain.step, TERRAIN_STEP_UNITS);
         let samples = usize::try_from(terrain.columns * terrain.rows).unwrap();
         assert_eq!(terrain.heights.len(), samples);
         assert_eq!(terrain.biomes.len(), samples);
-        assert!(
-            terrain.heights.iter().all(|height| *height == 0),
-            "flat blockout"
-        );
-        let far = [
-            terrain.origin_xz[0] + offset(terrain.columns - 1),
-            terrain.origin_xz[1] + offset(terrain.rows - 1),
-        ];
-        for collider in hosted_definition().colliders() {
-            assert!(collider.position[0] - collider.half_extents[0] >= terrain.origin_xz[0]);
-            assert!(collider.position[2] - collider.half_extents[2] >= terrain.origin_xz[1]);
-            assert!(collider.position[0] + collider.half_extents[0] <= far[0]);
-            assert!(collider.position[2] + collider.half_extents[2] <= far[1]);
+        let biome_ids: Vec<u8> = export.biomes.iter().map(|biome| biome.id).collect();
+        assert!(terrain.biomes.iter().all(|id| biome_ids.contains(id)));
+        let columns = usize::try_from(terrain.columns).unwrap();
+        let offset = |samples: usize| TERRAIN_STEP_UNITS * i32::try_from(samples).unwrap();
+        for (index, height) in terrain.heights.iter().enumerate() {
+            let x = terrain.origin_xz[0] + offset(index % columns);
+            let z = terrain.origin_xz[1] + offset(index / columns);
+            assert_eq!(*height, relief_at(x, z), "sample {index}");
         }
-        let biome_at = |x: i32, z: i32| {
-            let column = u32::try_from((x - terrain.origin_xz[0]) / terrain.step).unwrap();
-            let row = u32::try_from((z - terrain.origin_xz[1]) / terrain.step).unwrap();
-            terrain.biomes[usize::try_from(row * terrain.columns + column).unwrap()]
-        };
-        assert_eq!(biome_at(0, 0), BIOME_COURTYARD, "the hub is on the slab");
-        assert_eq!(
-            biome_at(terrain.origin_xz[0], terrain.origin_xz[1]),
-            BIOME_WILDS
+        assert!(
+            terrain.heights.iter().any(|height| *height > 2_000),
+            "mountains beyond the walls"
         );
+        let sample = |x: i32, z: i32| {
+            let column = usize::try_from((x - terrain.origin_xz[0]) / TERRAIN_STEP_UNITS).unwrap();
+            let row = usize::try_from((z - terrain.origin_xz[1]) / TERRAIN_STEP_UNITS).unwrap();
+            terrain.biomes[row * columns + column]
+        };
+        assert_eq!(
+            sample(0, 2_000),
+            mmorpg_scenery::Biome::Plaza.id(),
+            "the hub plaza"
+        );
+    }
+
+    #[test]
+    fn every_spawn_slot_stands_on_flat_relief() {
+        for slot in 0..MAX_PLAYERS_PER_ZONE {
+            let [x, _, z] = SPAWN_GRID.feet(u16::try_from(slot).unwrap()).unwrap();
+            assert_eq!(relief_at(x, z), 0, "spawn slot {slot}");
+        }
     }
 
     #[test]
     fn export_is_versioned_deterministic_json_with_core_areas() {
         let json = hosted_scenery_json();
-        assert_eq!(json, serde_json::to_string(&hosted_scenery()).unwrap());
+        assert_eq!(json, serde_json::to_string(&hosted_export()).unwrap());
         let value: Value = serde_json::from_str(json).unwrap();
         assert_eq!(value["format"], SCENERY_FORMAT);
         assert_eq!(value["version"], SCENERY_FORMAT_VERSION);
         assert_eq!(value["source"], SCENERY_SOURCE);
-        assert_eq!(
-            value["contentRevision"],
-            hosted_definition().revision().to_string()
-        );
+        assert_eq!(value["contentRevision"], "2");
         assert_eq!(value["unitsPerMetre"], 100);
         assert_eq!(value["playerHalfExtents"], serde_json::json!([30, 90, 30]));
-        assert_eq!(value["areas"][0]["name"], "Greyhaven Outpost");
+        let names: Vec<_> = value["areas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|area| area["name"].as_str().unwrap())
+            .collect();
         assert_eq!(
-            value["areas"][0]["minXz"],
-            serde_json::json!([-3_500, -1_300])
+            names,
+            [
+                "Greyhaven Outpost",
+                "Wolfrun Woods",
+                "Millbrook Farm",
+                "Stillwater Lake",
+                "Redbrand Hollow"
+            ]
         );
-        assert_eq!(value["areas"].as_array().unwrap().len(), 5);
+        assert_eq!(
+            value["areas"][0]["maxXz"],
+            serde_json::json!([3_499, 5_299]),
+            "inclusive core bounds"
+        );
         assert_eq!(value["props"][0]["kind"], "block");
-        assert!(value["water"].as_array().unwrap().is_empty());
-    }
-
-    #[test]
-    fn walls_and_structures_get_distinct_blockout_colours() {
-        let props = hosted_scenery().props;
-        let colour = |id: u32| {
-            props
-                .iter()
-                .find(|prop| prop.collider_id == Some(id))
-                .unwrap()
-                .color
-        };
-        let walls = greyhaven_vale::ids::BOUNDARY_WALLS;
+        assert_eq!(value["biomes"][6]["name"], "plaza");
+        assert_eq!(value["biomes"][6]["color"], "#96886e");
         assert_eq!(
-            colour(*walls.start()),
-            colour(*walls.end()),
-            "boundary walls share a colour"
-        );
-        assert_ne!(
-            colour(greyhaven_vale::ids::KEEP),
-            colour(*walls.start()),
-            "buildings differ from walls"
+            value["water"],
+            serde_json::json!([
+                { "centerXz": [5_500, -5_500], "radiiXz": [2_200, 1_600], "surfaceY": 15 }
+            ])
         );
     }
 
+    /// The local zone host is gameplay; scenery must never feed back into it.
     #[test]
-    fn snapping_encloses_values_on_the_sample_grid() {
-        assert_eq!(snap_down(-1), -400);
-        assert_eq!(snap_down(-400), -400);
-        assert_eq!(snap_up(1), 400);
-        assert_eq!(snap_up(400), 400);
-        assert_eq!(snap_up(-399), 0);
+    fn the_local_zone_host_never_reads_presentation_scenery() {
+        let host = include_str!("host.rs");
+        assert!(!host.contains("mmorpg_scenery") && !host.contains("crate::scenery"));
     }
 }

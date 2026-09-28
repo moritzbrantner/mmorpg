@@ -16,7 +16,7 @@ Rust workspace + native wgpu client + non-authoritative browser demo (`web/`).
 | `mmorpg-protocol` | Command/snapshot wire encoding |
 | `mmorpg-game-server` | Adapter from a zone simulation into `game-server` |
 | `mmorpg-control-plane` | Placement, leases, fencing, handoff metadata (in-memory reference model) |
-| `mmorpg-scenery` | Presentation-only scenery derived from core content (props, roads, water, relief, terrain grid); clients only, never hosts |
+| `mmorpg-scenery` | Presentation-only scenery derived from core content (props, roads, water, relief, terrain grid); clients only (native client, `mmorpg-wasm`'s scenery export), never network hosts |
 | `mmorpg-client` | Native wgpu/winit client |
 | `mmorpg-scenarios` | Headless deterministic bot and control-plane scenario runners (tooling; owns no rules) |
 | `mmorpg-wasm` | wasm-bindgen adapter: the shared zone simulation as a local single-player host for `web/` (owns no rules) |
@@ -47,7 +47,7 @@ python3 scripts/smoke-browser.py     # real Chromium against the built web/dist 
 - `physics-engine` owns collision, movement integration and physics semantics. Do not reimplement them here.
 - `game-server` owns reusable transport/session/tick/reconnect/replay/recovery behavior. Keep MMO adapters thin.
 - `mmorpg-control-plane` owns placement, leases, fencing and handoff metadata. It must not mutate zone gameplay state.
-- `mmorpg-scenery` owns presentation scenery and relief derived from core colliders. Hosts never depend on it (`mmorpg-game-server/tests/dependency_boundary.rs`); it never feeds back into gameplay.
+- `mmorpg-scenery` owns presentation scenery and relief derived from core colliders. Network hosts never depend on it (`mmorpg-game-server/tests/dependency_boundary.rs`), `mmorpg-wasm`'s local zone host never reads it, and it never feeds back into gameplay.
 - Rendering comes from pinned `3d-lab`; input, settings, assets and social systems belong to `input-bindings`, `settings`, `asset-tooling` and `social-service`. Compose them; do not grow substitutes here.
 
 ## Distributed-world invariants

@@ -1187,6 +1187,7 @@ dependencies = [
  "mmorpg-core",
  "mmorpg-game-server",
  "mmorpg-protocol",
+ "mmorpg-scenery",
  "serde",
  "serde_json",
  "wasm-bindgen",
