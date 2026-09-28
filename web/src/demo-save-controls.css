@@ -1,0 +1,49 @@
+.game-save-controls {
+  margin-top: 0.75rem;
+  pointer-events: auto;
+}
+
+.game-save-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.game-save-actions button {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid #718d84;
+  border-radius: 0.35rem;
+  background: #202e2a;
+  color: #eef3ed;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.game-save-actions button:hover {
+  background: #364b42;
+}
+
+.game-save-actions button:focus-visible {
+  outline: 2px solid #e3cf90;
+  outline-offset: 2px;
+}
+
+.game-save-status {
+  margin: 0.5rem 0 0;
+  max-width: 34rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.hud .game-save-actions {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 600px) {
+  .hud .game-save-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
