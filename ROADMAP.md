@@ -8,7 +8,7 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
 - Refresh pinned foundations and dependencies.
 - Fragment player snapshots above the datagram budget in `game-server`.
 - [x] Movement v3: facing, camera-relative movement, jump.
-- Greyhaven Vale content, shared presentation scenery, projection budget.
+- [x] Greyhaven Vale content, shared presentation scenery, projection budget.
 - [x] Browser demo runs the shared simulation as a local WASM zone host.
 - Units, combat and creature AI.
 - Classes and abilities.
@@ -66,7 +66,8 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
 
 - [x] Add a spatial index owned by the zone simulation.
 - [x] Keep player-scoped projection authoritative in core.
-- [x] Measure visibility work and snapshot bytes with deterministic sparse, dense and outpost workloads.
+- [x] Measure visibility work and snapshot bytes with deterministic sparse, dense and vale-spawn workloads.
+- [x] Cap player projections by deterministic relevance priority within a measured single-datagram byte budget.
 - Benchmark physics work independently in collision-heavy and crowded workloads.
 - Add dynamic zone subdivision or instancing only when workload evidence shows the static-zone model is insufficient.
 
@@ -84,6 +85,7 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
 - [x] Preserve velocity, gravity and collision content through canonical recovery.
 - [x] Verify grounded/wall contact and airborne recovery continuation.
 - [x] Load a shared revisioned outpost into the host and native renderer.
+- [x] Replace it with the Greyhaven Vale content revision: colliders, clear spawn plaza, road corridors and named areas.
 - Add authored mesh/material/animation assets through the existing content foundations.
 - Introduce durable character identity before live cross-zone gameplay.
 - Add server-owned interaction/ability rules with replay-complete cooldown, resource and target state.

@@ -51,6 +51,8 @@ The browser demo runs the same `ZoneSimulation` through a WASM build as a local,
 
 The road network connects the hub to each subzone. Spawn density targets about 60 creatures zone-wide, with 5–15 relevant to a player at any time.
 
+Map north is −Z (the Redbrand cliffs); yaw 0 faces +Z. Content revision 2 (`mmorpg_core::greyhaven_vale`) implements this layout: new characters spawn on a 32 × 16 grid, 1 m apart, on the collider-free hub plaza; roads are open corridors with no collider within 2 m of a centre line; the five subzones are named areas with disjoint bounds. `mmorpg-scenery` derives the visuals from those colliders.
+
 ## Systems
 
 ### Movement
@@ -101,7 +103,7 @@ There is a 1.5 s global cooldown. Casts have a cast time, and moving or being st
 ### Player-scoped projection
 
 - Header, then a **self** section: exact health/resource/xp/level/target/cast/GCD/cooldowns/auras.
-- **Entities**: nearest relevant units within the interest radius (45 m), capped by count in `(distance, kind, id)` priority, and always including the player's current target. Each record carries kind, id, template/appearance, position, velocity, facing, level, health percent, flags (dead, in combat, hostile, tapped by other, quest marker, casting), target and cast progress.
+- **Entities**: nearest relevant units within the interest radius (45 m), capped by count in `(distance, kind, id)` priority, and always including the player's current target. The cap is 64 entities with 16-byte records while projections must fit one datagram (a 1,077-byte budget); see [PROTOCOL.md](PROTOCOL.md#datagram-byte-budget). The budget rises once `game-server` fragmentation (#18) is pinned. Each record carries kind, id, template/appearance, position, velocity, facing, level, health percent, flags (dead, in combat, hostile, tapped by other, quest marker, casting), target and cast progress.
 - **Events**: bounded feedback such as damage/heal/miss, XP, loot, quest updates, level-up and errors ("Out of range", "Not enough mana"). They are cosmetic and may be lost.
 - **Sheet**: money, inventory, equipment and quest log. It is included when changed and periodically every 10 ticks, so loss self-heals within about 330 ms.
 - **Names**: player display names are sent in a periodic section. Creature and NPC names come from content by template ID.

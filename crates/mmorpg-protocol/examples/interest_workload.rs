@@ -79,6 +79,7 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
     let mut candidates = 0;
     let mut cells = 0;
     let mut visible = 0;
+    let mut relevant = 0;
     let mut bytes = 0;
     let mut max_bytes = 0;
     for observer in &canonical.players {
@@ -91,6 +92,7 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
         candidates += projection.stats.candidates_tested;
         cells += projection.stats.cells_visited;
         visible += projection.snapshot.entities.len();
+        relevant += projection.stats.relevant;
         bytes += encoded.len();
         max_bytes = max_bytes.max(encoded.len());
     }
@@ -98,7 +100,7 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
     let baseline_tests = players * players;
     let revision = canonical.definition.revision();
     println!(
-        "{{\"schema\":\"mmorpg.interest-workload/v2\",\"workload\":\"{name}\",\"core_schema\":{SNAPSHOT_SCHEMA_VERSION},\"wire_version\":{SNAPSHOT_WIRE_VERSION},\"content_revision\":{revision},\"radius_units\":{INTEREST_RADIUS_UNITS},\"players\":{players},\"full_index_rebuilds\":{rebuilds},\"bucket_inserts\":{inserts},\"bucket_removes\":{removes},\"bucket_moves\":{moves},\"players_inspected_for_maintenance\":{inspected},\"baseline_distance_tests\":{baseline_tests},\"exact_distance_tests\":{candidates},\"query_bucket_visits\":{cells},\"visible_records\":{visible},\"snapshot_payload_bytes\":{bytes},\"largest_snapshot_payload_bytes\":{max_bytes},\"canonical_payload_bytes\":{canonical_bytes},\"wire_parity\":true}}"
+        "{{\"schema\":\"mmorpg.interest-workload/v3\",\"workload\":\"{name}\",\"core_schema\":{SNAPSHOT_SCHEMA_VERSION},\"wire_version\":{SNAPSHOT_WIRE_VERSION},\"content_revision\":{revision},\"radius_units\":{INTEREST_RADIUS_UNITS},\"players\":{players},\"full_index_rebuilds\":{rebuilds},\"bucket_inserts\":{inserts},\"bucket_removes\":{removes},\"bucket_moves\":{moves},\"players_inspected_for_maintenance\":{inspected},\"baseline_distance_tests\":{baseline_tests},\"exact_distance_tests\":{candidates},\"query_bucket_visits\":{cells},\"relevant_records\":{relevant},\"visible_records\":{visible},\"snapshot_payload_bytes\":{bytes},\"largest_snapshot_payload_bytes\":{max_bytes},\"canonical_payload_bytes\":{canonical_bytes},\"wire_parity\":true}}"
     );
     Ok(())
 }
