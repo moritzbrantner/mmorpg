@@ -1,12 +1,21 @@
 use game_server::{
     BrowserRoutePrefix, MatchHostWebTransportConfig, serve_match_host_with_shutdown,
 };
-use mmorpg_client::{ClientError, network::ClientSession};
-use mmorpg_core::{PLAYER_HALF_EXTENTS_UNITS, ZoneId, outpost_definition};
-use std::{net::UdpSocket, time::Duration};
+use mmorpg_client::{
+    ClientError,
+    network::ClientSession,
+    session::{MovementInput, NetworkUpdate},
+};
+use mmorpg_core::{
+    EntitySnapshot, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, ZoneId, ZoneSnapshot, outpost_definition,
+};
+use std::{net::UdpSocket, sync::Arc, time::Duration};
+use tokio::sync::watch;
 
-/// Forward-movement headings: yaw 0 faces +Z, half a turn faces -Z.
+/// Forward-movement headings: yaw 0 faces +Z, a quarter turn faces +X and
+/// half a turn faces -Z.
 const NORTH: u16 = 0;
+const EAST: u16 = 16_384;
 const SOUTH: u16 = 32_768;
 
 #[tokio::test]
@@ -189,6 +198,8 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
                 .await
                 .is_err()
         );
+        let third = ClientSession::connect(&url, Some(&certificate), zone_id, revision).await?;
+        verify_live_input(third).await?;
         verify_automatic_resume(first).await?;
         verify_shutdown_during_resume(second).await?;
         Ok::<(), ClientError>(())
@@ -266,4 +277,147 @@ async fn verify_shutdown_during_resume(session: ClientSession) -> Result<(), Cli
         .await?
         .ok_or("missing worker")???;
     Ok(())
+}
+
+/// Drives `run_session` through its input channel, as the window does: a Jump
+/// pressed while the connection is down is dropped on resume, each later press
+/// sends one Jump, and a facing-only change while running turns the player.
+async fn verify_live_input(session: ClientSession) -> Result<(), ClientError> {
+    use mmorpg_client::session::run_session;
+    use tokio::sync::oneshot;
+    let player_id = session.player_id();
+    let epoch = session.connection_epoch();
+    // A freshly admitted player stands still on flat ground.
+    let spawned = session.receive_snapshot().await?;
+    assert!(is_at_rest(own(&spawned, player_id)));
+    session.disconnect();
+    let (input, watched) = watch::channel(MovementInput::default());
+    let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
+    let (shutdown, stopped) = oneshot::channel();
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(async move { run_session(session, watched, &updates, stopped).await });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            receiver.changed().await?;
+            if matches!(*receiver.borrow_and_update(), NetworkUpdate::Reconnecting) {
+                break;
+            }
+        }
+        // Resume publishes its snapshot before it rereads input, so the press
+        // lands in the outage while `Reconnecting` is still the latest update.
+        input.send_modify(|input| input.jumps += 1);
+        assert!(
+            matches!(*receiver.borrow(), NetworkUpdate::Reconnecting),
+            "the press must happen before the session resumes"
+        );
+        let resumed = next_snapshot(&mut receiver).await?;
+        assert_eq!(resumed.0, epoch + 1);
+        // Any input change reaches the outbox; a replayed press would ride along.
+        input.send_modify(|input| input.facing = EAST);
+        let turned = wait_for(&mut receiver, player_id, |player| player.facing == EAST).await?;
+        assert!(
+            is_at_rest(own(&turned, player_id)),
+            "the outage press must not be sent with the first change after resume"
+        );
+        assert_stays_at_rest(&mut receiver, player_id, turned.tick).await?;
+
+        input.send_modify(|input| input.jumps += 1);
+        wait_for(&mut receiver, player_id, |player| {
+            player.position[1] > PLAYER_HALF_EXTENTS_UNITS[1]
+        })
+        .await?;
+        let landed = wait_for(&mut receiver, player_id, is_at_rest).await?;
+        // A repeated Jump would lift the player again as soon as it lands.
+        assert_stays_at_rest(&mut receiver, player_id, landed.tick).await?;
+
+        input.send_modify(|input| {
+            input.forward = 1;
+            input.facing = NORTH;
+        });
+        wait_for(&mut receiver, player_id, |player| {
+            player.facing == NORTH && player.velocity[2] > 0
+        })
+        .await?;
+        input.send_modify(|input| input.facing = EAST);
+        wait_for(&mut receiver, player_id, |player| {
+            player.facing == EAST && player.velocity[0] > 0 && player.velocity[2] == 0
+        })
+        .await?;
+        Ok::<(), ClientError>(())
+    })
+    .await??;
+    shutdown
+        .send(())
+        .map_err(|_| "worker exited before shutdown")?;
+    tokio::time::timeout(Duration::from_secs(1), tasks.join_next())
+        .await?
+        .ok_or("missing worker")???;
+    Ok(())
+}
+
+fn own(snapshot: &ZoneSnapshot, player_id: u32) -> &EntitySnapshot {
+    snapshot
+        .entities
+        .iter()
+        .find(|player| player.id == player_id)
+        .expect("a player always sees itself")
+}
+
+/// Feet on the ground with no vertical motion.
+fn is_at_rest(player: &EntitySnapshot) -> bool {
+    player.position[1] == PLAYER_HALF_EXTENTS_UNITS[1] && player.velocity[1] == 0
+}
+
+async fn next_snapshot(
+    receiver: &mut watch::Receiver<NetworkUpdate>,
+) -> Result<(u32, Arc<ZoneSnapshot>), ClientError> {
+    loop {
+        receiver.changed().await?;
+        match &*receiver.borrow_and_update() {
+            NetworkUpdate::Snapshot {
+                connection_epoch,
+                snapshot,
+            } => return Ok((*connection_epoch, Arc::clone(snapshot))),
+            NetworkUpdate::Failed(error) => return Err(error.clone().into()),
+            NetworkUpdate::Waiting | NetworkUpdate::Reconnecting => {}
+        }
+    }
+}
+
+/// The first published snapshot, within two seconds of server ticks, in which
+/// the player satisfies `condition`. A full jump lands within about 33 ticks.
+async fn wait_for(
+    receiver: &mut watch::Receiver<NetworkUpdate>,
+    player_id: u32,
+    condition: impl Fn(&EntitySnapshot) -> bool,
+) -> Result<Arc<ZoneSnapshot>, ClientError> {
+    let mut snapshot = next_snapshot(receiver).await?.1;
+    let deadline = snapshot.tick + 2 * u64::from(TICK_HZ);
+    while !condition(own(&snapshot, player_id)) {
+        if snapshot.tick > deadline {
+            return Err(format!("player never reached the expected state: {snapshot:?}").into());
+        }
+        snapshot = next_snapshot(receiver).await?.1;
+    }
+    Ok(snapshot)
+}
+
+/// Every snapshot for half a second of server ticks after `since` shows the
+/// player standing on the ground.
+async fn assert_stays_at_rest(
+    receiver: &mut watch::Receiver<NetworkUpdate>,
+    player_id: u32,
+    since: u64,
+) -> Result<(), ClientError> {
+    loop {
+        let (_, snapshot) = next_snapshot(receiver).await?;
+        let player = own(&snapshot, player_id);
+        assert!(
+            is_at_rest(player),
+            "no Jump may be sent here, but the player left the ground: {player:?}"
+        );
+        if snapshot.tick >= since + u64::from(TICK_HZ / 2) {
+            return Ok(());
+        }
+    }
 }
