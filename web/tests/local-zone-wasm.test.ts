@@ -3,7 +3,7 @@ import { encodeCommand } from "../src/command-wire";
 import { decodeSnapshot, type EntityState } from "../src/replication";
 import { createLocalWorld } from "../src/world/local-world";
 import { LocalZoneSource, type LocalZoneHandle } from "../src/world/local-zone-source";
-import { buildSceneryNodes } from "../src/world/scenery-nodes";
+import { buildSceneryScene } from "../src/world/scenery-nodes";
 import { localZoneModule } from "./support/local-zone-module";
 import { worldSourceContract } from "./support/world-source-contract";
 
@@ -106,17 +106,25 @@ describe("WASM local zone host", () => {
     // Spawn slots are flat; the mountains beyond the walls are not.
     expect(scenery.reliefAt(x, z)).toBe(0);
     expect(scenery.reliefAt(0, -19_000)).toBeGreaterThan(1_000);
-    // The keep's block is its collider, and the lake is walkable water.
-    expect(scenery.scenery.props.some((prop) => prop.colliderId === 100)).toBe(true);
+    // The keep is its exact collider, and the lake is walkable water.
+    const keep = scenery.scenery.props.find((prop) => prop.collider?.id === 100);
+    expect(keep?.kind).toBe("keep");
+    expect(keep?.collider?.halfExtents).toEqual(keep?.halfExtents);
     expect(scenery.scenery.water).toEqual([{ centerXz: [5_500, -5_500], radiiXz: [2_200, 1_600], surfaceY: 15 }]);
-    // One terrain mesh per biome present, one prop mesh per colour: the node
-    // count stays small however many props the scenery carries.
-    const nodes = buildSceneryNodes(scenery.scenery);
-    const biomes = new Set(scenery.scenery.terrain.biomes).size;
-    const colours = new Set(scenery.scenery.props.map((prop) => prop.color)).size;
-    expect(nodes.filter((node) => node.id.startsWith("terrain-")).length).toBe(biomes);
-    expect(nodes.length).toBe(biomes + colours + scenery.scenery.water.length);
-    expect(scenery.scenery.props.length).toBeGreaterThan(nodes.length * 10);
+    expect(scenery.scenery.roads.map((road) => road.name)).toContain("Hollow Road");
+    expect(Math.max(...scenery.scenery.farTerrain.heights)).toBeGreaterThan(Math.max(...scenery.scenery.terrain.heights));
+  });
+
+  test("the vale's static scene models every prop within a bounded node and vertex budget", () => {
+    const { scenery } = createLocalWorld(wasm);
+    const scene = buildSceneryScene(scenery.scenery);
+    const modelled = Object.values(scene.stats.props).reduce((sum, count) => sum + (count ?? 0), 0);
+    expect(modelled).toBe(scenery.scenery.props.length);
+    // Draw-call and per-frame validation budgets: ~4 200 props merge into a few hundred batches.
+    expect(scene.stats.staticNodes).toBeLessThanOrEqual(600);
+    expect(scene.stats.staticVertices).toBeLessThanOrEqual(230_000);
+    expect(scenery.scenery.props.length).toBeGreaterThan(scene.stats.staticNodes * 5);
+    expect(new Set(scene.batches.map((batch) => batch.node.geometry.resourceKey)).size).toBe(scene.batches.length);
   });
 });
 

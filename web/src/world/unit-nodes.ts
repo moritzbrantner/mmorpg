@@ -1,19 +1,27 @@
 import type { RendererSceneNode } from "@moritzbrantner/three-d-renderer";
-import { rotateYawOffset, type HatStyle } from "../character-customization";
-import type { CharacterVisualProfile } from "../character-visuals";
-import type { EntityState } from "../replication";
+import type { EntityKind, EntityState } from "../replication";
+import { UnitAnimator, poseFor, type LocomotionState } from "./character-animation";
+import { humanoidNodes, humanoidStance, type HumanoidLook, type UnitPlacement } from "./humanoid";
 
-type Quaternion = [number, number, number, number];
+/**
+ * Unit rendering by entity kind. A registry maps each projected entity kind
+ * to a model; players are animated humanoids. Creature and NPC kinds (step 7)
+ * plug in here with their own models keyed by kind and appearance, and the
+ * render loop stays unchanged.
+ */
+export type { UnitPlacement } from "./humanoid";
 
 /** How one visible unit looks. Projections carry no appearance yet, so other players share one look. */
-export type UnitLook = { visuals: CharacterVisualProfile; hat: HatStyle | null };
+export type UnitLook = HumanoidLook;
 
-/** Where a unit stands in metres: its feet, raised by presentation relief. */
-export type UnitPlacement = { x: number; feetY: number; z: number; yawRadians: number };
+/** Everything a unit model draws from in one frame. */
+export type UnitFrame = { id: string; placement: UnitPlacement; locomotion: LocomotionState; look: UnitLook };
+
+export type UnitModel = { nodes(frame: UnitFrame): RendererSceneNode[] };
 
 const YAW_STEPS = 65_536;
-/** Body centre above the feet, matching the character selection proportions. */
-const BODY_CENTRE_METRES = 0.83;
+/** Presentation velocity arrives in units per tick. */
+const TICKS_PER_SECOND = 30;
 
 export function yawRadians(facing: number): number {
   return (facing / YAW_STEPS) * 2 * Math.PI;
@@ -38,141 +46,54 @@ export function placeUnit(
   };
 }
 
-/** Renderer nodes for one unit; IDs are unique per unit so several players can share a frame. */
-export function unitNodes(id: string, placement: UnitPlacement, look: UnitLook): RendererSceneNode[] {
-  const { x, z, yawRadians: yaw } = placement;
-  const y = placement.feetY + BODY_CENTRE_METRES;
-  const { visuals } = look;
-  const rotationQuaternion: Quaternion = [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)];
-  const [noseX, noseZ] = rotateYawOffset(yaw, 0, 0.36);
-  return [
-    {
-      id: `${id}-body`,
-      geometry: { kind: "cylinder", radius: visuals.bodyRadius * 0.88, height: visuals.bodyHeight * 0.97 },
-      color: visuals.bodyColor,
-      transform: { translation: [x, y, z], rotationQuaternion },
-    },
-    {
-      id: `${id}-head`,
-      geometry: { kind: "sphere", radius: visuals.headRadius },
-      color: "#c49b78",
-      transform: { translation: [x, y + 1.07, z] },
-    },
-    {
-      id: `${id}-nose`,
-      geometry: { kind: "sphere", radius: 0.08 },
-      color: "#b58a68",
-      transform: { translation: [x + noseX, y + 1.07, z + noseZ] },
-    },
-    {
-      id: `${id}-shoulders`,
-      geometry: { kind: "box", size: [visuals.shoulderSpan * 2.08, 0.24, 0.42] },
-      color: visuals.shoulderColor,
-      transform: { translation: [x, y + 0.56, z], rotationQuaternion },
-    },
-    ...weaponNodes(id, x, y, z, yaw, rotationQuaternion, visuals),
-    ...(look.hat === null ? [] : hatNodes(id, x, y, z, rotationQuaternion, look.hat)),
-  ];
+export const HUMANOID_MODEL: UnitModel = {
+  nodes: (frame) => humanoidNodes(frame.id, frame.placement, frame.look, poseFor(frame.locomotion, humanoidStance(frame.look))),
+};
+
+/** Models by entity kind; adding a kind to `EntityKind` requires an entry here. */
+export const UNIT_MODELS: { readonly [kind in EntityKind]: UnitModel } = {
+  player: HUMANOID_MODEL,
+};
+
+export function unitNodes(kind: EntityKind, frame: UnitFrame): RendererSceneNode[] {
+  return UNIT_MODELS[kind].nodes(frame);
 }
 
-function weaponNodes(
-  id: string,
-  x: number,
-  y: number,
-  z: number,
-  yaw: number,
-  rotationQuaternion: Quaternion,
-  visuals: CharacterVisualProfile,
-): RendererSceneNode[] {
-  const [weaponX, weaponZ] = rotateYawOffset(yaw, 0.58, 0.04);
-  switch (visuals.weapon) {
-    case "bow": {
-      const [stringX, stringZ] = rotateYawOffset(yaw, 0.48, 0.04);
-      return [
-        {
-          id: `${id}-bow`,
-          geometry: { kind: "box", size: [0.09, 1.45, 0.08] },
-          color: visuals.weaponColor,
-          transform: { translation: [x + weaponX, y + 0.15, z + weaponZ], rotationQuaternion },
-        },
-        {
-          id: `${id}-bow-string`,
-          geometry: { kind: "box", size: [0.025, 1.32, 0.025] },
-          color: "#d8d5c7",
-          transform: { translation: [x + stringX, y + 0.15, z + stringZ], rotationQuaternion },
-        },
-      ];
+export function unitIdentity(entity: Pick<EntityState, "kind" | "entityId">): string {
+  return `unit-${entity.kind}-${entity.entityId}`;
+}
+
+/** Animation state per visible unit, dropped when the unit leaves the projection. */
+export class UnitAnimators {
+  readonly #animators = new Map<string, UnitAnimator>();
+
+  /** Locomotion for this frame; `instant` snaps blends (reduced motion). */
+  locomotion(entity: EntityState, placement: UnitPlacement, unitsPerMetre: number, deltaSeconds: number, instant: boolean): LocomotionState {
+    const identity = unitIdentity(entity);
+    let animator = this.#animators.get(identity);
+    if (!animator) {
+      animator = new UnitAnimator();
+      this.#animators.set(identity, animator);
     }
-    case "staff":
-      return [
-        {
-          id: `${id}-staff`,
-          geometry: { kind: "box", size: [0.1, 1.75, 0.1] },
-          color: visuals.weaponColor,
-          transform: { translation: [x + weaponX, y + 0.18, z + weaponZ], rotationQuaternion },
-        },
-        {
-          id: `${id}-staff-focus`,
-          geometry: { kind: "sphere", radius: 0.19 },
-          color: "#d6a677",
-          transform: { translation: [x + weaponX, y + 1.07, z + weaponZ] },
-        },
-      ];
-    case "sword":
-      return [{
-        id: `${id}-sword`,
-        geometry: { kind: "box", size: [0.12, 1.35, 0.08] },
-        color: visuals.weaponColor,
-        transform: { translation: [x + weaponX, y + 0.15, z + weaponZ], rotationQuaternion },
-      }];
+    const scale = TICKS_PER_SECOND / unitsPerMetre;
+    return animator.update({
+      x: placement.x,
+      z: placement.z,
+      velocity: [entity.velocity[0] * scale, entity.velocity[1] * scale, entity.velocity[2] * scale],
+      facing: placement.yawRadians,
+    }, deltaSeconds, instant);
   }
-}
 
-function hatNodes(
-  id: string,
-  x: number,
-  y: number,
-  z: number,
-  rotationQuaternion: Quaternion,
-  hat: HatStyle,
-): RendererSceneNode[] {
-  switch (hat) {
-    case "wayfarer-hood":
-      return [{
-        id: `${id}-hat-hood`,
-        geometry: { kind: "cylinder", radius: 0.36, height: 0.2 },
-        color: "#b7c6bd",
-        transform: { translation: [x, y + 1.34, z], rotationQuaternion },
-      }];
-    case "ranger-cap":
-      return [
-        {
-          id: `${id}-hat-cap-brim`,
-          geometry: { kind: "cylinder", radius: 0.45, height: 0.08 },
-          color: "#6f875f",
-          transform: { translation: [x, y + 1.32, z], rotationQuaternion },
-        },
-        {
-          id: `${id}-hat-cap-crown`,
-          geometry: { kind: "cylinder", radius: 0.29, height: 0.2 },
-          color: "#5d7351",
-          transform: { translation: [x, y + 1.42, z], rotationQuaternion },
-        },
-      ];
-    case "ironcrest-helm":
-      return [
-        {
-          id: `${id}-hat-helm`,
-          geometry: { kind: "cylinder", radius: 0.35, height: 0.28 },
-          color: "#858e91",
-          transform: { translation: [x, y + 1.33, z], rotationQuaternion },
-        },
-        {
-          id: `${id}-hat-crest`,
-          geometry: { kind: "box", size: [0.1, 0.36, 0.34] },
-          color: "#aab0b2",
-          transform: { translation: [x, y + 1.58, z], rotationQuaternion },
-        },
-      ];
+  /** Forgets units that are no longer visible. */
+  retain(identities: ReadonlySet<string>): void {
+    for (const identity of this.#animators.keys()) {
+      if (!identities.has(identity)) {
+        this.#animators.delete(identity);
+      }
+    }
+  }
+
+  clear(): void {
+    this.#animators.clear();
   }
 }

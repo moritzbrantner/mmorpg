@@ -1,10 +1,11 @@
 /**
  * Presentation scenery from the WASM `scenery()` export (format
- * `mmorpg.scenery` v1), which maps the Rust `mmorpg-scenery` value the native
- * client draws. The render loop consumes only the decoded `Scenery`; the
- * earlier collider blockout used the same format, so replacing it changed
- * nothing here or in the render loop. Relief and area lookups call
- * back into Rust so both clients share one owner for them.
+ * `mmorpg.scenery` v2), which maps the Rust `mmorpg-scenery` value the native
+ * client draws: a terrain grid and a coarse far ring of the same relief,
+ * props as compact records (kind, feet anchor, yaw, scale, body box) with the
+ * exact collider box of every structure, roads, water and named areas. The
+ * render loop consumes only the decoded `Scenery`. Relief and area lookups
+ * call back into Rust so both clients share one owner for them.
  */
 export type Color = `#${string}`;
 export type XZ = readonly [number, number];
@@ -24,17 +25,32 @@ export type TerrainGrid = {
 
 export type Biome = { id: number; name: string; color: Color };
 
-/** A prop kind the browser can draw. Later format versions add named kinds. */
+/** Every prop kind the browser draws, by its `mmorpg-scenery` name. */
+export const PROP_KINDS = [
+  "keep", "inn", "house", "smithy", "barn", "farmhouse", "windmill", "well", "palisade", "gate-post",
+  "waystone", "gravestone", "tree-oak", "tree-pine", "tree-birch", "bush", "rock-small", "rock-medium",
+  "rock-large", "cliff", "grass-tuft", "flowers", "reeds", "fence", "tent", "campfire", "crate", "barrel",
+  "cart", "signpost", "lamp", "mine-entrance", "crop-row", "dock",
+] as const;
+export type PropKind = (typeof PROP_KINDS)[number];
+
+/** The exact core collider box a structure visualises, in units. */
+export type ColliderBox = { id: number; center: XYZ; halfExtents: XYZ };
+
 export type Prop = {
-  kind: "block";
-  colliderId: number | null;
+  kind: PropKind;
+  /** Feet anchor in units, standing on the presentation relief. */
   position: XYZ;
   /** u16 yaw: 0 faces +Z, increasing toward +X. */
   yaw: number;
+  /** Size relative to the kind's base size (1 is the base size). */
+  scale: number;
+  /** Ground-level body box half extents in units, before yaw. */
   halfExtents: XYZ;
-  color: Color;
+  collider: ColliderBox | null;
 };
 
+export type Road = { name: string; halfWidth: number; points: readonly XZ[] };
 export type Water = { centerXz: XZ; radiiXz: XZ; surfaceY: number };
 export type Area = { id: number; name: string; minXz: XZ; maxXz: XZ };
 
@@ -44,8 +60,11 @@ export type Scenery = {
   unitsPerMetre: number;
   playerHalfExtents: XYZ;
   terrain: TerrainGrid;
+  /** The same relief sampled coarsely over a wider square, for distant mountains. */
+  farTerrain: TerrainGrid;
   biomes: readonly Biome[];
   props: readonly Prop[];
+  roads: readonly Road[];
   water: readonly Water[];
   areas: readonly Area[];
 };
@@ -66,10 +85,15 @@ export type SceneryProvider = {
 };
 
 const FORMAT = "mmorpg.scenery";
-const VERSION = 1;
+const VERSION = 2;
 const MAX_TERRAIN_SAMPLES = 1 << 20;
 const MAX_PROPS = 1 << 16;
 const MAX_AREAS = 64;
+const MAX_ROADS = 64;
+const MAX_ROAD_POINTS = 256;
+/** `[kind, x, feetY, z, yaw, scalePermille, halfX, halfY, halfZ]`. */
+const PROP_RECORD_FIELDS = 9;
+const KNOWN_KINDS: ReadonlySet<string> = new Set(PROP_KINDS);
 
 type Json = Record<string, unknown>;
 
@@ -164,19 +188,75 @@ function decodeTerrain(value: unknown, biomeIds: ReadonlySet<number>): TerrainGr
   };
 }
 
-function decodeProp(value: unknown, index: number): Prop {
-  const prop = object(value, ["kind", "colliderId", "position", "yaw", "halfExtents", "color"], `prop ${index}`);
-  if (prop.kind !== "block") {
-    fail(`prop ${index} has unsupported kind ${String(prop.kind)}`);
+function decodePropKinds(value: unknown): PropKind[] {
+  const kinds = list(value, "prop kinds", 256).map((entry, index) => {
+    const name = text(entry, `prop kind ${index}`);
+    if (!KNOWN_KINDS.has(name)) {
+      fail(`prop kind ${index} is unknown: ${name}`);
+    }
+    return name as PropKind;
+  });
+  if (new Set(kinds).size !== kinds.length) {
+    fail("prop kinds must be unique");
+  }
+  return kinds;
+}
+
+function decodeProp(value: unknown, index: number, kinds: readonly PropKind[]): Prop {
+  const name = `prop ${index}`;
+  const [kind = 0, x = 0, y = 0, z = 0, yaw = 0, scale = 0, halfX = 0, halfY = 0, halfZ = 0] =
+    integers(value, PROP_RECORD_FIELDS, name);
+  const propKind = kinds[kind];
+  if (propKind === undefined) {
+    fail(`${name} has no kind ${kind}`);
   }
   return {
-    kind: "block",
-    colliderId: prop.colliderId === null ? null : int(prop.colliderId, `prop ${index} collider`, 0),
-    position: xyz(prop.position, `prop ${index} position`),
-    yaw: int(prop.yaw, `prop ${index} yaw`, 0, 65_535),
-    halfExtents: xyz(prop.halfExtents, `prop ${index} half extents`, 1),
-    color: color(prop.color, `prop ${index} colour`),
+    kind: propKind,
+    position: [x, y, z],
+    yaw: int(yaw, `${name} yaw`, 0, 65_535),
+    scale: int(scale, `${name} scale`, 1, 65_535) / 1_000,
+    halfExtents: [int(halfX, `${name} half x`, 1), int(halfY, `${name} half y`, 1), int(halfZ, `${name} half z`, 1)],
+    collider: null,
   };
+}
+
+/** Attaches every structure's exact collider box to its prop; each prop and collider appears once. */
+function attachStructures(value: unknown, props: Prop[]): void {
+  const colliders = new Set<number>();
+  list(value, "structures", MAX_PROPS).forEach((entry, index) => {
+    const structure = object(entry, ["prop", "colliderId", "center", "halfExtents"], `structure ${index}`);
+    const propIndex = int(structure.prop, `structure ${index} prop`, 0);
+    const prop = props[propIndex];
+    if (!prop) {
+      fail(`structure ${index} names missing prop ${propIndex}`);
+    }
+    if (prop.collider) {
+      fail(`prop ${propIndex} has two structures`);
+    }
+    const id = int(structure.colliderId, `structure ${index} collider`, 0);
+    if (colliders.has(id)) {
+      fail(`collider ${id} has two structures`);
+    }
+    colliders.add(id);
+    props[propIndex] = {
+      ...prop,
+      collider: {
+        id,
+        center: xyz(structure.center, `structure ${index} centre`),
+        halfExtents: xyz(structure.halfExtents, `structure ${index} half extents`, 1),
+      },
+    };
+  });
+}
+
+function decodeRoad(value: unknown, index: number): Road {
+  const road = object(value, ["name", "halfWidth", "points"], `road ${index}`);
+  const points = list(road.points, `road ${index} points`, MAX_ROAD_POINTS)
+    .map((point, pointIndex) => xz(point, `road ${index} point ${pointIndex}`));
+  if (points.length < 2) {
+    fail(`road ${index} needs at least two points`);
+  }
+  return { name: text(road.name, `road ${index} name`), halfWidth: int(road.halfWidth, `road ${index} half width`, 1), points };
 }
 
 /** Strictly decodes the export at the WASM boundary; unknown shapes fail closed. */
@@ -189,7 +269,7 @@ export function decodeScenery(json: string): Scenery {
   }
   const root = object(parsed, [
     "format", "version", "source", "contentRevision", "unitsPerMetre", "playerHalfExtents",
-    "terrain", "biomes", "props", "water", "areas",
+    "terrain", "farTerrain", "biomes", "propKinds", "props", "structures", "roads", "water", "areas",
   ], "export");
   if (root.format !== FORMAT || root.version !== VERSION) {
     fail(`unsupported format ${String(root.format)} v${String(root.version)}`);
@@ -221,14 +301,19 @@ export function decodeScenery(json: string): Scenery {
   if (new Set(areas.map((area) => area.id)).size !== areas.length) {
     fail("area IDs must be unique");
   }
+  const kinds = decodePropKinds(root.propKinds);
+  const props = list(root.props, "props", MAX_PROPS).map((value, index) => decodeProp(value, index, kinds));
+  attachStructures(root.structures, props);
   return {
     source: text(root.source, "source"),
     contentRevision,
     unitsPerMetre: int(root.unitsPerMetre, "units per metre", 1),
     playerHalfExtents: xyz(root.playerHalfExtents, "player half extents", 1),
     terrain: decodeTerrain(root.terrain, biomeIds),
+    farTerrain: decodeTerrain(root.farTerrain, biomeIds),
     biomes,
-    props: list(root.props, "props", MAX_PROPS).map(decodeProp),
+    props,
+    roads: list(root.roads, "roads", MAX_ROADS).map(decodeRoad),
     water: list(root.water, "water", 64).map((value, index) => {
       const water = object(value, ["centerXz", "radiiXz", "surfaceY"], `water ${index}`);
       return {
