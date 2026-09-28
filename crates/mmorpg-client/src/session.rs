@@ -11,6 +11,8 @@ use std::{
 use tokio::sync::{oneshot, watch};
 
 const RESEND_INTERVAL: Duration = Duration::from_millis(50);
+/// Minimum spacing of facing-only moves: one server tick.
+const FACING_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / TICK_HZ as u64);
 
 /// Latest local intent published by the window. `jumps` counts Space presses:
 /// the session sends one `Jump` when it advances, so coalesced watch updates
@@ -36,9 +38,29 @@ pub enum NetworkUpdate {
     Failed(String),
 }
 
-/// Tracks what was last sent: intent and jump changes go out immediately,
-/// facing-only changes (camera drags) at most once per server tick, and the
-/// heartbeat resends the current intent.
+/// Commands to send for one input observation, in order: a jump, then a move.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Outgoing {
+    jump: bool,
+    movement: Option<(i8, i8, u16)>,
+}
+
+impl Outgoing {
+    fn deliver(self, session: &mut ClientSession) -> Result<(), SessionError> {
+        if self.jump {
+            session.send_jump()?;
+        }
+        if let Some((forward, strafe, facing)) = self.movement {
+            session.send_move(forward, strafe, facing)?;
+        }
+        Ok(())
+    }
+}
+
+/// Decides what to send and tracks what was last sent: intent and jump changes
+/// go out immediately, facing-only changes (camera drags) at most once per
+/// server tick, and the heartbeat resends the current intent. It performs no
+/// I/O; a failed delivery ends in [`Outbox::resume`] or ends the session.
 struct Outbox {
     sent: Option<(i8, i8, u16)>,
     sent_at: Instant,
@@ -46,45 +68,45 @@ struct Outbox {
 }
 
 impl Outbox {
-    fn new(input: MovementInput) -> Self {
+    fn new(input: MovementInput, now: Instant) -> Self {
         Self {
             sent: None,
-            sent_at: Instant::now(),
+            sent_at: now,
             jumps: input.jumps,
         }
     }
 
-    fn send_move(
-        &mut self,
-        session: &mut ClientSession,
-        input: MovementInput,
-    ) -> Result<(), SessionError> {
-        session.send_move(input.forward, input.strafe, input.facing)?;
-        self.sent = Some((input.forward, input.strafe, input.facing));
-        self.sent_at = Instant::now();
-        Ok(())
+    fn movement(&mut self, input: MovementInput, now: Instant) -> (i8, i8, u16) {
+        let movement = (input.forward, input.strafe, input.facing);
+        self.sent = Some(movement);
+        self.sent_at = now;
+        movement
     }
 
-    fn send_changes(
-        &mut self,
-        session: &mut ClientSession,
-        input: MovementInput,
-    ) -> Result<(), SessionError> {
-        if input.jumps != self.jumps {
-            self.jumps = input.jumps;
-            session.send_jump()?;
-        }
+    /// Commands for a newly observed input: one `Jump` when `jumps` advanced,
+    /// however many presses it merged, then a `Move` when needed.
+    fn changes(&mut self, input: MovementInput, now: Instant) -> Outgoing {
+        let jump = input.jumps != self.jumps;
+        self.jumps = input.jumps;
         let intent_changed = self
             .sent
             .is_none_or(|(forward, strafe, _)| (forward, strafe) != (input.forward, input.strafe));
         let facing_changed = self
             .sent
             .is_none_or(|(_, _, facing)| facing != input.facing);
-        let tick = Duration::from_secs(1) / u32::from(TICK_HZ);
-        if intent_changed || (facing_changed && self.sent_at.elapsed() >= tick) {
-            self.send_move(session, input)?;
+        let facing_due =
+            facing_changed && now.saturating_duration_since(self.sent_at) >= FACING_INTERVAL;
+        let movement = (intent_changed || facing_due).then(|| self.movement(input, now));
+        Outgoing { jump, movement }
+    }
+
+    /// Periodic resend of the current intent; a pending jump is left to
+    /// [`Outbox::changes`], so it is never sent twice.
+    fn heartbeat(&mut self, input: MovementInput, now: Instant) -> Outgoing {
+        Outgoing {
+            jump: false,
+            movement: Some(self.movement(input, now)),
         }
-        Ok(())
     }
 
     /// After resume only current input counts; presses during the outage are dropped.
@@ -102,7 +124,7 @@ pub async fn run_session(
 ) -> Result<(), ClientError> {
     let mut heartbeat = tokio::time::interval(RESEND_INTERVAL);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut outbox = Outbox::new(*input.borrow_and_update());
+    let mut outbox = Outbox::new(*input.borrow_and_update(), Instant::now());
     let mut last_snapshot = Instant::now();
     let mut last_tick = None;
     loop {
@@ -117,13 +139,13 @@ pub async fn run_session(
                     // release. Peek without marking the value seen, so a pending
                     // jump still reaches the change branch.
                     let current = *input.borrow();
-                    outbox.send_move(&mut session, current).err()
+                    outbox.heartbeat(current, Instant::now()).deliver(&mut session).err()
                 }
             },
             changed = input.changed() => match changed {
                 Ok(()) => {
                     let current = *input.borrow_and_update();
-                    outbox.send_changes(&mut session, current).err()
+                    outbox.changes(current, Instant::now()).deliver(&mut session).err()
                 }
                 // The owning window has closed; it also requests shutdown.
                 Err(_) => return Ok(()),
