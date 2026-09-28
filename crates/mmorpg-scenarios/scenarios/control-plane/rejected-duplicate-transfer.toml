@@ -1,0 +1,113 @@
+# A transfer ID binds one entity and one pair of grants, and an entity has at
+# most one unfinished transfer. Conflicting reuse fails closed.
+name = "rejected-duplicate-transfer"
+lease_ttl_ticks = 100
+heartbeat_ttl_ticks = 1000
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-a"
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-b"
+
+[[steps]]
+at = 0
+op = "assign"
+zone = 10
+host = "host-a"
+
+[[steps]]
+at = 0
+op = "assign"
+zone = 11
+host = "host-b"
+
+[[steps]]
+at = 1
+op = "prepare"
+transfer = 7
+entity = 42
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 11, host = "host-b", epoch = 1 }
+
+[[steps]]
+at = 2
+op = "prepare"
+transfer = 7
+entity = 43
+expect = "rejected:transfer_id_collision"
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 11, host = "host-b", epoch = 1 }
+
+[[steps]]
+at = 2
+op = "prepare"
+transfer = 7
+entity = 42
+expect = "rejected:transfer_id_collision"
+source = { zone = 11, host = "host-b", epoch = 1 }
+destination = { zone = 10, host = "host-a", epoch = 1 }
+
+[[steps]]
+at = 3
+op = "prepare"
+transfer = 8
+entity = 42
+expect = "rejected:entity_transfer_in_progress"
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 11, host = "host-b", epoch = 1 }
+
+[[steps]]
+at = 4
+op = "prepare"
+transfer = 9
+entity = 44
+expect = "rejected:same_zone_transfer"
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 10, host = "host-a", epoch = 1 }
+
+[[steps]]
+at = 5
+op = "accept"
+transfer = 7
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:transfer_lease_mismatch"
+
+[[steps]]
+at = 5
+op = "accept"
+transfer = 99
+zone = 11
+host = "host-b"
+epoch = 1
+expect = "rejected:unknown_transfer"
+
+[[steps]]
+at = 6
+op = "accept"
+transfer = 7
+zone = 11
+host = "host-b"
+epoch = 1
+
+[[steps]]
+at = 7
+op = "commit"
+transfer = 7
+zone = 10
+host = "host-a"
+epoch = 1
+
+[[steps]]
+at = 8
+op = "prepare"
+transfer = 7
+entity = 42
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 11, host = "host-b", epoch = 1 }

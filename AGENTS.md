@@ -6,7 +6,7 @@ Rust workspace + native wgpu client + non-authoritative browser demo (`web/`).
 ## Read first
 
 - `README.md` — authority map and current state.
-- `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/INTEREST_WORKLOADS.md`, `docs/NATIVE_CLIENT.md`, `docs/adr/`.
+- `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/INTEREST_WORKLOADS.md`, `docs/NATIVE_CLIENT.md`, `docs/SCENARIOS.md`, `docs/adr/`.
 
 ## Layout
 
@@ -17,6 +17,7 @@ Rust workspace + native wgpu client + non-authoritative browser demo (`web/`).
 | `mmorpg-game-server` | Adapter from a zone simulation into `game-server` |
 | `mmorpg-control-plane` | Placement, leases, fencing, handoff metadata (in-memory reference model) |
 | `mmorpg-client` | Native wgpu/winit client |
+| `mmorpg-scenarios` | Headless deterministic bot and control-plane scenario runners (tooling; owns no rules) |
 | `web/` | GitHub Pages single-player tech demo; no MMO authority |
 
 ## Commands
@@ -27,6 +28,9 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo build --workspace --all-features --locked
 (cd web && bun test && bun run build)
+cargo run -p mmorpg-scenarios --locked -- bots crates/mmorpg-scenarios/scenarios/bots/*.toml                    # headless multiplayer bots, no GPU
+cargo run -p mmorpg-scenarios --locked -- control-plane crates/mmorpg-scenarios/scenarios/control-plane/*.toml  # lease/handoff invariants
+MMORPG_SCENARIOS_UPDATE=1 cargo test -p mmorpg-scenarios --test scenarios --locked                              # regenerate expected scenario outputs
 python3 scripts/smoke-native.py      # offscreen end-to-end: host + client + GPU frame
 ./scripts/dev-native.sh              # full local native dev environment
 ```
@@ -77,5 +81,6 @@ General engineering rules (git and merging, commits, testing, ADRs, docs, depend
 ## Done means
 
 - Format, Clippy, tests and build pass for the complete workspace (and `web/` if touched).
+- Changes to server multiplayer, session or control-plane behavior add or update a scenario in `crates/mmorpg-scenarios/scenarios/` (see `docs/SCENARIOS.md`).
 - Changes to client/server interaction pass `scripts/smoke-native.py`.
 - Protocol changes keep the Rust/browser snapshot compatibility tests passing and update `docs/PROTOCOL.md`.

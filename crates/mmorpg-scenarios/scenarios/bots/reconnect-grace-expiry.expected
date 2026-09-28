@@ -1,0 +1,19 @@
+scenario reconnect-grace-expiry zone=1 bots=2 ticks=10 grace=3
+t=0 alice join -> joined player=1 epoch=1
+t=0 bob join -> joined player=2 epoch=1
+t=1 alice p1 e1 ack0 (0,50,0) sees[bob] | bob p2 e1 ack0 (200,50,0) sees[alice]
+t=1 alice disconnect -> disconnected player=1
+t=2 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[alice]
+t=3 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[alice]
+t=4 expect bob sees alice ok alice at [0, 50, 0]
+t=4 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[alice]
+t=5 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[alice]
+t=6 expect bob not_sees alice ok alice not visible
+t=6 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[]
+t=7 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[]
+t=8 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[]
+t=8 alice reconnect -> rejected:unknown_token
+t=9 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[]
+t=10 expect bob visible_count ok count=1
+t=10 alice p1 offline | bob p2 e1 ack0 (200,50,0) sees[]
+PASS reconnect-grace-expiry ticks=10 steps=4 expectations=3 failures=0

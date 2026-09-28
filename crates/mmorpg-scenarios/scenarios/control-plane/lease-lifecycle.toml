@@ -1,0 +1,109 @@
+# Host registration, lease grant, renewal and expiry. A missed heartbeat
+# blocks new placement but does not revoke an issued lease; lease expiry does.
+name = "lease-lifecycle"
+lease_ttl_ticks = 100
+heartbeat_ttl_ticks = 50
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-a"
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-b"
+
+[[steps]]
+at = 0
+op = "assign"
+zone = 10
+host = "host-a"
+
+[[steps]]
+at = 10
+op = "write"
+zone = 10
+host = "host-a"
+epoch = 1
+
+[[steps]]
+at = 40
+op = "heartbeat"
+host = "host-b"
+
+[[steps]]
+at = 50
+op = "renew"
+zone = 10
+host = "host-a"
+epoch = 1
+
+[[steps]]
+at = 60
+op = "expire_hosts"
+
+[[steps]]
+at = 60
+op = "write"
+zone = 10
+host = "host-a"
+epoch = 1
+
+[[steps]]
+at = 60
+op = "assign"
+zone = 11
+host = "host-a"
+expect = "rejected:host_not_registered"
+
+[[steps]]
+at = 60
+op = "heartbeat"
+host = "host-b"
+
+[[steps]]
+at = 150
+op = "write"
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:lease_expired"
+
+[[steps]]
+at = 150
+op = "renew"
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:lease_expired"
+
+[[steps]]
+at = 150
+op = "expire_leases"
+
+[[steps]]
+at = 150
+op = "register"
+host = "host-b"
+
+[[steps]]
+at = 150
+op = "assign"
+zone = 10
+host = "host-b"
+
+[[steps]]
+at = 151
+op = "write"
+zone = 10
+host = "host-b"
+epoch = 2
+
+[[steps]]
+at = 151
+op = "write"
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:stale_lease"

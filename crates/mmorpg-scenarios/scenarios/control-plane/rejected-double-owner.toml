@@ -1,0 +1,105 @@
+# A zone cannot gain a second owner while its lease is live, a host cannot
+# write with a lease it was never granted, and placement requires a live host.
+name = "rejected-double-owner"
+lease_ttl_ticks = 100
+heartbeat_ttl_ticks = 30
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-a"
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-b"
+
+[[steps]]
+at = 0
+op = "assign"
+zone = 10
+host = "host-a"
+
+[[steps]]
+at = 1
+op = "assign"
+zone = 10
+host = "host-b"
+expect = "rejected:zone_already_assigned"
+
+[[steps]]
+at = 1
+op = "write"
+zone = 10
+host = "host-b"
+epoch = 1
+expect = "rejected:lease_owner_mismatch"
+
+[[steps]]
+at = 1
+op = "write"
+zone = 10
+host = "host-b"
+epoch = 2
+expect = "rejected:stale_lease"
+
+[[steps]]
+at = 1
+op = "write"
+zone = 10
+host = "host-a"
+epoch = 1
+
+[[steps]]
+at = 2
+op = "assign"
+zone = 11
+host = "host-z"
+expect = "rejected:host_not_registered"
+
+[[steps]]
+at = 2
+op = "register"
+host = "bad host"
+expect = "rejected:invalid_host_id"
+
+[[steps]]
+at = 40
+op = "reassign"
+zone = 10
+expected_epoch = 1
+host = "host-b"
+expect = "rejected:host_registration_expired"
+
+[[steps]]
+at = 40
+op = "heartbeat"
+host = "host-b"
+expect = "rejected:host_registration_expired"
+
+[[steps]]
+at = 40
+op = "register"
+host = "host-b"
+
+[[steps]]
+at = 40
+op = "reassign"
+zone = 10
+expected_epoch = 1
+host = "host-b"
+
+[[steps]]
+at = 41
+op = "write"
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:stale_lease"
+
+[[steps]]
+at = 41
+op = "write"
+zone = 10
+host = "host-b"
+epoch = 2

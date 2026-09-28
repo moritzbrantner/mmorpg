@@ -5,6 +5,7 @@ members = [
   "crates/mmorpg-game-server",
   "crates/mmorpg-control-plane",
   "crates/mmorpg-client",
+  "crates/mmorpg-scenarios",
 ]
 resolver = "3"
 
@@ -21,6 +22,7 @@ physics-engine = { git = "https://github.com/moritzbrantner/physics-engine.git",
 mmorpg-core = { path = "crates/mmorpg-core" }
 mmorpg-control-plane = { path = "crates/mmorpg-control-plane" }
 mmorpg-protocol = { path = "crates/mmorpg-protocol" }
+mmorpg-game-server = { path = "crates/mmorpg-game-server" }
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 
 [workspace.lints.rust]

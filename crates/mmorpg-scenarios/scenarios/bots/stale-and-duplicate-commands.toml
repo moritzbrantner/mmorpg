@@ -1,0 +1,80 @@
+# Commands with duplicate or older sequence numbers are ignored by the session
+# runtime and do not change the acknowledged sequence or movement. A zero
+# sequence and a command on a foreign connection epoch fail closed.
+name = "stale-and-duplicate-commands"
+zone = 1
+ticks = 6
+
+[[bots]]
+name = "alice"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "join"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "move"
+x = 1
+z = 0
+seq = 5
+
+[[steps]]
+tick = 1
+bot = "alice"
+action = "move"
+x = -1
+z = 0
+seq = 5
+expect = "ignored_stale"
+
+[[steps]]
+tick = 1
+bot = "alice"
+action = "move"
+x = -1
+z = 0
+seq = 3
+expect = "ignored_stale"
+
+[[steps]]
+tick = 2
+bot = "alice"
+action = "move"
+x = 0
+z = 0
+seq = 0
+expect = "rejected:invalid_sequence"
+
+[[steps]]
+tick = 2
+bot = "alice"
+action = "move"
+x = 0
+z = 0
+seq = 9
+connection_epoch = 7
+expect = "rejected:stale_connection"
+
+[[steps]]
+tick = 3
+bot = "alice"
+action = "move"
+x = 2
+z = 0
+seq = 10
+expect = "rejected:simulation"
+
+[[expect]]
+kind = "acknowledged"
+bot = "alice"
+tick = 6
+sequence = 5
+
+[[expect]]
+kind = "position"
+bot = "alice"
+tick = 6
+position = [72, 50, 0]

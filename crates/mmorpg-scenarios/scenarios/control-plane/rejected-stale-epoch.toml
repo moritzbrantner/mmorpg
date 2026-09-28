@@ -1,0 +1,143 @@
+# After reassignment advances the zone epoch, every operation presenting the
+# old epoch fails closed without changing state: reassign, renew, release,
+# writes through the fenced runtime, and handoff phases bound to the old grant.
+name = "rejected-stale-epoch"
+lease_ttl_ticks = 100
+heartbeat_ttl_ticks = 1000
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-a"
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-b"
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-c"
+
+[[steps]]
+at = 0
+op = "assign"
+zone = 10
+host = "host-a"
+
+[[steps]]
+at = 0
+op = "assign"
+zone = 11
+host = "host-c"
+
+[[steps]]
+at = 1
+op = "prepare"
+transfer = 7
+entity = 42
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 11, host = "host-c", epoch = 1 }
+
+[[steps]]
+at = 2
+op = "accept"
+transfer = 7
+zone = 11
+host = "host-c"
+epoch = 1
+
+[[steps]]
+at = 10
+op = "reassign"
+zone = 10
+expected_epoch = 1
+host = "host-b"
+
+[[steps]]
+at = 11
+op = "reassign"
+zone = 10
+expected_epoch = 1
+host = "host-c"
+expect = "rejected:stale_lease"
+
+[[steps]]
+at = 11
+op = "renew"
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:stale_lease"
+
+[[steps]]
+at = 11
+op = "release"
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:stale_lease"
+
+[[steps]]
+at = 11
+op = "write"
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:stale_lease"
+
+[[steps]]
+at = 12
+op = "commit"
+transfer = 7
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:stale_lease"
+
+[[steps]]
+at = 12
+op = "commit"
+transfer = 7
+zone = 10
+host = "host-b"
+epoch = 2
+expect = "rejected:transfer_lease_mismatch"
+
+[[steps]]
+at = 13
+op = "prepare"
+transfer = 9
+entity = 50
+expect = "rejected:stale_lease"
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 11, host = "host-c", epoch = 1 }
+
+[[steps]]
+at = 14
+op = "write"
+zone = 10
+host = "host-b"
+epoch = 2
+
+[[steps]]
+at = 20
+op = "release"
+zone = 10
+host = "host-b"
+epoch = 2
+
+[[steps]]
+at = 21
+op = "write"
+zone = 10
+host = "host-b"
+epoch = 2
+expect = "rejected:zone_not_assigned"
+
+[[steps]]
+at = 21
+op = "assign"
+zone = 10
+host = "host-a"

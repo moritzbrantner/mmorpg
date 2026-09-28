@@ -1,0 +1,67 @@
+# Two bots join the outpost, see each other at spawn and move.
+# Positions come from the real physics step and are checked exactly.
+name = "two-bots-move"
+zone = 1
+ticks = 10
+
+[[bots]]
+name = "alice"
+
+[[bots]]
+name = "bob"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "join"
+
+[[steps]]
+tick = 0
+bot = "bob"
+action = "join"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "move"
+x = 1
+z = 0
+
+[[steps]]
+tick = 5
+bot = "bob"
+action = "move"
+x = 0
+z = 1
+
+[[expect]]
+kind = "sees"
+bot = "alice"
+target = "bob"
+tick = 1
+
+[[expect]]
+kind = "sees"
+bot = "bob"
+target = "alice"
+tick = 1
+
+[[expect]]
+kind = "acknowledged"
+bot = "alice"
+tick = 1
+sequence = 1
+
+[[expect]]
+kind = "position"
+bot = "bob"
+target = "alice"
+tick = 10
+position = [120, 50, 0]
+
+[[expect]]
+kind = "position"
+bot = "alice"
+target = "bob"
+tick = 10
+position = [200, 50, 60]
