@@ -259,6 +259,49 @@ class BrowserAcceptance(unittest.TestCase):
         expect(self.page.locator("#character-select")).to_be_visible()
         self.assertEqual(self.legacy_checkpoints(), [])
 
+    def test_rejected_projections_fail_closed_without_freezing_the_page(self):
+        # Byte 2 of a snapshot header is its schema version. While the flag is set the
+        # strict decoder sees an unknown version, as after a WASM/decoder version skew.
+        self.context.add_init_script("""(() => {
+          window.__rejectSnapshots = false;
+          const original = DataView.prototype.getUint16;
+          DataView.prototype.getUint16 = function(offset, ...rest) {
+            return window.__rejectSnapshots && offset === 2 ? 0xffff : original.call(this, offset, ...rest);
+          };
+        })();""")
+        self.open()
+        note = self.page.locator("#enter-world-note")
+
+        # A refused entry keeps the page on selection, says why, and keeps rendering.
+        self.page.evaluate("window.__rejectSnapshots = true")
+        self.enter_button().click()
+        expect(note).to_contain_text("Could not enter the world: Unsupported snapshot version")
+        expect(self.page.locator("#character-select")).to_be_visible()
+        expect(self.page.locator(".hud")).to_be_hidden()
+        self.assert_rendering()
+
+        # The refused join left nothing joined, so entry works once projections decode.
+        self.page.evaluate("window.__rejectSnapshots = false")
+        self.enter_world()
+        expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
+
+        # A projection rejected while playing leaves the world instead of stopping the loop.
+        self.page.evaluate("window.__rejectSnapshots = true")
+        expect(self.page.locator("#character-select")).to_be_visible()
+        expect(self.page.locator(".hud")).to_be_hidden()
+        expect(note).to_contain_text("Left the world after an error: Unsupported snapshot version")
+        self.page.evaluate("window.__rejectSnapshots = false")
+        self.assert_rendering()
+        self.enter_world()
+        expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
+        self.page.keyboard.press("Escape")
+        expect(note).to_contain_text("Start ")
+
+    def assert_rendering(self):
+        draws = self.page.evaluate("window.__calls.draws")
+        self.frames(3)
+        self.assertGreater(self.page.evaluate("window.__calls.draws"), draws, "The render loop must keep running")
+
     def test_storage_denial_keeps_the_world_playable(self):
         self.context.add_init_script("Object.defineProperty(window, 'localStorage', {get() { throw new DOMException('Storage denied', 'SecurityError'); }});")
         self.open()

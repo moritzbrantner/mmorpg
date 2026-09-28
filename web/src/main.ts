@@ -124,6 +124,8 @@ const turntable = installCharacterTurntable(previewSurface, {
 // Presentation reads only decoded player-scoped projections from `world.source`.
 let world: LocalWorld | null = null;
 let worldLoadError: string | null = null;
+/** Why the last entry failed or the world was left after an error; cleared by the next entry. */
+let worldFailure: string | null = null;
 let sceneryNodes: RendererSceneNode[] = [];
 let orbit = new OrbitCamera();
 let movementFacing = 0;
@@ -514,7 +516,7 @@ function updateEntryButton(): void {
   enterWorldButton.disabled = world === null;
   enterWorldLabel.textContent = "Enter World";
   enterWorldNote.textContent = world
-    ? `Start ${character.name} in Greyhaven Outpost`
+    ? worldFailure ?? `Start ${character.name} in Greyhaven Outpost`
     : worldLoadError
       ? `The zone simulation could not load: ${worldLoadError}`
       : "Loading the zone simulation…";
@@ -772,15 +774,26 @@ function renderWorld(activeWorld: LocalWorld, deltaSeconds: number, now: number)
   });
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function frame(now: number) {
+  // Re-arm first: one failed frame must never stop the render loop.
+  requestAnimationFrame(frame);
   const deltaSeconds = frameDeltaSeconds(now, lastTime);
   lastTime = now;
   if (entryState.phase === "world" && world) {
-    renderWorld(world, deltaSeconds, now);
-  } else {
-    renderSelection();
+    try {
+      renderWorld(world, deltaSeconds, now);
+    } catch (error) {
+      // Fail closed and visibly: leave the world and say why on the selection screen.
+      console.error(error);
+      returnToCharacters(`Left the world after an error: ${errorMessage(error)}`);
+    }
+    return;
   }
-  requestAnimationFrame(frame);
+  renderSelection();
 }
 
 function endOrbitDrag(): void {
@@ -794,14 +807,24 @@ function enterWorld() {
   if (creationDraft || !world || entryState.phase === "world") {
     return;
   }
+  const next = enterPreviewWorld(entryState, selectedCharacter());
+  // Join before switching the page: a refused join leaves the source unjoined, so
+  // the page stays on selection, says why, and entry can be retried.
+  try {
+    world.source.join();
+  } catch (error) {
+    console.error(error);
+    worldFailure = `Could not enter the world: ${errorMessage(error)}`;
+    updateEntryButton();
+    return;
+  }
+  worldFailure = null;
   turntable.cancel();
-  const character = selectedCharacter();
-  entryState = enterPreviewWorld(entryState, character);
+  entryState = next;
   keys.clear();
   endOrbitDrag();
   orbit = new OrbitCamera();
   movementFacing = orbit.facing();
-  world.source.join();
   outbox.reset(currentMovementInput());
   shownAreaName = null;
   characterSelect.hidden = true;
@@ -812,11 +835,18 @@ function enterWorld() {
   canvas.focus();
 }
 
-function returnToCharacters() {
+/** Back to selection; `failure` says why when the world was left after an error. */
+function returnToCharacters(failure: string | null = null) {
   turntable.cancel();
   const character = selectedCharacter();
-  // Leaving removes the unit from the local zone; the next entry spawns a new one.
-  world?.source.leave();
+  try {
+    // Leaving removes the unit from the local zone; the next entry spawns a new one.
+    world?.source.leave();
+  } catch (error) {
+    console.error(error);
+    failure ??= `Could not leave the world cleanly: ${errorMessage(error)}`;
+  }
+  worldFailure = failure;
   entryState = initialEntryState(character);
   keys.clear();
   endOrbitDrag();
@@ -854,7 +884,7 @@ for (const button of hatButtons) {
 saveCharacterButton.addEventListener("click", saveCurrentCharacter);
 loadCharacterButton.addEventListener("click", loadSavedCharacter);
 enterWorldButton.addEventListener("click", enterWorld);
-returnButton.addEventListener("click", returnToCharacters);
+returnButton.addEventListener("click", () => returnToCharacters());
 createCharacterButton.addEventListener("click", openCharacterCreation);
 for (const button of cancelCreationButtons) {
   button.addEventListener("click", cancelCharacterCreation);
@@ -989,6 +1019,6 @@ void loadLocalWorld().then((loaded) => {
   sceneryNodes = buildSceneryNodes(loaded.scenery.scenery);
   updateEntryButton();
 }, (error: unknown) => {
-  worldLoadError = error instanceof Error ? error.message : String(error);
+  worldLoadError = errorMessage(error);
   updateEntryButton();
 });
