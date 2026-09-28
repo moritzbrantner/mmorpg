@@ -1,0 +1,121 @@
+# Headless scenarios
+
+`mmorpg-scenarios` runs scripted multiplayer and control-plane scenarios without a GPU, network, wall clock or randomness. Use it to check server-side behavior that `scripts/smoke-native.py` can only reach through a GPU window.
+
+```sh
+cargo run -p mmorpg-scenarios --locked -- bots crates/mmorpg-scenarios/scenarios/bots/*.toml
+cargo run -p mmorpg-scenarios --locked -- control-plane --json crates/mmorpg-scenarios/scenarios/control-plane/*.toml
+```
+
+Output is one digest line per event, ending with `PASS <name> …` or `FAIL <name> …` per file. `--json` prints the same lines as compact JSON objects with sorted keys, a `schema` (`mmorpg.bot-scenario/v1` or `mmorpg.control-plane-scenario/v1`) and a `type` (`scenario`, `step`, `tick`, `expect`, `error`, `result`). Exit status is 0 when every scenario passes, 1 when any fails and 2 for usage, file or format errors.
+
+The runners own no rules. They drive the existing authorities and compare what those decide with the scenario's expectations.
+
+| Runner | Drives | Checks |
+| --- | --- | --- |
+| `bots` | `build_zone_host` → `game-server` `MatchHost`/`MatchRuntime` → `ZoneGameServerAdapter` → `mmorpg-core` physics and interest | Step outcomes and decoded player-scoped snapshots |
+| `control-plane` | `HostRegistry`, `ZoneDirectory`, `HandoffRegistry`, and `FencedZoneRuntime` for writes | Step outcomes and distributed-world invariants after every step |
+
+## Bot scenarios
+
+A bot scenario advances one zone hosted with the shared outpost content. Ticks are stepped explicitly with `MatchRuntime::advance_tick`. Each bot's snapshot bytes come from `MatchRuntime::snapshot_for` and are decoded with `mmorpg_protocol::decode_snapshot`. Reconnect tokens are deterministic per bot.
+
+```toml
+name = "two-bots-move"      # [A-Za-z0-9_-]
+zone = 1
+ticks = 10                  # observations exist for ticks 1..=10
+reconnect_grace_ticks = 120 # optional, default 120
+digest_interval = 1         # optional; eventful ticks always print
+
+[[bots]]
+name = "alice"
+
+[[steps]]                   # applied at `tick`, before it advances to tick + 1
+tick = 0
+bot = "alice"
+action = "join"             # join | move | disconnect | reconnect
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "move"
+x = 1                       # move requires x and z (i8; the zone accepts -1..=1)
+z = 0
+seq = 5                     # optional; default is the bot's next sequence
+connection_epoch = 1        # optional; default is the bot's current epoch
+expect = "applied"          # optional; default is the action's success tag
+
+[[expect]]                  # checked against the snapshot decoded at `tick`
+kind = "sees"               # sees | not_sees | position | acknowledged | identity | visible_count
+bot = "alice"
+target = "bob"
+tick = 1                    # or by_tick = N (sees only), optionally with from_tick
+```
+
+Step outcome tags are `joined`, `applied`, `ignored_stale`, `disconnected`, `resumed`, and `rejected:<kind>`. Rejection kinds come from `game-server`: `invalid_sequence`, `stale_connection`, `simulation`, `unknown_token`, `already_connected`, `reconnect_expired`, and others. The runner adds `no_session` and `not_connected`. A step whose outcome differs from its `expect` fails the scenario.
+
+| Expectation | Required fields | Passes when the bot's snapshot at the tick… |
+| --- | --- | --- |
+| `sees` | `target`, `tick` or `by_tick` | contains the target; with `by_tick`, at any tick in `from_tick..=by_tick` |
+| `not_sees` | `target`, `tick` | does not contain the target |
+| `position` | `position`, `tick`, optional `target` | shows the target (default: itself) at exactly `[x, y, z]` |
+| `acknowledged` | `sequence`, `tick` | acknowledges that command sequence |
+| `identity` | `tick` | shows the bot under the player ID from its first join |
+| `visible_count` | `count`, `tick` | contains exactly `count` players, including itself |
+
+A disconnected bot receives no snapshot, so any expectation on it fails. Other bots keep seeing it until reconnect grace expires.
+
+Digest lines have the form `t=<tick> <bot> p<player> e<connection epoch> ack<sequence> (<x>,<y>,<z>) sees[<bots>] | …`.
+
+## Control-plane scenarios
+
+```toml
+name = "lease-lifecycle"
+lease_ttl_ticks = 100
+heartbeat_ttl_ticks = 50
+
+[[steps]]
+at = 0                      # control-plane time; must not go backwards
+op = "assign"
+zone = 10
+host = "host-a"
+expect = "ok"               # optional; or rejected:<kind>
+```
+
+| `op` | Fields | Model call |
+| --- | --- | --- |
+| `register`, `heartbeat` | `host` | `HostRegistry::register` / `heartbeat` |
+| `expire_hosts`, `expire_leases` | none | `HostRegistry::expire` / `ZoneDirectory::expire` |
+| `assign` | `zone`, `host` | `ZoneDirectory::assign` |
+| `reassign` | `zone`, `expected_epoch`, `host` | `ZoneDirectory::reassign` |
+| `renew`, `release` | `zone`, `host`, `epoch` | `ZoneDirectory::renew` / `release` |
+| `write` | `zone`, `host`, `epoch` | one `advance_tick` through that grant's `FencedZoneRuntime` |
+| `prepare` | `transfer`, `entity`, `source`, `destination` | `HandoffRegistry::prepare` |
+| `accept` | `transfer`, destination `zone`/`host`/`epoch` | `HandoffRegistry::accept` |
+| `commit` | `transfer`, source `zone`/`host`/`epoch` | `HandoffRegistry::commit` |
+
+Leases are named by identity `(zone, host, epoch)`. `source` and `destination` are inline tables: `{ zone = 10, host = "host-a", epoch = 1 }`. Each grant gets its own fenced runtime, so a host can keep trying to write after losing its lease. Rejection kinds are the `ControlPlaneError` variants in snake case, such as `stale_lease`, `lease_expired`, `zone_already_assigned`, `lease_owner_mismatch`, `transfer_id_collision`, `entity_transfer_in_progress` and `transfer_not_accepted`.
+
+After every step the runner reads the directory, epoch floor and handoff records, then checks:
+
+- `single_writer`: at most one granted lease per zone is currently valid, no zone epoch was granted twice, and every directory owner came from a grant;
+- `epoch_fenced`: a successful fenced operation presented the current, unexpired epoch; epoch floors never regress; a rejected operation changed no state;
+- `handoff_idempotent`: a transfer keeps its ticket and never regresses, repeating a reached phase changes nothing, and each entity has at most one unfinished transfer;
+- `retire_after_accept`: a transfer is committed, which retires the source, only after acceptance was observed.
+
+Step lines show owners as `zone<id>=<host>@<epoch><<deadline>`. Violations print `INVARIANT FAIL <name>: <detail>` and fail the scenario. Unit tests in `src/control_plane.rs` feed each check a violating state.
+
+## Expected outputs
+
+Every `scenarios/<tool>/<name>.toml` has a `<name>.expected` text output. `cargo test --workspace --all-features --locked` requires each checked-in scenario to pass and reproduce its expected output byte for byte. After an intentional change, regenerate the files and review the diff:
+
+```sh
+MMORPG_SCENARIOS_UPDATE=1 cargo test -p mmorpg-scenarios --test scenarios --locked
+```
+
+## Limits
+
+- The bot runner covers one zone per scenario and movement commands, the only command type the zone has.
+- Scenarios run in process. Transport framing, datagram size limits, TLS and real reconnect timing are not covered. `scripts/smoke-native.py` and `mmorpg-client`'s loopback test still cover those.
+- A network mode against `mmorpg-zone-host` is not implemented. The reusable client session lives in `mmorpg-client`, which depends on wgpu and winit unconditionally.
+- The control-plane runner checks the in-memory reference model. It does not check a distributed deployment.

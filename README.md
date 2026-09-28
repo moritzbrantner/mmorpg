@@ -72,6 +72,7 @@ The workspace provides:
 - local browser-demo character creation with Warden, Ranger, and Arcanist starter classes, male/female presentation variants, stable per-character local identities, and isolated save slots;
 - strict Rust/browser snapshot v2 compatibility tests and bounded client interpolation;
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
+- [headless deterministic scenario runners](docs/SCENARIOS.md) for scripted bots against the real zone host path and for control-plane lease/handoff sequences with invariant checks after every step;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
 
 The control-plane implementation in this slice is a **reference model**, not yet a production distributed consensus system. Host registration is placement eligibility only: a missed heartbeat blocks new assignment to that host but does not revoke an already-issued zone lease. Existing lease deadlines and fencing epochs remain the authority boundary. The model exists to make ownership, liveness-sensitive placement, epoch fencing and handoff idempotence executable before choosing storage or orchestration infrastructure.
