@@ -219,7 +219,7 @@ static STRUCTURES: [Footprint; 63] = [
     (106, [2_000, 3_300], [2_800, 3_900], 500),
     (ids::WELL, [400, 3_000], [600, 3_200], 100),
     (ids::WAYSTONE, [-600, 3_000], [-500, 3_100], 250),
-    // Palisade: north, south, west and east sides with 6 m gate gaps on the roads.
+    // Palisade: north, south, west and east sides with a 6 m gap on each road.
     (110, [-3_230, -1_030], [-300, -970], 300),
     (111, [300, -1_030], [3_230, -970], 300),
     (112, [-3_230, 4_970], [-300, 5_030], 300),
@@ -228,7 +228,7 @@ static STRUCTURES: [Footprint; 63] = [
     (115, [-3_230, 2_300], [-3_170, 4_970], 300),
     (116, [3_170, -970], [3_230, 1_700], 300),
     (117, [3_170, 2_300], [3_230, 4_970], 300),
-    // Gate posts beside each gap.
+    // 0.8 m gate posts stand inside each gap, leaving a 4.4 m clear opening.
     (120, [-300, -1_040], [-220, -960], 400),
     (121, [220, -1_040], [300, -960], 400),
     (122, [-300, 4_960], [-220, 5_040], 400),

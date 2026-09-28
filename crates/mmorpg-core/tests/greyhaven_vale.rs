@@ -187,6 +187,46 @@ fn road_clearance_is_exact_at_the_boundary() {
 }
 
 #[test]
+fn palisade_gates_are_clear_openings_centred_on_their_roads() {
+    let definition = greyhaven_vale_definition();
+    let bounds = |id: u32| {
+        footprint(
+            definition
+                .colliders()
+                .iter()
+                .find(|collider| collider.id == id)
+                .unwrap(),
+        )
+    };
+    // (palisade segments, gate posts, axis across the opening, road centre on
+    // that axis): the Hollow Road and South Road run along x = 0, the Wolfrun
+    // Trail and Millbrook Road along z = 20 m.
+    for (segments, posts, axis, road) in [
+        ([110, 111], [120, 121], 0, 0),
+        ([112, 113], [122, 123], 0, 0),
+        ([114, 115], [124, 125], 1, 2_000),
+        ([116, 117], [126, 127], 1, 2_000),
+    ] {
+        // A 6 m palisade gap, framed by 0.8 m posts standing inside it.
+        let gap = [bounds(segments[0]).1[axis], bounds(segments[1]).0[axis]];
+        assert_eq!(gap[1] - gap[0], 600, "palisade gap {segments:?}");
+        let (first, second) = (bounds(posts[0]), bounds(posts[1]));
+        assert_eq!([first.0[axis], second.1[axis]], gap, "posts {posts:?}");
+        let opening = [first.1[axis], second.0[axis]];
+        assert_eq!(
+            opening[1] - opening[0],
+            440,
+            "gate {posts:?} is 4.4 m clear"
+        );
+        assert_eq!(
+            opening[0] + opening[1],
+            2 * road,
+            "gate {posts:?} is centred"
+        );
+    }
+}
+
+#[test]
 fn wolfrun_woods_trunks_always_leave_a_walkable_gap() {
     let definition = greyhaven_vale_definition();
     let trees: Vec<_> = definition
