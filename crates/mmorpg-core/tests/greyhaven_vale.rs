@@ -85,6 +85,25 @@ fn content_is_a_bounded_deterministic_revision() {
 }
 
 #[test]
+fn structures_touch_but_never_overlap() {
+    let definition = greyhaven_vale_definition();
+    let structures: Vec<_> = definition
+        .colliders()
+        .iter()
+        .filter(|collider| !is_terrain(collider))
+        .collect();
+    for (index, left) in structures.iter().enumerate() {
+        for right in &structures[index + 1..] {
+            let overlaps = (0..3).all(|axis| {
+                (left.position[axis] - right.position[axis]).abs()
+                    < left.half_extents[axis] + right.half_extents[axis]
+            });
+            assert!(!overlaps, "colliders {} and {} overlap", left.id, right.id);
+        }
+    }
+}
+
+#[test]
 fn every_spawn_slot_stands_clear_inside_the_hub_plaza() {
     let definition = greyhaven_vale_definition();
     for collider in definition.colliders() {
