@@ -18,7 +18,7 @@ The runners own no rules. They drive the existing authorities and compare what t
 
 ## Bot scenarios
 
-A bot scenario advances one zone hosted with the shared outpost content. Ticks are stepped explicitly with `MatchRuntime::advance_tick`. Each bot's snapshot bytes come from `MatchRuntime::snapshot_for` and are decoded with `mmorpg_protocol::decode_snapshot`. Reconnect tokens are deterministic per bot.
+A bot scenario advances one zone hosted with the shared outpost content. Ticks are stepped explicitly with `MatchRuntime::advance_tick`. Each bot's snapshot bytes come from `MatchRuntime::snapshot_for` and are decoded with `mmorpg_protocol::decode_snapshot`; a snapshot for another zone, tick or viewer is an error. Reconnect tokens are deterministic per bot.
 
 ```toml
 name = "two-bots-move"      # [A-Za-z0-9_-]
@@ -39,8 +39,9 @@ action = "join"             # join | move | disconnect | reconnect
 tick = 0
 bot = "alice"
 action = "move"
-x = 1                       # move requires x and z (i8; the zone accepts -1..=1)
-z = 0
+forward = 1                 # move requires forward, strafe (i8; the zone accepts -1..=1)
+strafe = 0
+facing = 16384              # and facing (u16 yaw, 65536 per turn; 0 faces +Z, 16384 faces +X)
 seq = 5                     # optional; default is the bot's next sequence
 connection_epoch = 1        # optional; default is the bot's current epoch
 expect = "applied"          # optional; default is the action's success tag
@@ -115,7 +116,7 @@ MMORPG_SCENARIOS_UPDATE=1 cargo test -p mmorpg-scenarios --test scenarios --lock
 
 ## Limits
 
-- The bot runner covers one zone per scenario and movement commands, the only command type the zone has.
+- The bot runner covers one zone per scenario and `Move` commands. `Jump` is not scriptable yet; `mmorpg-core`'s movement tests and `mmorpg-client`'s connected-world test cover it.
 - Scenarios run in process. Transport framing, datagram size limits, TLS and real reconnect timing are not covered. `scripts/smoke-native.py` and `mmorpg-client`'s loopback test still cover those.
 - A network mode against `mmorpg-zone-host` is not implemented. The reusable client session lives in `mmorpg-client`, which depends on wgpu and winit unconditionally.
 - The control-plane runner checks the in-memory reference model. It does not check a distributed deployment.

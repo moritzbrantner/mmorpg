@@ -7,7 +7,7 @@ use mmorpg_client::{
     graphics::render_offscreen,
     network::ClientSession,
     presentation::Presentation,
-    session::{NetworkUpdate, run_session},
+    session::{MovementInput, NetworkUpdate, run_session},
 };
 use mmorpg_core::{ZoneId, outpost_definition};
 use std::{
@@ -67,7 +67,7 @@ impl Options {
 fn main() -> Result<(), ClientError> {
     let Some(options) = Options::parse(std::env::args().skip(1))? else {
         println!(
-            "mmorpg-client [--url https://host:4433/game/matches/zone-1] [--zone 1] [--certificate cert.pem] [--smoke] [--frames N]\nWASD/arrows move. Escape closes. --smoke connects and verifies an offscreen GPU frame.\nWithout --certificate, system certificate trust is used."
+            "mmorpg-client [--url https://host:4433/game/matches/zone-1] [--zone 1] [--certificate cert.pem] [--smoke] [--frames N]\nW/S move, A/D or Q/E strafe, Space jumps. Escape closes. --smoke connects and verifies an offscreen GPU frame.\nWithout --certificate, system certificate trust is used."
         );
         return Ok(());
     };
@@ -95,7 +95,7 @@ fn main() -> Result<(), ClientError> {
             Ok(())
         });
     }
-    let (input_sender, input_receiver) = watch::channel([0_i8; 2]);
+    let (input_sender, input_receiver) = watch::channel(MovementInput::default());
     let (update_sender, update_receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let mut task = runtime.spawn(async move {

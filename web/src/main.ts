@@ -33,7 +33,7 @@ import "./styles.css";
 import { advanceDemoTick, frameDeltaSeconds } from "./demo-clock";
 import { DEMO_WORLD_HALF_EXTENT, type DemoProgress } from "./demo-save";
 import { installDemoSaveControls } from "./demo-save-controls";
-import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, type Vector3 } from "./replication";
+import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, yawFromRadians, type Vector3 } from "./replication";
 import { installCharacterTurntable } from "./character-turntable";
 import {
   characterRosterStorageKey,
@@ -206,10 +206,13 @@ function publishDemoSnapshot() {
     tick: demoTick,
     contentRevision: 0n,
     acknowledgedSequence: 0,
-    players: [{
-      playerId: 1,
+    viewerId: 1,
+    entities: [{
+      kind: "player",
+      entityId: 1,
       position: [Math.round(player.x * UNITS_PER_METRE), 83, Math.round(player.z * UNITS_PER_METRE)],
       velocity: [0, 0, 0],
+      facing: yawFromRadians(facing),
     }],
   });
 }

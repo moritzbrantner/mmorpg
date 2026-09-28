@@ -2,8 +2,12 @@ use game_server::{
     BrowserRoutePrefix, MatchHostWebTransportConfig, serve_match_host_with_shutdown,
 };
 use mmorpg_client::{ClientError, network::ClientSession};
-use mmorpg_core::{ZoneId, outpost_definition};
+use mmorpg_core::{PLAYER_HALF_EXTENTS_UNITS, ZoneId, outpost_definition};
 use std::{net::UdpSocket, time::Duration};
+
+/// Forward-movement headings: yaw 0 faces +Z, half a turn faces -Z.
+const NORTH: u16 = 0;
+const SOUTH: u16 = 32_768;
 
 #[tokio::test]
 async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
@@ -55,33 +59,40 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
         let second = ClientSession::connect(&url, Some(&certificate), zone_id, revision).await?;
         assert_ne!(first.player_id(), second.player_id());
         let initial = first.receive_snapshot().await?;
+        assert_eq!(initial.viewer_id, first.player_id());
         let start = initial
-            .players
+            .entities
             .iter()
-            .find(|player| player.player_id == first.player_id())
+            .find(|player| player.id == first.player_id())
             .unwrap()
             .position;
-        first.send_movement(0, -1)?;
+        first.send_move(1, 0, SOUTH)?;
         let mut moved = false;
         for _ in 0..30 {
             let snapshot = second.receive_snapshot().await?;
-            if snapshot.players.iter().any(|player| {
-                player.player_id == first.player_id() && player.position[2] < start[2]
+            assert_eq!(snapshot.viewer_id, second.player_id());
+            if snapshot.entities.iter().any(|player| {
+                player.id == first.player_id()
+                    && player.position[2] < start[2]
+                    && player.facing == SOUTH
             }) {
                 moved = true;
                 break;
             }
         }
-        assert!(moved, "other clients must see the server-resolved movement");
-        first.send_movement(0, 0)?;
+        assert!(
+            moved,
+            "other clients must see the server-resolved movement and facing"
+        );
+        first.send_move(0, 0, SOUTH)?;
         let mut stopped = false;
         for _ in 0..30 {
             let snapshot = first.receive_snapshot().await?;
             if snapshot.acknowledged_sequence >= 2 {
                 let player = snapshot
-                    .players
+                    .entities
                     .iter()
-                    .find(|player| player.player_id == first.player_id())
+                    .find(|player| player.id == first.player_id())
                     .unwrap();
                 if player.velocity[2] == 0 {
                     stopped = true;
@@ -96,7 +107,7 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
         // Commands may have reached the server even if their ACK was lost.
         // Preserve the highest sent sequence across connection replacement.
         for _ in 0..32 {
-            first.send_movement(0, 0)?;
+            first.send_move(0, 0, SOUTH)?;
         }
         let player_id = first.player_id();
         let previous_epoch = first.connection_epoch();
@@ -104,18 +115,18 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
         assert_eq!(first.player_id(), player_id);
         assert_eq!(first.connection_epoch(), previous_epoch + 1);
         assert!(resumed.acknowledged_sequence >= 35);
-        let resumed_player = resumed
-            .players
-            .iter()
-            .find(|p| p.player_id == player_id)
-            .unwrap();
+        let resumed_player = resumed.entities.iter().find(|p| p.id == player_id).unwrap();
         assert!(
             resumed_player.position[2] < start[2],
             "resume must retain movement state"
         );
         assert_eq!(resumed_player.velocity, [0; 3]);
         assert_eq!(
-            resumed.players.len(),
+            resumed_player.facing, SOUTH,
+            "the stopped intent keeps facing"
+        );
+        assert_eq!(
+            resumed.entities.len(),
             2,
             "resume must not admit another player"
         );
@@ -123,14 +134,14 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
         let again = first.reconnect().await?;
         assert_eq!(first.connection_epoch(), previous_epoch + 2);
         assert!(again.acknowledged_sequence > resumed.acknowledged_sequence);
-        first.send_movement(0, 1)?;
+        first.send_move(1, 0, NORTH)?;
         let mut resumed_movement = false;
         for _ in 0..30 {
             let snapshot = second.receive_snapshot().await?;
             if snapshot
-                .players
+                .entities
                 .iter()
-                .any(|p| p.player_id == player_id && p.velocity[2] > 0)
+                .any(|p| p.id == player_id && p.velocity[2] > 0)
             {
                 resumed_movement = true;
                 break;
@@ -139,6 +150,23 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
         assert!(
             resumed_movement,
             "resumed commands must reach the same authoritative player"
+        );
+        first.send_jump()?;
+        let mut jumped = false;
+        for _ in 0..30 {
+            let snapshot = second.receive_snapshot().await?;
+            if snapshot.entities.iter().any(|p| {
+                p.id == player_id
+                    && p.position[1] > PLAYER_HALF_EXTENTS_UNITS[1]
+                    && p.velocity[2] > 0
+            }) {
+                jumped = true;
+                break;
+            }
+        }
+        assert!(
+            jumped,
+            "a grounded running jump must be visible to other clients"
         );
         let mut incompatible =
             ClientSession::connect(&url, Some(&certificate), zone_id, revision + 1).await?;
@@ -176,12 +204,12 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
 }
 
 async fn verify_automatic_resume(session: ClientSession) -> Result<(), ClientError> {
-    use mmorpg_client::session::{NetworkUpdate, run_session};
+    use mmorpg_client::session::{MovementInput, NetworkUpdate, run_session};
     use tokio::sync::{oneshot, watch};
     let player_id = session.player_id();
     let epoch = session.connection_epoch();
     session.disconnect();
-    let (_input, input) = watch::channel([0, 0]);
+    let (_input, input) = watch::channel(MovementInput::default());
     let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown, stopped) = oneshot::channel();
     // JoinSet aborts its owned task on every early-return/panic path.
@@ -196,7 +224,7 @@ async fn verify_automatic_resume(session: ClientSession) -> Result<(), ClientErr
             } = &*receiver.borrow_and_update()
             {
                 assert_eq!(*connection_epoch, epoch + 1);
-                assert!(snapshot.players.iter().any(|p| p.player_id == player_id));
+                assert!(snapshot.entities.iter().any(|p| p.id == player_id));
                 break;
             }
         }
@@ -213,10 +241,10 @@ async fn verify_automatic_resume(session: ClientSession) -> Result<(), ClientErr
 }
 
 async fn verify_shutdown_during_resume(session: ClientSession) -> Result<(), ClientError> {
-    use mmorpg_client::session::{NetworkUpdate, run_session};
+    use mmorpg_client::session::{MovementInput, NetworkUpdate, run_session};
     use tokio::sync::{oneshot, watch};
     session.disconnect();
-    let (_input, input) = watch::channel([0, 0]);
+    let (_input, input) = watch::channel(MovementInput::default());
     let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown, stopped) = oneshot::channel();
     let mut tasks = tokio::task::JoinSet::new();

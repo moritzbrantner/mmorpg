@@ -1,6 +1,6 @@
 use mmorpg_client::presentation::Presentation;
 use mmorpg_core::{
-    PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneId, ZoneSnapshot, outpost_definition,
+    EntityKind, EntitySnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneId, ZoneSnapshot, outpost_definition,
 };
 use std::time::{Duration, Instant};
 
@@ -11,10 +11,13 @@ fn snapshot(tick: u64, position: [i32; 3]) -> ZoneSnapshot {
         tick,
         content_revision: outpost_definition().revision(),
         acknowledged_sequence: 1,
-        players: vec![PlayerSnapshot {
-            player_id: 1,
+        viewer_id: 1,
+        entities: vec![EntitySnapshot {
+            kind: EntityKind::Player,
+            id: 1,
             position,
-            velocity: [12, 0, 0],
+            velocity: [21, 0, 0],
+            facing: 0,
         }],
     }
 }
@@ -63,7 +66,7 @@ fn rendering_uses_the_servers_collision_geometry_and_entity_dimensions() {
         );
     }
     assert_eq!(scene.last().unwrap().position, [1.0, 0.5, -2.0]);
-    assert_eq!(scene.last().unwrap().size, [0.6, 1.0, 0.6]);
+    assert_eq!(scene.last().unwrap().size, [0.6, 1.8, 0.6]);
 }
 
 #[test]
@@ -78,8 +81,11 @@ fn incompatible_content_zones_and_duplicate_entities_fail_closed() {
     wrong_zone.zone_id = ZoneId::new(2);
     assert!(presentation.push(wrong_zone, now).is_err());
     let mut duplicate = snapshot(2, [0; 3]);
-    duplicate.players.push(duplicate.players[0].clone());
+    duplicate.entities.push(duplicate.entities[0].clone());
     assert!(presentation.push(duplicate, now).is_err());
+    let mut other_viewer = snapshot(2, [0; 3]);
+    other_viewer.viewer_id = 2;
+    assert!(presentation.push(other_viewer, now).is_err());
 }
 
 #[test]

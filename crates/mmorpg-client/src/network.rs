@@ -4,7 +4,7 @@
 
 use crate::ClientError;
 use game_server::{BrowserRoutePrefix, MatchId, ReconnectToken, WELCOME_BYTES, Welcome};
-use mmorpg_core::{TICK_HZ, ZoneCommand, ZoneId, ZoneSnapshot};
+use mmorpg_core::{EntityKind, TICK_HZ, ZoneCommand, ZoneId, ZoneSnapshot};
 use std::{collections::BTreeSet, error::Error, fmt, path::Path, time::Duration};
 use url::Url;
 use wtransport::{
@@ -35,7 +35,9 @@ impl fmt::Display for SessionError {
             Self::Send(error) => error.fmt(formatter),
             Self::SnapshotTimeout => formatter.write_str("server snapshot timed out"),
             Self::InvalidData(error) => write!(formatter, "invalid session data: {error}"),
-            Self::InvalidMovement => formatter.write_str("movement axes must be in [-1, 1]"),
+            Self::InvalidMovement => {
+                formatter.write_str("forward and strafe intent must be in [-1, 1]")
+            }
             Self::SequenceExhausted => formatter.write_str("command sequence exhausted"),
         }
     }
@@ -103,6 +105,8 @@ pub struct ClientSession {
     route: SessionRoute,
     welcome: Welcome,
     sequence: u32,
+    /// Facing of the latest movement intent, reused by the stopped resume intent.
+    facing: u16,
     resume_available: bool,
     zone_id: ZoneId,
     content_revision: u64,
@@ -137,6 +141,7 @@ impl ClientSession {
                 route,
                 welcome,
                 sequence: 0,
+                facing: 0,
                 resume_available: true,
                 zone_id,
                 content_revision,
@@ -195,7 +200,8 @@ impl ClientSession {
             self.welcome = welcome;
             // Keep the highest *sent* sequence, even if its acknowledgement was
             // lost. Never replay old inputs. Start the resumed connection stopped.
-            self.send_movement(0, 0)?;
+            let facing = self.facing;
+            self.send_move(0, 0, facing)?;
             let stopped_sequence = self.sequence;
             let mut resend = tokio::time::interval(Duration::from_millis(50));
             resend.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -207,7 +213,7 @@ impl ClientSession {
                             return Ok(snapshot);
                         }
                     }
-                    _ = resend.tick() => self.send_movement(0, 0)?,
+                    _ = resend.tick() => self.send_move(0, 0, facing)?,
                 }
             }
         })
@@ -240,15 +246,31 @@ impl ClientSession {
         }
     }
 
-    pub fn send_movement(&mut self, x: i8, z: i8) -> Result<(), SessionError> {
-        if !(-1..=1).contains(&x) || !(-1..=1).contains(&z) {
+    /// Held movement relative to `facing`; positive strafe is the character's right.
+    pub fn send_move(&mut self, forward: i8, strafe: i8, facing: u16) -> Result<(), SessionError> {
+        if !(-1..=1).contains(&forward) || !(-1..=1).contains(&strafe) {
             return Err(SessionError::InvalidMovement);
         }
+        self.send_command(ZoneCommand::Move {
+            forward,
+            strafe,
+            facing,
+        })?;
+        self.facing = facing;
+        Ok(())
+    }
+
+    /// One edge-triggered jump; the server ignores it unless grounded.
+    pub fn send_jump(&mut self) -> Result<(), SessionError> {
+        self.send_command(ZoneCommand::Jump)
+    }
+
+    fn send_command(&mut self, command: ZoneCommand) -> Result<(), SessionError> {
         let sequence = self
             .sequence
             .checked_add(1)
             .ok_or(SessionError::SequenceExhausted)?;
-        let payload = mmorpg_protocol::encode_command(ZoneCommand::SetMovement { x, z });
+        let payload = mmorpg_protocol::encode_command(command);
         let frame = game_server::encode_command(sequence, &payload)
             .map_err(|error| SessionError::InvalidData(error.into()))?;
         self.connection
@@ -276,15 +298,18 @@ impl ClientSession {
         if frame.tick != snapshot.tick {
             return Err("session and zone snapshot ticks disagree".into());
         }
-        let mut ids = BTreeSet::new();
-        if snapshot
-            .players
-            .iter()
-            .any(|player| !ids.insert(player.player_id))
-        {
-            return Err("duplicate player in snapshot".into());
+        if snapshot.viewer_id != self.player_id() {
+            return Err("player projection is addressed to another player".into());
         }
-        if !ids.contains(&self.player_id()) {
+        let mut entities = BTreeSet::new();
+        if snapshot
+            .entities
+            .iter()
+            .any(|entity| !entities.insert((entity.kind, entity.id)))
+        {
+            return Err("duplicate entity in snapshot".into());
+        }
+        if !entities.contains(&(EntityKind::Player, self.player_id())) {
             return Err("player projection does not contain the local player".into());
         }
         Ok(snapshot)

@@ -42,8 +42,10 @@ test("maximum and near-maximum saves remain saveable after continued simulation"
 test("tick rollover clears stale snapshots so the next published frame is accepted", () => {
   const snapshots = new SnapshotBuffer();
   const snapshot = (tick: bigint, x: number) => ({
-    zoneId: 1, tick, contentRevision: 0n, acknowledgedSequence: 0,
-    players: [{ playerId: 1, position: [x, 83, 0] as const, velocity: [0, 0, 0] as const }],
+    zoneId: 1, tick, contentRevision: 0n, acknowledgedSequence: 0, viewerId: 1,
+    entities: [{
+      kind: "player" as const, entityId: 1, position: [x, 83, 0] as const, velocity: [0, 0, 0] as const, facing: 0,
+    }],
   });
   snapshots.push(snapshot(MAX_DEMO_TICK, 100));
   const tick = advanceDemoTick(MAX_DEMO_TICK, snapshots);

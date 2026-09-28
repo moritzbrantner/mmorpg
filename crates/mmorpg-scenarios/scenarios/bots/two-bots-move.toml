@@ -1,4 +1,5 @@
-# Two bots join the outpost, see each other at spawn and move.
+# Two bots join the outpost, see each other at spawn and run on paths that
+# never touch: alice faces +Z (facing 0), bob faces +X (facing 16384).
 # Positions come from the real physics step and are checked exactly.
 name = "two-bots-move"
 zone = 1
@@ -24,15 +25,17 @@ action = "join"
 tick = 0
 bot = "alice"
 action = "move"
-x = 1
-z = 0
+forward = 1
+strafe = 0
+facing = 0
 
 [[steps]]
 tick = 5
 bot = "bob"
 action = "move"
-x = 0
-z = 1
+forward = 1
+strafe = 0
+facing = 16384
 
 [[expect]]
 kind = "sees"
@@ -57,11 +60,11 @@ kind = "position"
 bot = "bob"
 target = "alice"
 tick = 10
-position = [120, 50, 0]
+position = [0, 90, 210]
 
 [[expect]]
 kind = "position"
 bot = "alice"
 target = "bob"
 tick = 10
-position = [200, 50, 60]
+position = [305, 90, 0]

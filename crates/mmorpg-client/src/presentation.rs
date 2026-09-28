@@ -1,7 +1,8 @@
 //! Snapshot-only presentation. Local input never changes authoritative positions.
 use crate::ClientError;
 use mmorpg_core::{
-    PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, UNITS_PER_METRE, ZoneDefinition, ZoneSnapshot,
+    EntityKind, EntitySnapshot, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, UNITS_PER_METRE,
+    ZoneDefinition, ZoneSnapshot,
 };
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -43,13 +44,16 @@ impl Presentation {
         if snapshot.content_revision != self.definition.revision() {
             return Err("snapshot content revision mismatch".into());
         }
-        let mut ids = std::collections::BTreeSet::new();
+        if snapshot.viewer_id != self.player_id {
+            return Err("snapshot is addressed to another player".into());
+        }
+        let mut entities = std::collections::BTreeSet::new();
         if snapshot
-            .players
+            .entities
             .iter()
-            .any(|player| !ids.insert(player.player_id))
+            .any(|entity| !entities.insert((entity.kind, entity.id)))
         {
-            return Err("duplicate player in snapshot".into());
+            return Err("duplicate entity in snapshot".into());
         }
         if let Some(latest) = self.history.back() {
             if snapshot.zone_id != latest.zone_id {
@@ -89,31 +93,24 @@ impl Presentation {
                 let before_age = (latest.tick - before.tick) as f64;
                 let alpha =
                     ((before_age - delay) / (before_age - after_age)).clamp(0.0, 1.0) as f32;
-                return before
-                    .players
-                    .iter()
+                return visible_players(before)
                     .map(|player| {
                         let position = metres(player.position);
-                        let next = after
-                            .players
-                            .iter()
-                            .find(|next| next.player_id == player.player_id);
+                        let next = visible_players(after).find(|next| next.id == player.id);
                         let position = next.map_or(position, |next| {
                             let target = metres(next.position);
                             std::array::from_fn(|axis| {
                                 position[axis] + (target[axis] - position[axis]) * alpha
                             })
                         });
-                        (player.player_id, position)
+                        (player.id, position)
                     })
                     .collect();
             }
             before = after;
         }
-        before
-            .players
-            .iter()
-            .map(|player| (player.player_id, metres(player.position)))
+        visible_players(before)
+            .map(|player| (player.id, metres(player.position)))
             .collect()
     }
 
@@ -162,6 +159,22 @@ impl Presentation {
     pub fn is_stalled(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.latest_received) > Duration::from_secs(1)
     }
+}
+
+fn visible_players(snapshot: &ZoneSnapshot) -> impl Iterator<Item = &EntitySnapshot> {
+    snapshot
+        .entities
+        .iter()
+        .filter(|entity| entity.kind == EntityKind::Player)
+}
+
+/// Converts a presentation angle (radians, 0 facing +Z, turning toward +X)
+/// into the nearest `u16` yaw intent.
+#[must_use]
+pub fn yaw_from_radians(radians: f32) -> u16 {
+    let turns = (radians / std::f32::consts::TAU).rem_euclid(1.0);
+    // A full turn rounds to 65 536, which wraps to yaw 0.
+    ((turns * 65_536.0).round() as u32 % 65_536) as u16
 }
 
 fn metres(value: [i32; 3]) -> [f32; 3] {

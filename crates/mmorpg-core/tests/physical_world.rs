@@ -1,5 +1,17 @@
 use mmorpg_core::{StaticCollider, ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation};
 
+/// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
+const EAST: u16 = 16_384;
+const SOUTH: u16 = 32_768;
+
+fn run(facing: u16) -> ZoneCommand {
+    ZoneCommand::Move {
+        forward: 1,
+        strafe: 0,
+        facing,
+    }
+}
+
 fn definition() -> ZoneDefinition {
     ZoneDefinition::new(
         7,
@@ -24,13 +36,13 @@ fn definition() -> ZoneDefinition {
 fn shared_physics_resolves_gravity_ground_and_wall_contact() {
     let mut zone = ZoneSimulation::with_definition(ZoneId::new(1), definition()).unwrap();
     zone.add_player(1).unwrap();
-    zone.apply_command(1, 1, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
+    zone.apply_command(1, 1, run(EAST)).unwrap();
     for _ in 0..100 {
         zone.advance_tick().unwrap();
     }
     let snapshot = zone.snapshot().unwrap();
-    assert_eq!(snapshot.players[0].position, [250, 50, 0]);
+    // The wall face at x = 280 stops the 30-unit half-width body; feet rest on y = 0.
+    assert_eq!(snapshot.players[0].position, [250, 90, 0]);
     assert_eq!(snapshot.players[0].velocity, [0, 0, 0]);
     let projection = zone.snapshot_for_player(1).unwrap();
     assert_eq!(projection.content_revision, 7);
@@ -53,7 +65,7 @@ fn recovery_continues_airborne_motion_and_collision_identically() {
         restored.advance_tick().unwrap();
         assert_eq!(original.snapshot().unwrap(), restored.snapshot().unwrap());
     }
-    assert_eq!(restored.snapshot().unwrap().players[0].position[1], 50);
+    assert_eq!(restored.snapshot().unwrap().players[0].position[1], 90);
 }
 
 #[test]
@@ -103,8 +115,7 @@ fn content_rejects_ambiguous_ids_invalid_extents_and_overflow() {
 fn exhausted_tick_does_not_move_physics() {
     let mut zone = ZoneSimulation::new(ZoneId::new(1));
     zone.add_player(1).unwrap();
-    zone.apply_command(1, 1, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
+    zone.apply_command(1, 1, run(EAST)).unwrap();
     let mut snapshot = zone.snapshot().unwrap();
     snapshot.tick = u64::MAX;
     let mut zone = ZoneSimulation::from_snapshot(snapshot.clone()).unwrap();
@@ -117,13 +128,12 @@ fn shared_outpost_ground_and_perimeter_stop_authoritative_movement() {
     let mut zone =
         ZoneSimulation::with_definition(ZoneId::new(1), mmorpg_core::outpost_definition()).unwrap();
     zone.add_player(1).unwrap();
-    zone.apply_command(1, 1, ZoneCommand::SetMovement { x: 0, z: -1 })
-        .unwrap();
+    zone.apply_command(1, 1, run(SOUTH)).unwrap();
     for _ in 0..150 {
         zone.advance_tick().unwrap();
     }
     let player = &zone.snapshot().unwrap().players[0];
-    assert_eq!(player.position, [0, 50, -1040]);
+    assert_eq!(player.position, [0, 90, -1040]);
     assert_eq!(player.velocity, [0, 0, 0]);
 }
 

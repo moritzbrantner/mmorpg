@@ -26,8 +26,9 @@ action = "join"
 tick = 0
 bot = "alice"
 action = "move"
-x = 0
-z = 1
+forward = 1
+strafe = 0
+facing = 0
 
 [[steps]]
 tick = 2
@@ -49,8 +50,9 @@ expect = "rejected:already_connected"
 tick = 6
 bot = "alice"
 action = "move"
-x = 0
-z = 0
+forward = 0
+strafe = 0
+facing = 0
 connection_epoch = 1
 expect = "rejected:stale_connection"
 
@@ -58,8 +60,9 @@ expect = "rejected:stale_connection"
 tick = 6
 bot = "alice"
 action = "move"
-x = 0
-z = 0
+forward = 0
+strafe = 0
+facing = 0
 
 [[expect]]
 kind = "sees"

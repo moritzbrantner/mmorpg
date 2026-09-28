@@ -1,9 +1,9 @@
 # Two bots walk apart until player-scoped interest (2000 units) drops them
 # from each other's snapshots; alice is stopped by the west wall. They turn
-# around at tick 90 and must re-enter each other's snapshots by tick 110.
+# around at tick 60 and must re-enter each other's snapshots by tick 80.
 name = "interest-exit-enter"
 zone = 1
-ticks = 115
+ticks = 85
 digest_interval = 10
 
 [[bots]]
@@ -26,52 +26,56 @@ action = "join"
 tick = 0
 bot = "alice"
 action = "move"
-x = -1
-z = 0
+forward = 1
+strafe = 0
+facing = 49152
 
 [[steps]]
 tick = 0
 bot = "bob"
 action = "move"
-x = 1
-z = 0
+forward = 1
+strafe = 0
+facing = 16384
 
 [[steps]]
-tick = 90
+tick = 60
 bot = "alice"
 action = "move"
-x = 1
-z = 0
+forward = 1
+strafe = 0
+facing = 16384
 
 [[steps]]
-tick = 90
+tick = 60
 bot = "bob"
 action = "move"
-x = -1
-z = 0
+forward = 1
+strafe = 0
+facing = 49152
 
 [[expect]]
 kind = "not_sees"
 bot = "alice"
 target = "bob"
-tick = 90
+tick = 60
 
 [[expect]]
 kind = "visible_count"
 bot = "bob"
-tick = 90
+tick = 60
 count = 1
 
 [[expect]]
 kind = "sees"
 bot = "alice"
 target = "bob"
-from_tick = 91
-by_tick = 110
+from_tick = 61
+by_tick = 80
 
 [[expect]]
 kind = "sees"
 bot = "bob"
 target = "alice"
-from_tick = 91
-by_tick = 110
+from_tick = 61
+by_tick = 80

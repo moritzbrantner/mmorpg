@@ -1,5 +1,9 @@
-use mmorpg_client::session::NetworkUpdate;
-use mmorpg_client::{ClientError, graphics::WindowRenderer, presentation::Presentation};
+use mmorpg_client::session::{MovementInput, NetworkUpdate};
+use mmorpg_client::{
+    ClientError,
+    graphics::WindowRenderer,
+    presentation::{Presentation, yaw_from_radians},
+};
 use mmorpg_core::ZoneDefinition;
 use std::{
     collections::HashSet,
@@ -19,7 +23,7 @@ pub fn run(
     runtime: Arc<tokio::runtime::Runtime>,
     player_id: u32,
     definition: ZoneDefinition,
-    input: watch::Sender<[i8; 2]>,
+    input: watch::Sender<MovementInput>,
     updates: watch::Receiver<NetworkUpdate>,
     frames: Option<u32>,
 ) -> Result<(), ClientError> {
@@ -51,7 +55,7 @@ struct App {
     renderer: Option<WindowRenderer>,
     presentation: Presentation,
     connection_epoch: Option<u32>,
-    input: watch::Sender<[i8; 2]>,
+    input: watch::Sender<MovementInput>,
     updates: watch::Receiver<NetworkUpdate>,
     keys: HashSet<KeyCode>,
     error: Option<String>,
@@ -60,21 +64,56 @@ struct App {
     next_frame: Instant,
 }
 
+const FORWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyW, KeyCode::ArrowUp];
+const BACKWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyS, KeyCode::ArrowDown];
+const LEFT_KEYS: [KeyCode; 3] = [KeyCode::KeyA, KeyCode::KeyQ, KeyCode::ArrowLeft];
+const RIGHT_KEYS: [KeyCode; 3] = [KeyCode::KeyD, KeyCode::KeyE, KeyCode::ArrowRight];
+
+/// The follow camera looks along (-9, -12) in XZ; held movement is relative to it.
+fn camera_yaw() -> u16 {
+    yaw_from_radians(f32::atan2(-9.0, -12.0))
+}
+
 impl App {
+    fn stop(&self) {
+        self.input.send_if_modified(|input| {
+            let moving = input.forward != 0 || input.strafe != 0;
+            input.forward = 0;
+            input.strafe = 0;
+            moving
+        });
+    }
+
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: impl ToString) {
-        self.input.send_replace([0, 0]);
+        self.stop();
         self.error = Some(error.to_string());
         event_loop.exit();
     }
 
+    /// While any movement key is held, the character faces the camera's yaw.
     fn update_movement(&self) {
-        let held = |first, second| self.keys.contains(&first) || self.keys.contains(&second);
-        self.input.send_replace([
-            i8::from(held(KeyCode::KeyD, KeyCode::ArrowRight))
-                - i8::from(held(KeyCode::KeyA, KeyCode::ArrowLeft)),
-            i8::from(held(KeyCode::KeyS, KeyCode::ArrowDown))
-                - i8::from(held(KeyCode::KeyW, KeyCode::ArrowUp)),
-        ]);
+        let held = |keys: &[KeyCode]| keys.iter().any(|key| self.keys.contains(key));
+        let forward = i8::from(held(&FORWARD_KEYS)) - i8::from(held(&BACKWARD_KEYS));
+        let strafe = i8::from(held(&RIGHT_KEYS)) - i8::from(held(&LEFT_KEYS));
+        let steering =
+            held(&FORWARD_KEYS) || held(&BACKWARD_KEYS) || held(&LEFT_KEYS) || held(&RIGHT_KEYS);
+        let facing = steering.then(camera_yaw);
+        self.input.send_if_modified(|input| {
+            let next = MovementInput {
+                forward,
+                strafe,
+                facing: facing.unwrap_or(input.facing),
+                jumps: input.jumps,
+            };
+            let changed = *input != next;
+            *input = next;
+            changed
+        });
+    }
+
+    fn jump(&self) {
+        self.input
+            .send_modify(|input| input.jumps = input.jumps.wrapping_add(1));
     }
 }
 
@@ -114,7 +153,7 @@ impl ApplicationHandler for App {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                self.input.send_replace([0, 0]);
+                self.stop();
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
@@ -131,6 +170,13 @@ impl ApplicationHandler for App {
                     if code == KeyCode::Escape && event.state == ElementState::Pressed {
                         event_loop.exit();
                         return;
+                    }
+                    // Jump is edge-triggered: key repeat never queues more jumps.
+                    if code == KeyCode::Space
+                        && event.state == ElementState::Pressed
+                        && !event.repeat
+                    {
+                        self.jump();
                     }
                     if event.state == ElementState::Pressed {
                         self.keys.insert(code);
@@ -166,7 +212,7 @@ impl ApplicationHandler for App {
                             window.set_title(if self.presentation.is_stalled(now) {
                                 "MMORPG — connection stalled"
                             } else {
-                                "MMORPG — WASD / arrows move · Esc closes"
+                                "MMORPG — W/S move · A/D or Q/E strafe · Space jumps · Esc closes"
                             });
                         }
                     }
