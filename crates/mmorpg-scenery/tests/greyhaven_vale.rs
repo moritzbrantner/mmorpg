@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use mmorpg_core::greyhaven_vale::{self, PLAYABLE_BOUNDS, SPAWN_GRID, SPAWN_PLAZA, ids};
 use mmorpg_core::{Area, MAX_PLAYERS_PER_ZONE, StaticCollider, greyhaven_vale_definition};
 use mmorpg_scenery::{
-    LAKE_BED_COLOR, MOUNTAIN_PEAK_UNITS, PLAZA_COLOR, PropKind, ROAD_COLOR, Rect, SNOW_COLOR,
-    Scenery, TERRAIN_EXTENT_UNITS, WALKABLE_RELIEF_UNITS, greyhaven_vale_scenery, visual_kind,
+    Biome, LAKE_BED_COLOR, MOUNTAIN_PEAK_UNITS, PLAZA_COLOR, PropKind, ROAD_COLOR, Rect,
+    SNOW_COLOR, Scenery, TERRAIN_EXTENT_UNITS, WALKABLE_RELIEF_UNITS, greyhaven_vale_scenery,
+    visual_kind,
 };
 
 /// Recorded from this revision; any change to content, placement or relief
@@ -262,6 +263,74 @@ fn terrain_grid_samples_relief_and_biomes() {
         .max_by_key(|&index| grid.heights[index])
         .unwrap();
     assert_eq!(grid.colors[highest], SNOW_COLOR);
+}
+
+#[test]
+fn terrain_biomes_name_every_vertex_colour() {
+    let ids: Vec<u8> = Biome::ALL.iter().map(|biome| biome.id()).collect();
+    assert_eq!(
+        ids,
+        (0..13).collect::<Vec<u8>>(),
+        "ids follow declaration order"
+    );
+    let mut names: Vec<_> = Biome::ALL.iter().map(|biome| biome.name()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), Biome::ALL.len(), "names are unique");
+
+    let scenery = greyhaven_vale_scenery();
+    let grid = scenery.terrain_grid(200);
+    assert_eq!(grid.biomes.len(), grid.heights.len());
+    let at = |x: i32, z: i32| {
+        let column = usize::try_from((x + TERRAIN_EXTENT_UNITS) / 200).unwrap();
+        let row = usize::try_from((z + TERRAIN_EXTENT_UNITS) / 200).unwrap();
+        let index = row * grid.columns + column;
+        (grid.biomes[index], grid.colors[index])
+    };
+    for (point, biome) in [
+        ([0, -3_000], Biome::Road),
+        ([1_000, 1_600], Biome::Plaza),
+        ([5_600, -5_600], Biome::LakeBed),
+        ([-7_000, 3_000], Biome::Woods),
+        ([9_000, -1_000], Biome::Meadow),
+        ([7_000, 7_000], Biome::Farmland),
+        ([2_000, -10_000], Biome::Hollow),
+    ] {
+        assert_eq!(at(point[0], point[1]).0, biome, "{point:?}");
+    }
+    // Uniform biomes use their base colour; tinted ones stay within the
+    // ±8 tint (value noise / 128) of it.
+    for (biome, color) in grid.biomes.iter().zip(&grid.colors) {
+        let base = biome.base_color();
+        if matches!(
+            biome,
+            Biome::Road | Biome::Plaza | Biome::LakeBed | Biome::Snow
+        ) {
+            assert_eq!(*color, base, "{biome:?}");
+        } else {
+            let offsets: Vec<i32> = (0..3)
+                .map(|channel| i32::from(color[channel]) - i32::from(base[channel]))
+                .collect();
+            assert!(offsets.iter().all(|offset| offset.abs() <= 8), "{biome:?}");
+        }
+    }
+    let beyond: Vec<_> = grid
+        .biomes
+        .iter()
+        .zip(&grid.heights)
+        .filter(|(biome, _)| {
+            matches!(
+                biome,
+                Biome::Foothills | Biome::Highland | Biome::Rock | Biome::Snow
+            )
+        })
+        .collect();
+    assert!(beyond.iter().any(|(biome, _)| **biome == Biome::Snow));
+    assert!(
+        beyond
+            .iter()
+            .all(|(biome, height)| **biome != Biome::Snow || **height >= 2_800)
+    );
 }
 
 #[test]

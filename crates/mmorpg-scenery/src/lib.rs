@@ -124,6 +124,109 @@ impl Prop {
     }
 }
 
+/// What the ground at a terrain vertex is. Clients without per-vertex
+/// colours draw one surface per biome in its [`Biome::base_color`].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Biome {
+    Meadow,
+    Hub,
+    Woods,
+    Hollow,
+    Farmland,
+    Road,
+    Plaza,
+    Shore,
+    LakeBed,
+    Foothills,
+    Highland,
+    Rock,
+    Snow,
+}
+
+impl Biome {
+    /// Every biome in declaration order, which is also [`Biome::id`] order.
+    pub const ALL: [Self; 13] = [
+        Self::Meadow,
+        Self::Hub,
+        Self::Woods,
+        Self::Hollow,
+        Self::Farmland,
+        Self::Road,
+        Self::Plaza,
+        Self::Shore,
+        Self::LakeBed,
+        Self::Foothills,
+        Self::Highland,
+        Self::Rock,
+        Self::Snow,
+    ];
+
+    /// Stable numeric identity, independent of `Debug` output.
+    #[must_use]
+    pub const fn id(self) -> u8 {
+        match self {
+            Self::Meadow => 0,
+            Self::Hub => 1,
+            Self::Woods => 2,
+            Self::Hollow => 3,
+            Self::Farmland => 4,
+            Self::Road => 5,
+            Self::Plaza => 6,
+            Self::Shore => 7,
+            Self::LakeBed => 8,
+            Self::Foothills => 9,
+            Self::Highland => 10,
+            Self::Rock => 11,
+            Self::Snow => 12,
+        }
+    }
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Meadow => "meadow",
+            Self::Hub => "hub",
+            Self::Woods => "woods",
+            Self::Hollow => "hollow",
+            Self::Farmland => "farmland",
+            Self::Road => "road",
+            Self::Plaza => "plaza",
+            Self::Shore => "shore",
+            Self::LakeBed => "lake bed",
+            Self::Foothills => "foothills",
+            Self::Highland => "highland",
+            Self::Rock => "rock",
+            Self::Snow => "snow",
+        }
+    }
+
+    /// sRGB colour before the per-vertex tint.
+    #[must_use]
+    pub const fn base_color(self) -> [u8; 3] {
+        match self {
+            Self::Meadow => [92, 132, 62],
+            Self::Hub => [104, 128, 68],
+            Self::Woods => [62, 80, 44],
+            Self::Hollow => [122, 104, 84],
+            Self::Farmland => [112, 84, 54],
+            Self::Road => ROAD_COLOR,
+            Self::Plaza => PLAZA_COLOR,
+            Self::Shore => [196, 180, 132],
+            Self::LakeBed => LAKE_BED_COLOR,
+            Self::Foothills => [72, 104, 56],
+            Self::Highland => [88, 98, 70],
+            Self::Rock => [124, 120, 112],
+            Self::Snow => SNOW_COLOR,
+        }
+    }
+
+    /// Roads, the plaza, the lake bed and snow are uniform so their edges
+    /// read clearly; every other biome takes a seeded per-vertex tint.
+    const fn tinted(self) -> bool {
+        !matches!(self, Self::Road | Self::Plaza | Self::LakeBed | Self::Snow)
+    }
+}
+
 /// A road surface along a core road centre line.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Road {
@@ -156,8 +259,8 @@ impl Water {
     }
 }
 
-/// Relief heights and biome colours sampled on a square vertex grid, row
-/// by row along +Z, each row along +X.
+/// Relief heights, biomes and biome colours sampled on a square vertex grid,
+/// row by row along +Z, each row along +X.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerrainGrid {
     /// XZ position of vertex (column 0, row 0).
@@ -166,7 +269,8 @@ pub struct TerrainGrid {
     pub columns: usize,
     pub rows: usize,
     pub heights: Vec<i32>,
-    /// sRGB vertex colours.
+    pub biomes: Vec<Biome>,
+    /// sRGB vertex colours: the biome's base colour, tinted per vertex.
     pub colors: Vec<[u8; 3]>,
 }
 
@@ -389,14 +493,17 @@ impl Scenery {
         let count = usize::try_from(2 * TERRAIN_EXTENT_UNITS / step + 1).unwrap_or(1);
         let origin = [-TERRAIN_EXTENT_UNITS, -TERRAIN_EXTENT_UNITS];
         let mut heights = Vec::with_capacity(count * count);
+        let mut biomes = Vec::with_capacity(count * count);
         let mut colors = Vec::with_capacity(count * count);
         let mut z = origin[1];
         for _ in 0..count {
             let mut x = origin[0];
             for _ in 0..count {
                 let height = self.height_at(x, z);
+                let biome = self.biome_at(x, z, height);
                 heights.push(height);
-                colors.push(self.color_at(x, z, height));
+                biomes.push(biome);
+                colors.push(biome_color(biome, x, z));
                 x += step;
             }
             z += step;
@@ -407,6 +514,7 @@ impl Scenery {
             columns: count,
             rows: count,
             heights,
+            biomes,
             colors,
         }
     }
@@ -464,43 +572,50 @@ impl Scenery {
             .unwrap_or(i64::MAX)
     }
 
-    /// Biome colour of a terrain vertex.
-    fn color_at(&self, x: i32, z: i32, height: i32) -> [u8; 3] {
+    /// Biome of a terrain vertex whose relief is `height`.
+    fn biome_at(&self, x: i32, z: i32, height: i32) -> Biome {
         let point = [x, z];
-        let tint = i32::try_from(value_noise(SEED_TINT, x, z, 700) / 128).unwrap_or(0);
-        let shade = |base: [u8; 3]| base.map(|channel| clamp_channel(i32::from(channel) + tint));
         if beyond_playable(x, z) > 0 {
             return match height {
-                2_800.. => SNOW_COLOR,
-                1_500..=2_799 => shade([124, 120, 112]),
-                700..=1_499 => shade([88, 98, 70]),
-                _ => shade([72, 104, 56]),
+                2_800.. => Biome::Snow,
+                1_500..=2_799 => Biome::Rock,
+                700..=1_499 => Biome::Highland,
+                _ => Biome::Foothills,
             };
         }
         let water = self.water_distance(point);
         if water == 0 {
-            return LAKE_BED_COLOR;
+            return Biome::LakeBed;
         }
         if water < 300 {
-            return shade([196, 180, 132]);
+            return Biome::Shore;
         }
-        // Roads and the plaza are uniform, so their edges read clearly.
         if self.road_distance(point) <= 0 {
-            return ROAD_COLOR;
+            return Biome::Road;
         }
         if SPAWN_PLAZA.contains(x, z) {
-            return PLAZA_COLOR;
+            return Biome::Plaza;
         }
         if self.farmland.iter().any(|field| field.distance(point) == 0) {
-            return shade([112, 84, 54]);
+            return Biome::Farmland;
         }
         match greyhaven_vale::area_at(x, z).map(Area::id) {
-            Some(greyhaven_vale::WOLFRUN_WOODS) => shade([62, 80, 44]),
-            Some(greyhaven_vale::REDBRAND_HOLLOW) => shade([122, 104, 84]),
-            Some(greyhaven_vale::OUTPOST) => shade([104, 128, 68]),
-            _ => shade([92, 132, 62]),
+            Some(greyhaven_vale::WOLFRUN_WOODS) => Biome::Woods,
+            Some(greyhaven_vale::REDBRAND_HOLLOW) => Biome::Hollow,
+            Some(greyhaven_vale::OUTPOST) => Biome::Hub,
+            _ => Biome::Meadow,
         }
     }
+}
+
+/// Vertex colour: the biome's base colour, tinted by seeded noise.
+fn biome_color(biome: Biome, x: i32, z: i32) -> [u8; 3] {
+    let base = biome.base_color();
+    if !biome.tinted() {
+        return base;
+    }
+    let tint = i32::try_from(value_noise(SEED_TINT, x, z, 700) / 128).unwrap_or(0);
+    base.map(|channel| clamp_channel(i32::from(channel) + tint))
 }
 
 /// Packed dirt of every road surface.
