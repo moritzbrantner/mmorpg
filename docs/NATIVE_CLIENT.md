@@ -38,7 +38,18 @@ Run this command in another terminal for a second player after the launcher is r
 cargo run --locked -p mmorpg-client -- --certificate target/dev-tls/cert.pem
 ```
 
-WASD or arrow keys move. Escape closes. Losing focus clears held movement. The camera follows your gold avatar; other players are blue. Movement is retransmitted at 20 Hz so a lost key-release datagram is corrected. There is no local movement prediction yet, so input response includes network and interpolation delay.
+Controls:
+
+| Input | Action |
+| --- | --- |
+| W / S (or ↑ / ↓) | Run forward / backpedal |
+| A / D, Q / E (or ← / →) | Strafe left / right |
+| Space | Jump (only from the ground) |
+| Left or right mouse drag | Orbit the camera around your character |
+| Mouse wheel | Zoom the camera |
+| Escape | Close |
+
+The third-person camera orbits your gold avatar; other players are blue. Each body shows a small dark nose on its facing side. While a movement key is held, your character turns to face the camera's direction, so W always runs away from the camera; releasing the keys leaves the character facing where it last moved. Running and strafing move at 6.3 m/s, backpedalling is slower. Losing focus clears held movement. Movement is sent on change and retransmitted at 20 Hz so a lost key-release datagram is corrected; each Space press sends one jump and is never replayed after a reconnect. There is no local movement prediction yet, so input response includes network and interpolation delay.
 
 The default endpoint is `https://localhost:4433/game/matches/zone-1`. For another configured zone:
 
@@ -52,7 +63,7 @@ For publicly trusted server certificates, omit `--certificate`; system certifica
 
 ## Connection interruptions
 
-While the window remains open, a transport timeout/local connection loss or five seconds without advancing snapshots triggers one resume attempt. The title shows “reconnecting to world” while the last known scene remains visible. Resume uses the same TLS configuration and endpoint, keeps the same player, retains command sequencing, and resets interpolation. It sends a stopped movement intent and waits for acknowledgement before sending the current held input again.
+While the window remains open, a transport timeout/local connection loss or five seconds without advancing snapshots triggers one resume attempt. The title shows “reconnecting to world” while the last known scene remains visible. Resume uses the same TLS configuration and endpoint, keeps the same player, retains command sequencing, and resets interpolation. It sends a stopped movement intent (keeping the last facing) and waits for acknowledgement before sending the current held input again. Jump presses made during the interruption are dropped.
 
 Tokens stay in memory and never appear in CLI arguments or application logs. Session URLs must name a fresh hosted-match route without credentials, query parameters, or fragments. The server owns token rotation and expiry. Reconnect lasts at most ten seconds or the advertised grace period, whichever is shorter; it includes a 250 ms delay for server-side disconnect processing. That delay is best effort, not an acknowledgement protocol. The retained player may continue its last server-owned movement during the interruption until the stop reaches the server.
 

@@ -7,7 +7,7 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
 - [x] Record the starter-zone design contract and the browser WASM-host decision ([ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md)).
 - Refresh pinned foundations and dependencies.
 - Fragment player snapshots above the datagram budget in `game-server`.
-- Movement v3: facing, camera-relative movement, jump.
+- [x] Movement v3: facing, camera-relative movement, jump.
 - Greyhaven Vale content, shared presentation scenery, projection budget.
 - Browser demo runs the shared simulation as a local WASM zone host.
 - Units, combat and creature AI.
