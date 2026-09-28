@@ -99,11 +99,152 @@ pub const fn checked_scale(magnitude: i32, unit: i32) -> Option<i32> {
     }
 }
 
+/// Floor of the square root: the largest `r` with `r² ≤ value`, exact for
+/// every `u64`. Integer normalisation divides by it, so no floating point
+/// decides a length.
+#[must_use]
+pub const fn isqrt(value: u64) -> u64 {
+    value.isqrt()
+}
+
+/// Floor of the XZ length of `(x, z)`; exact for every `i32` pair.
+#[must_use]
+pub const fn xz_length(x: i32, z: i32) -> u64 {
+    let x = x.unsigned_abs() as u64;
+    let z = z.unsigned_abs() as u64;
+    // Each square is at most 2^62, so the sum fits u64.
+    isqrt(x * x + z * z)
+}
+
+/// The yaw whose [`direction`] is nearest to the XZ vector `(x, z)`, or `None`
+/// for the zero vector. Integer only: a binary search over the sine table
+/// finds the angle within one quadrant, and quadrant symmetry places it. A tie
+/// between two neighbouring yaws resolves to the smaller one within the quadrant.
+#[must_use]
+pub const fn yaw_from_vector(x: i32, z: i32) -> Option<u16> {
+    let (x, z) = (x as i64, z as i64);
+    // Rotate the vector into the first quadrant: `a` is the component along
+    // the quadrant's +X-like axis and `b > 0` the one along its +Z-like axis.
+    let (base, a, b) = if x >= 0 && z > 0 {
+        (0, x, z)
+    } else if x > 0 && z <= 0 {
+        (YAW_QUARTER_TURN, -z, x)
+    } else if x <= 0 && z < 0 {
+        (2 * YAW_QUARTER_TURN, -x, -z)
+    } else if x < 0 && z >= 0 {
+        (3 * YAW_QUARTER_TURN, z, -x)
+    } else {
+        return None;
+    };
+    // f(t) = sin t · b − cos t · a rises monotonically over the quadrant and
+    // is zero at the exact angle. |a|, |b| ≤ 2^31 and |sin|, |cos| ≤ 2^16, so
+    // every product fits i64.
+    let (mut low, mut high) = (0_u16, YAW_QUARTER_TURN);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if quadrant_error(middle, a, b) >= 0 {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    // `low` is the first yaw at or past the angle; its predecessor may be nearer.
+    let offset =
+        if low > 0 && quadrant_error(low - 1, a, b).abs() <= quadrant_error(low, a, b).abs() {
+            low - 1
+        } else {
+            low
+        };
+    Some(base.wrapping_add(offset))
+}
+
+/// `sin t · b − cos t · a`: proportional to the angular error of yaw `t`
+/// against the first-quadrant vector `(a, b)`.
+const fn quadrant_error(t: u16, a: i64, b: i64) -> i64 {
+    sin(t) as i64 * b - cos(t) as i64 * a
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const HALF_TURN: u16 = 2 * YAW_QUARTER_TURN;
+
+    #[test]
+    fn isqrt_is_the_exact_floor_root() {
+        for value in (0..10_000_u64).chain([
+            u64::from(u32::MAX),
+            (1 << 62) - 1,
+            1 << 62,
+            u64::MAX - 1,
+            u64::MAX,
+        ]) {
+            let root = u128::from(isqrt(value));
+            assert!(root * root <= u128::from(value), "{value}");
+            assert!((root + 1) * (root + 1) > u128::from(value), "{value}");
+        }
+        assert_eq!(xz_length(3, -4), 5);
+        assert_eq!(xz_length(i32::MIN, i32::MIN), 3_037_000_499);
+        assert_eq!(xz_length(0, 0), 0);
+    }
+
+    #[test]
+    fn yaw_from_vector_follows_the_zone_convention() {
+        assert_eq!(yaw_from_vector(0, 0), None);
+        assert_eq!(yaw_from_vector(0, 5), Some(0), "+Z is yaw 0");
+        assert_eq!(yaw_from_vector(5, 0), Some(YAW_QUARTER_TURN), "+X");
+        assert_eq!(yaw_from_vector(0, -5), Some(HALF_TURN), "-Z");
+        assert_eq!(yaw_from_vector(-5, 0), Some(3 * YAW_QUARTER_TURN), "-X");
+        assert_eq!(yaw_from_vector(7, 7), Some(YAW_EIGHTH_TURN));
+        assert_eq!(
+            yaw_from_vector(-7, -7),
+            Some(HALF_TURN + YAW_EIGHTH_TURN),
+            "the diagonal toward -X, -Z"
+        );
+        assert_eq!(
+            yaw_from_vector(i32::MIN, i32::MIN),
+            Some(HALF_TURN + YAW_EIGHTH_TURN)
+        );
+        assert_eq!(yaw_from_vector(i32::MAX, 1), Some(YAW_QUARTER_TURN));
+        assert_eq!(yaw_from_vector(1, i32::MAX), Some(0));
+    }
+
+    #[test]
+    fn yaw_from_vector_inverts_every_table_direction() {
+        for yaw in 0..=u16::MAX {
+            let (x, z) = direction(yaw);
+            let found = yaw_from_vector(x, z).unwrap();
+            // Rounded Q16 components identify the yaw to within one step.
+            let error = found.wrapping_sub(yaw) as i16;
+            assert!(error.abs() <= 1, "yaw {yaw} came back as {found}");
+        }
+    }
+
+    #[test]
+    fn yaw_from_vector_matches_a_floating_point_oracle() {
+        let mut state = 0x1234_5678_9abc_def0_u64;
+        for _ in 0..20_000 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let x = (state >> 40) as i32 - (1 << 23);
+            let z = ((state >> 16) & 0xff_ffff) as i32 - (1 << 23);
+            let Some(found) = yaw_from_vector(x, z) else {
+                continue;
+            };
+            let exact = f64::from(x)
+                .atan2(f64::from(z))
+                .rem_euclid(std::f64::consts::TAU)
+                / std::f64::consts::TAU
+                * 65_536.0;
+            let difference = (f64::from(found) - exact + 32_768.0).rem_euclid(65_536.0) - 32_768.0;
+            // Q16 table rounding allows at most one step of error.
+            assert!(
+                difference.abs() <= 1.0,
+                "({x}, {z}) gave {found}, expected {exact}"
+            );
+        }
+    }
 
     /// Floating point is a test-only oracle; production lookups never use it.
     fn reference_q16(yaw: u16) -> (f64, f64) {
