@@ -98,6 +98,8 @@ Start the complete local native development environment with:
 
 `web/` is a small, intentionally non-authoritative GitHub Pages client. It provides a tiny world slice with local movement, a follow camera, and an interactable waystone so browser/client work can advance before online session integration. It does **not** simulate distributed ownership, persistence, handoffs, or authoritative multiplayer state. Those remain in the Rust/server boundaries above.
 
+**Planned:** the Greyhaven Vale starter zone replaces this illustrative scene with the shared Rust simulation running in-browser as a local WASM zone host. See [the starter-zone design](docs/STARTER_ZONE.md) and [ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md). Until those steps land, the statements below describe the current demo.
+
 The renderer is consumed from an exact `3d-lab` commit. The demo advances local movement at 30 Hz and renders interpolated snapshots. `web/src/replication.ts` decodes the Rust player-visible protocol and provides bounded presentation history for a future online source. Local interaction remains demo-only; replacing the source must preserve server gameplay authority.
 
 The standalone host and native client share the Rust outpost definition. The browser prototype still has its own illustrative scene. Snapshot schema/wire version 2 preserves content and velocity; v1 snapshots and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
