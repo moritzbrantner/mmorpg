@@ -79,7 +79,7 @@ The control-plane implementation in this slice is a **reference model**, not yet
 
 ## Native multiplayer client
 
-The native client uses **wgpu 30.0.1 + winit 0.30.12**, shared Rust world geometry, and the existing WebTransport protocol. WASD/arrows send movement intent to the server; the GPU renders interpolated player-visible snapshots. Multiple client processes can join the same zone.
+The native client uses **wgpu 30.0.1 + winit 0.30.13**, shared Rust world geometry, and the existing WebTransport protocol. WASD/arrows send movement intent to the server; the GPU renders interpolated player-visible snapshots. Multiple client processes can join the same zone.
 
 ```sh
 python3 scripts/smoke-native.py --window
