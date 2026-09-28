@@ -1,0 +1,52 @@
+# A bot that stays disconnected past the reconnect grace period is removed
+# from the zone: other bots stop seeing it and a late resume fails closed
+# instead of creating a new player.
+name = "reconnect-grace-expiry"
+zone = 1
+ticks = 10
+reconnect_grace_ticks = 3
+
+[[bots]]
+name = "alice"
+
+[[bots]]
+name = "bob"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "join"
+
+[[steps]]
+tick = 0
+bot = "bob"
+action = "join"
+
+[[steps]]
+tick = 1
+bot = "alice"
+action = "disconnect"
+
+[[steps]]
+tick = 8
+bot = "alice"
+action = "reconnect"
+expect = "rejected:unknown_token"
+
+[[expect]]
+kind = "sees"
+bot = "bob"
+target = "alice"
+tick = 4
+
+[[expect]]
+kind = "not_sees"
+bot = "bob"
+target = "alice"
+tick = 6
+
+[[expect]]
+kind = "visible_count"
+bot = "bob"
+tick = 10
+count = 1

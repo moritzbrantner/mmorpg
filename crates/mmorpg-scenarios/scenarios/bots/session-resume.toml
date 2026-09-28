@@ -1,0 +1,79 @@
+# A bot disconnects, keeps moving in the zone during the reconnect grace
+# period, and resumes with the same player identity and a new connection
+# epoch. Commands on the old epoch are rejected; sequencing continues.
+name = "session-resume"
+zone = 1
+ticks = 12
+reconnect_grace_ticks = 30
+
+[[bots]]
+name = "alice"
+
+[[bots]]
+name = "bob"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "join"
+
+[[steps]]
+tick = 0
+bot = "bob"
+action = "join"
+
+[[steps]]
+tick = 0
+bot = "alice"
+action = "move"
+x = 0
+z = 1
+
+[[steps]]
+tick = 2
+bot = "alice"
+action = "disconnect"
+
+[[steps]]
+tick = 4
+bot = "alice"
+action = "reconnect"
+
+[[steps]]
+tick = 5
+bot = "alice"
+action = "reconnect"
+expect = "rejected:already_connected"
+
+[[steps]]
+tick = 6
+bot = "alice"
+action = "move"
+x = 0
+z = 0
+connection_epoch = 1
+expect = "rejected:stale_connection"
+
+[[steps]]
+tick = 6
+bot = "alice"
+action = "move"
+x = 0
+z = 0
+
+[[expect]]
+kind = "sees"
+bot = "bob"
+target = "alice"
+tick = 3
+
+[[expect]]
+kind = "identity"
+bot = "alice"
+tick = 5
+
+[[expect]]
+kind = "acknowledged"
+bot = "alice"
+tick = 7
+sequence = 3

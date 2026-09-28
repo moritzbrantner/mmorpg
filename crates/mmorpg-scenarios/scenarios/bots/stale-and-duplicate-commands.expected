@@ -1,0 +1,17 @@
+scenario stale-and-duplicate-commands zone=1 bots=1 ticks=6 grace=120
+t=0 alice join -> joined player=1 epoch=1
+t=0 alice move -> applied seq=5 epoch=1 x=1 z=0
+t=1 alice p1 e1 ack5 (12,50,0) sees[]
+t=1 alice move -> ignored_stale seq=5 epoch=1 x=-1 z=0
+t=1 alice move -> ignored_stale seq=3 epoch=1 x=-1 z=0
+t=2 alice p1 e1 ack5 (24,50,0) sees[]
+t=2 alice move -> rejected:invalid_sequence seq=0 epoch=1 x=0 z=0
+t=2 alice move -> rejected:stale_connection seq=9 epoch=7 x=0 z=0
+t=3 alice p1 e1 ack5 (36,50,0) sees[]
+t=3 alice move -> rejected:simulation seq=10 epoch=1 x=2 z=0
+t=4 alice p1 e1 ack5 (48,50,0) sees[]
+t=5 alice p1 e1 ack5 (60,50,0) sees[]
+t=6 expect alice acknowledged ok ack=5
+t=6 expect alice position alice ok [72, 50, 0]
+t=6 alice p1 e1 ack5 (72,50,0) sees[]
+PASS stale-and-duplicate-commands ticks=6 steps=7 expectations=2 failures=0
