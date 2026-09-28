@@ -7,7 +7,9 @@ use three_d_core::{Mesh, Vec3};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-const MAX_INSTANCES: usize = mmorpg_core::MAX_STATIC_COLLIDERS + mmorpg_core::MAX_PLAYERS_PER_ZONE;
+/// Static colliders plus a body and a facing marker per player.
+const MAX_INSTANCES: usize =
+    mmorpg_core::MAX_STATIC_COLLIDERS + 2 * mmorpg_core::MAX_PLAYERS_PER_ZONE;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[repr(C)]
@@ -22,6 +24,7 @@ struct Instance {
     position: [f32; 3],
     size: [f32; 3],
     color: [f32; 3],
+    yaw: f32,
 }
 
 pub struct SceneRenderer {
@@ -89,8 +92,12 @@ impl SceneRenderer {
         });
         const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
             wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-        const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-            wgpu::vertex_attr_array![2 => Float32x3, 3 => Float32x3, 4 => Float32x3];
+        const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+            2 => Float32x3,
+            3 => Float32x3,
+            4 => Float32x3,
+            5 => Float32
+        ];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("outpost pipeline"),
             layout: None,
@@ -175,6 +182,7 @@ impl SceneRenderer {
                 position: item.position,
                 size: item.size,
                 color: item.color,
+                yaw: item.yaw,
             })
             .collect();
         let camera = PerspectiveCamera::new(
