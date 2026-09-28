@@ -15,7 +15,10 @@
 
 use std::sync::OnceLock;
 
-use mmorpg_core::{StaticCollider, UNITS_PER_METRE, ZoneAreas, ZoneDefinition, outpost_areas};
+use mmorpg_core::{
+    PLAYER_HALF_EXTENTS_UNITS, StaticCollider, UNITS_PER_METRE, ZoneAreas, ZoneDefinition,
+    outpost_areas,
+};
 use serde::Serialize;
 
 use crate::host::hosted_definition;
@@ -44,6 +47,8 @@ pub struct SceneryExport {
     /// Decimal `u64`, so JavaScript never rounds it.
     pub content_revision: String,
     pub units_per_metre: i32,
+    /// The player collision box from core, so clients place feet correctly.
+    pub player_half_extents: [i32; 3],
     pub terrain: Terrain,
     pub biomes: Vec<Biome>,
     pub props: Vec<Prop>,
@@ -145,6 +150,7 @@ fn blockout(definition: &ZoneDefinition, areas: &ZoneAreas) -> SceneryExport {
         source: SCENERY_SOURCE,
         content_revision: definition.revision().to_string(),
         units_per_metre: UNITS_PER_METRE,
+        player_half_extents: PLAYER_HALF_EXTENTS_UNITS,
         terrain: terrain(definition.colliders(), &ground),
         biomes: vec![
             Biome {
@@ -344,6 +350,7 @@ mod tests {
             hosted_definition().revision().to_string()
         );
         assert_eq!(value["unitsPerMetre"], 100);
+        assert_eq!(value["playerHalfExtents"], serde_json::json!([30, 90, 30]));
         assert_eq!(value["areas"][0]["name"], "Greyhaven Outpost");
         assert_eq!(
             value["areas"][0]["minXz"],
