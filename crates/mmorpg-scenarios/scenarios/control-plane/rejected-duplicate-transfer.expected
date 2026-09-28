@@ -1,0 +1,16 @@
+scenario rejected-duplicate-transfer lease_ttl=100 heartbeat_ttl=1000 steps=14
+#0 t=0 register host=host-a -> ok live_until=1000 | no owners | invariants ok
+#1 t=0 register host=host-b -> ok live_until=1000 | no owners | invariants ok
+#2 t=0 assign zone=10 host=host-a -> ok epoch=1 expires=100 | zone10=host-a@1<100 | invariants ok
+#3 t=0 assign zone=11 host=host-b -> ok epoch=1 expires=100 | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#4 t=1 prepare transfer=7 entity=42 source=10:host-a@1 destination=11:host-b@1 -> ok phase=prepared | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#5 t=2 prepare transfer=7 entity=43 source=10:host-a@1 destination=11:host-b@1 -> rejected:transfer_id_collision | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#6 t=2 prepare transfer=7 entity=42 source=11:host-b@1 destination=10:host-a@1 -> rejected:transfer_id_collision | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#7 t=3 prepare transfer=8 entity=42 source=10:host-a@1 destination=11:host-b@1 -> rejected:entity_transfer_in_progress | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#8 t=4 prepare transfer=9 entity=44 source=10:host-a@1 destination=10:host-a@1 -> rejected:same_zone_transfer | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#9 t=5 accept transfer=7 zone=10 host=host-a epoch=1 -> rejected:transfer_lease_mismatch | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#10 t=5 accept transfer=99 zone=11 host=host-b epoch=1 -> rejected:unknown_transfer | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#11 t=6 accept transfer=7 zone=11 host=host-b epoch=1 -> ok phase=accepted | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#12 t=7 commit transfer=7 zone=10 host=host-a epoch=1 -> ok phase=committed | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#13 t=8 prepare transfer=7 entity=42 source=10:host-a@1 destination=11:host-b@1 -> ok phase=committed | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+PASS rejected-duplicate-transfer steps=14 rejected=6 invariant_checks=56 failures=0

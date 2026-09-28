@@ -1,0 +1,17 @@
+scenario rejected-double-owner lease_ttl=100 heartbeat_ttl=30 steps=15
+#0 t=0 register host=host-a -> ok live_until=30 | no owners | invariants ok
+#1 t=0 register host=host-b -> ok live_until=30 | no owners | invariants ok
+#2 t=0 assign zone=10 host=host-a -> ok epoch=1 expires=100 | zone10=host-a@1<100 | invariants ok
+#3 t=1 assign zone=10 host=host-b -> rejected:zone_already_assigned | zone10=host-a@1<100 | invariants ok
+#4 t=1 write zone=10 host=host-b epoch=1 -> rejected:lease_owner_mismatch | zone10=host-a@1<100 | invariants ok
+#5 t=1 write zone=10 host=host-b epoch=2 -> rejected:stale_lease | zone10=host-a@1<100 | invariants ok
+#6 t=1 write zone=10 host=host-a epoch=1 -> ok zone_tick=1 | zone10=host-a@1<100 | invariants ok
+#7 t=2 assign zone=11 host=host-z -> rejected:host_not_registered | zone10=host-a@1<100 | invariants ok
+#8 t=2 register host=bad host -> rejected:invalid_host_id | zone10=host-a@1<100 | invariants ok
+#9 t=40 reassign zone=10 host=host-b expected_epoch=1 -> rejected:host_registration_expired | zone10=host-a@1<100 | invariants ok
+#10 t=40 heartbeat host=host-b -> rejected:host_registration_expired | zone10=host-a@1<100 | invariants ok
+#11 t=40 register host=host-b -> ok live_until=70 | zone10=host-a@1<100 | invariants ok
+#12 t=40 reassign zone=10 host=host-b expected_epoch=1 -> ok epoch=2 expires=140 | zone10=host-b@2<140 | invariants ok
+#13 t=41 write zone=10 host=host-a epoch=1 -> rejected:stale_lease | zone10=host-b@2<140 | invariants ok
+#14 t=41 write zone=10 host=host-b epoch=2 -> ok zone_tick=1 | zone10=host-b@2<140 | invariants ok
+PASS rejected-double-owner steps=15 rejected=8 invariant_checks=60 failures=0

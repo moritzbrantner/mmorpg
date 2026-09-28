@@ -1,0 +1,17 @@
+scenario handoff-commit lease_ttl=100 heartbeat_ttl=1000 steps=15
+#0 t=0 register host=host-a -> ok live_until=1000 | no owners | invariants ok
+#1 t=0 register host=host-b -> ok live_until=1000 | no owners | invariants ok
+#2 t=0 assign zone=10 host=host-a -> ok epoch=1 expires=100 | zone10=host-a@1<100 | invariants ok
+#3 t=0 assign zone=11 host=host-b -> ok epoch=1 expires=100 | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#4 t=5 prepare transfer=7 entity=42 source=10:host-a@1 destination=11:host-b@1 -> ok phase=prepared | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#5 t=6 prepare transfer=7 entity=42 source=10:host-a@1 destination=11:host-b@1 -> ok phase=prepared | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#6 t=7 commit transfer=7 zone=10 host=host-a epoch=1 -> rejected:transfer_not_accepted | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#7 t=8 accept transfer=7 zone=11 host=host-b epoch=1 -> ok phase=accepted | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#8 t=9 accept transfer=7 zone=11 host=host-b epoch=1 -> ok phase=accepted | zone10=host-a@1<100 zone11=host-b@1<100 | invariants ok
+#9 t=60 renew zone=10 host=host-a epoch=1 -> ok epoch=1 expires=160 | zone10=host-a@1<160 zone11=host-b@1<100 | invariants ok
+#10 t=60 renew zone=11 host=host-b epoch=1 -> ok epoch=1 expires=160 | zone10=host-a@1<160 zone11=host-b@1<160 | invariants ok
+#11 t=61 commit transfer=7 zone=10 host=host-a epoch=1 -> ok phase=committed | zone10=host-a@1<160 zone11=host-b@1<160 | invariants ok
+#12 t=62 commit transfer=7 zone=10 host=host-a epoch=1 -> ok phase=committed | zone10=host-a@1<160 zone11=host-b@1<160 | invariants ok
+#13 t=63 accept transfer=7 zone=11 host=host-b epoch=1 -> ok phase=committed | zone10=host-a@1<160 zone11=host-b@1<160 | invariants ok
+#14 t=64 prepare transfer=8 entity=42 source=11:host-b@1 destination=10:host-a@1 -> ok phase=prepared | zone10=host-a@1<160 zone11=host-b@1<160 | invariants ok
+PASS handoff-commit steps=15 rejected=1 invariant_checks=60 failures=0

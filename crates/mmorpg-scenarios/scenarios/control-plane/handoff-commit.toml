@@ -1,0 +1,115 @@
+# A complete prepare/accept/commit handoff between two zone owners. Retries of
+# every phase are idempotent, commit before acceptance is refused so the
+# source is never retired first, and lease renewal keeps the ticket valid.
+name = "handoff-commit"
+lease_ttl_ticks = 100
+heartbeat_ttl_ticks = 1000
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-a"
+
+[[steps]]
+at = 0
+op = "register"
+host = "host-b"
+
+[[steps]]
+at = 0
+op = "assign"
+zone = 10
+host = "host-a"
+
+[[steps]]
+at = 0
+op = "assign"
+zone = 11
+host = "host-b"
+
+[[steps]]
+at = 5
+op = "prepare"
+transfer = 7
+entity = 42
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 11, host = "host-b", epoch = 1 }
+
+[[steps]]
+at = 6
+op = "prepare"
+transfer = 7
+entity = 42
+source = { zone = 10, host = "host-a", epoch = 1 }
+destination = { zone = 11, host = "host-b", epoch = 1 }
+
+[[steps]]
+at = 7
+op = "commit"
+transfer = 7
+zone = 10
+host = "host-a"
+epoch = 1
+expect = "rejected:transfer_not_accepted"
+
+[[steps]]
+at = 8
+op = "accept"
+transfer = 7
+zone = 11
+host = "host-b"
+epoch = 1
+
+[[steps]]
+at = 9
+op = "accept"
+transfer = 7
+zone = 11
+host = "host-b"
+epoch = 1
+
+[[steps]]
+at = 60
+op = "renew"
+zone = 10
+host = "host-a"
+epoch = 1
+
+[[steps]]
+at = 60
+op = "renew"
+zone = 11
+host = "host-b"
+epoch = 1
+
+[[steps]]
+at = 61
+op = "commit"
+transfer = 7
+zone = 10
+host = "host-a"
+epoch = 1
+
+[[steps]]
+at = 62
+op = "commit"
+transfer = 7
+zone = 10
+host = "host-a"
+epoch = 1
+
+[[steps]]
+at = 63
+op = "accept"
+transfer = 7
+zone = 11
+host = "host-b"
+epoch = 1
+
+[[steps]]
+at = 64
+op = "prepare"
+transfer = 8
+entity = 42
+source = { zone = 11, host = "host-b", epoch = 1 }
+destination = { zone = 10, host = "host-a", epoch = 1 }

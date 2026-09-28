@@ -9,14 +9,19 @@
 //! ```
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use mmorpg_scenarios::{Report, bots};
+use mmorpg_scenarios::{Report, bots, control_plane};
 use serde_json::Value;
 
 type Runner = fn(&str) -> Result<Report, String>;
 
 fn run_bots(text: &str) -> Result<Report, String> {
     bots::run(&bots::load(text)?)
+}
+
+fn run_control_plane(text: &str) -> Result<Report, String> {
+    control_plane::run(&control_plane::load(text)?)
 }
 
 fn scenario_files(tool: &str) -> Vec<PathBuf> {
@@ -87,6 +92,11 @@ fn bot_scenarios_match_expected_output() {
 }
 
 #[test]
+fn control_plane_scenarios_match_expected_output() {
+    check_goldens("control-plane", run_control_plane);
+}
+
+#[test]
 fn bot_runs_are_deterministic() {
     for path in scenario_files("bots") {
         let text = std::fs::read_to_string(&path).unwrap();
@@ -133,6 +143,25 @@ position = [999, 50, 0]
 }
 
 #[test]
+fn unexpected_control_plane_outcomes_fail_the_scenario() {
+    let report = run_control_plane(
+        r#"
+name = "wrong"
+lease_ttl_ticks = 10
+heartbeat_ttl_ticks = 10
+[[steps]]
+at = 0
+op = "assign"
+zone = 1
+host = "host-a"
+"#,
+    )
+    .unwrap();
+    assert!(!report.passed());
+    assert!(report.to_text().contains("-> rejected:host_not_registered"));
+}
+
+#[test]
 fn invalid_scenarios_are_rejected_at_load() {
     for (text, message) in [
         (
@@ -156,4 +185,41 @@ fn invalid_scenarios_are_rejected_at_load() {
         let error = bots::load(text).unwrap_err();
         assert!(error.contains(message), "{error}");
     }
+    let error = control_plane::load(
+        "name = \"x\"\nlease_ttl_ticks = 1\nheartbeat_ttl_ticks = 1\n[[steps]]\nat = 5\nop = \"expire_hosts\"\n[[steps]]\nat = 4\nop = \"expire_hosts\"",
+    )
+    .unwrap_err();
+    assert!(error.contains("backwards"), "{error}");
+}
+
+fn cli(arguments: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_mmorpg-scenario"))
+        .args(arguments)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn cli_reports_pass_fail_and_usage_through_exit_codes() {
+    let passing = scenario_files("control-plane")[0].clone();
+    let passing = passing.to_str().unwrap();
+    let output = cli(&["control-plane", "--json", passing]);
+    assert_eq!(output.status.code(), Some(0));
+    let expected = run_control_plane(&std::fs::read_to_string(passing).unwrap())
+        .unwrap()
+        .to_json_lines();
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+
+    let failing = Path::new(env!("CARGO_TARGET_TMPDIR")).join("failing-scenario.toml");
+    std::fs::write(
+        &failing,
+        "name = \"f\"\nlease_ttl_ticks = 1\nheartbeat_ttl_ticks = 1\n[[steps]]\nat = 0\nop = \"heartbeat\"\nhost = \"h\"\n",
+    )
+    .unwrap();
+    let output = cli(&["control-plane", failing.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1));
+
+    assert_eq!(cli(&["bots", "missing.toml"]).status.code(), Some(2));
+    assert_eq!(cli(&["nonsense", passing]).status.code(), Some(2));
+    assert_eq!(cli(&[]).status.code(), Some(2));
 }

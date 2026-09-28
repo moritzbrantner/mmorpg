@@ -5,6 +5,7 @@
 //! plane. They add no gameplay, session or ownership rules of their own.
 
 pub mod bots;
+pub mod control_plane;
 mod report;
 
 pub use report::Report;
