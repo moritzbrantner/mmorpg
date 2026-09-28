@@ -1,0 +1,29 @@
+[package]
+name = "mmorpg-wasm"
+description = "WebAssembly adapter that runs the shared zone simulation as a local single-player host in the browser demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# cdylib for wasm-bindgen, rlib so host-target tests exercise the adapter.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mmorpg-core.workspace = true
+mmorpg-protocol.workspace = true
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+# The web build verifies that the installed wasm-bindgen CLI has this exact version.
+wasm-bindgen = "=0.2.129"
+
+[dev-dependencies]
+# Parity evidence only: the local host must match the network host's session
+# semantics and projection bytes. Never a normal dependency (no tokio in WASM).
+game-server.workspace = true
+mmorpg-game-server.workspace = true
+
+[lints]
+workspace = true

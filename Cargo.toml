@@ -6,6 +6,7 @@ members = [
   "crates/mmorpg-control-plane",
   "crates/mmorpg-client",
   "crates/mmorpg-scenarios",
+  "crates/mmorpg-wasm",
 ]
 resolver = "3"
 

@@ -1172,6 +1172,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mmorpg-wasm"
+version = "0.1.0"
+dependencies = [
+ "game-server",
+ "mmorpg-core",
+ "mmorpg-game-server",
+ "mmorpg-protocol",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "naga"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
