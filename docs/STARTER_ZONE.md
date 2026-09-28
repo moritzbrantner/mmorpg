@@ -108,6 +108,15 @@ There is a 1.5 s global cooldown. Casts have a cast time, and moving or being st
 - **Sheet**: money, inventory, equipment and quest log. It is included when changed and periodically every 10 ticks, so loss self-heals within about 330 ms.
 - **Names**: player display names are sent in a periodic section. Creature and NPC names come from content by template ID.
 
+### Presentation
+
+Presentation never feeds back into gameplay; it reads projections and the Rust scenery export and sends intent.
+
+- **Scenery export** (`mmorpg-wasm`, format `mmorpg.scenery` v2): the terrain grid (4 m, ±200 m), a far ring of the same relief (20 m, ±600 m), a prop kind table with compact per-prop records (kind, feet anchor on the relief, yaw, scale, body box), every structure's exact collider box, roads, water and areas. `mmorpg-scenery` stays presentation-only; hosts never link it.
+- **Browser world** (step 12a): terrain meshes per colour with soft biome transitions and grass tones; roads, plaza, field and shore as smooth surfaces; hazed far ranges above a 50 m snow line; procedural low-poly models for every prop kind merged per chunk, colour and cull class, with walls at body height on their colliders; a translucent lake; a CSS sky behind a transparent canvas; animated humanoids with class gear through a unit model registry keyed by entity kind; a camera that stays above the ground, eases its zoom and turns the character on a right drag; a circular minimap; and an F3 overlay with node counts and renderer work.
+- **Waiting for 3d-lab**: fog, sky, sun and lighting control (#84) replace the baked distance-haze bands and let the day cycle change lighting instead of only CSS sky colours; vertex colours, emissive materials and instancing (#82) replace per-colour batches, colour-only glows (lamps, waystone runes, the staff orb) and duplicated tree and grass geometry. `EnvironmentStyle` and the batching module are the seams; the 3d-lab pin is not bumped for this step.
+- **Later presentation** (step 12b): creature and NPC models in the same registry, spell effects, selection circles and nameplates, and native client parity (step 13).
+
 ## Implementation plan
 
 Each step is one issue and one PR, validated by the full gate from `AGENTS.md`. Protocol changes update `docs/PROTOCOL.md` and the shared fixtures in the same PR.
@@ -123,7 +132,7 @@ Each step is one issue and one PR, validated by the full gate from `AGENTS.md`. 
 9. **Progression, loot, inventory, equipment, vendor** (#24): XP/levels, loot windows, bags, character pane, vendor NPC placement and window.
 10. **Quests** (#25): quest-giver NPC placement, definitions, NPC dialog, log, tracker, markers, chain and boss.
 11. **Starter-zone workload evidence** (#26): deterministic multi-player combat workload with work counters and a snapshot-byte ratchet (BENCH-016).
-12. **World presentation** (#27): terrain relief, instanced vegetation, water, sky, fog and day/night (3d-lab renderer extensions), procedural animated character and creature models, spell effects, selection circles, minimap.
+12. **World presentation** (#27): terrain relief, instanced vegetation, water, sky, fog and day/night (3d-lab renderer extensions), procedural animated character and creature models, spell effects, selection circles, minimap. *Part A landed for the browser* with the pinned renderer (see [Presentation](#presentation)); part B adds creature models, effects and the 3d-lab #82/#84 features.
 13. **Native client parity** (#28): units, health bars, targeting, abilities, orbit camera and HUD over the same projections.
 14. **Browser online mode** (#29): a WebTransport session to a local zone host for real multiplayer from browser tabs; Pages stays offline.
 15. **Character persistence for the demo** (#30): a durable character record (class, level, XP, inventory, equipment, quests) behind core command/query APIs; browser save slots persist it.
