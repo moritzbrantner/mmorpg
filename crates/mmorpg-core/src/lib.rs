@@ -2,6 +2,7 @@
 
 mod content;
 mod interest;
+pub mod trig;
 pub use content::{
     MAX_STATIC_COLLIDERS, StaticCollider, UNITS_PER_METRE, ZoneDefinition, outpost_definition,
 };
