@@ -5,8 +5,8 @@ use std::fmt;
 
 use mmorpg_core::{
     CanonicalPlayerSnapshot, CanonicalZoneSnapshot, EntityKind, EntitySnapshot,
-    MAX_PLAYERS_PER_ZONE, MAX_STATIC_COLLIDERS, SNAPSHOT_SCHEMA_VERSION, StaticCollider,
-    ZoneCommand, ZoneDefinition, ZoneId, ZoneSnapshot,
+    MAX_PLAYERS_PER_ZONE, MAX_STATIC_COLLIDERS, MAX_VISIBLE_ENTITIES, SNAPSHOT_SCHEMA_VERSION,
+    StaticCollider, ZoneCommand, ZoneDefinition, ZoneId, ZoneSnapshot,
 };
 
 pub const COMMAND_WIRE_VERSION: u8 = 2;
@@ -25,9 +25,6 @@ const COMMON_HEADER_BYTES: usize = 16;
 const PLAYER_SNAPSHOT_HEADER_BYTES: usize = 34;
 const ENTITY_RECORD_BYTES: usize = 25;
 const CANONICAL_PLAYER_RECORD_BYTES: usize = 39;
-/// Visible projections are bounded by the zone population until other unit
-/// kinds exist and a projection cap replaces this bound.
-const MAX_VISIBLE_ENTITIES: usize = MAX_PLAYERS_PER_ZONE;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolError {

@@ -2,11 +2,14 @@
 mod visibility_oracle;
 
 use mmorpg_core::{
-    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand,
-    ZoneDefinition, ZoneId, ZoneSimulation, outpost_definition,
+    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS, SNAPSHOT_SCHEMA_VERSION,
+    ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation, outpost_definition,
 };
 use mmorpg_protocol::encode_snapshot;
 use visibility_oracle::exhaustive_projection;
+
+/// Interest radius; cell width equals it, so layouts below scale with it.
+const R: i32 = INTEREST_RADIUS_UNITS;
 
 /// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
 const EAST: u16 = 16_384;
@@ -66,11 +69,11 @@ fn zone_at(positions: &[[i32; 3]], definition: ZoneDefinition) -> ZoneSimulation
 fn multi_tick_membership_transitions_match_exhaustive_wire_output() {
     let mut zone = zone_at(
         &[
-            [1990, 50, 0],
-            [-1999, 50, -1999],
-            [6000, 50, 6000],
-            [0, 50, 2000],
-            [1200, 50, 1600],
+            [R - 10, 50, 0],
+            [-R + 1, 50, -R + 1],
+            [3 * R, 50, 3 * R],
+            [0, 50, R],
+            [3 * R / 5, 50, 4 * R / 5],
         ],
         ZoneDefinition::default(),
     );

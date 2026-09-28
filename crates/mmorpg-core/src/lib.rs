@@ -23,7 +23,12 @@ pub type PlayerId = u32;
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
 pub const SNAPSHOT_SCHEMA_VERSION: u16 = 3;
-pub const INTEREST_RADIUS_UNITS: i32 = 2_000;
+/// Inclusive XZ radius of player-scoped relevance (45 m).
+pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
+/// Deterministic relevance cap of one player projection: the viewer plus its
+/// nearest units. `mmorpg-protocol` proves that a projection at this cap, with
+/// extreme field values, fits its per-datagram byte budget.
+pub const MAX_VISIBLE_ENTITIES: usize = 64;
 
 const PLAYER_BODY_BASE: u64 = 1_000_000;
 /// Character collision box: 0.6 m × 1.8 m × 0.6 m, shared with clients.
@@ -105,7 +110,9 @@ pub struct CanonicalPlayerSnapshot {
     pub spawn_slot: u16,
 }
 
-/// A projection addressed to `viewer_id`. Entities are ordered by `(kind, id)`.
+/// A projection addressed to `viewer_id`. Entities are in priority order: the
+/// viewer first, then ascending `(squared XZ distance, kind, id)`, at most
+/// [`MAX_VISIBLE_ENTITIES`] records.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZoneSnapshot {
     pub content_revision: u64,
@@ -468,18 +475,30 @@ impl ZoneSimulation {
 
         let radius = i128::from(INTEREST_RADIUS_UNITS);
         let radius_squared = radius * radius;
-        let mut entities = Vec::new();
-        // Candidates arrive in ascending player ID order, which is `(kind, id)`
-        // order while players are the only visible kind.
-        let (candidates, stats) = self.interest.candidates(center.x, center.z);
+        let (candidates, mut stats) = self.interest.candidates(center.x, center.z);
+        let mut relevant = Vec::new();
         for candidate in candidates {
             let entity = self.player_entity(candidate)?;
             let dx = i128::from(entity.position[0]) - i128::from(center.x);
             let dz = i128::from(entity.position[2]) - i128::from(center.z);
-            if (dx * dx) + (dz * dz) <= radius_squared {
-                entities.push(entity);
+            let distance_squared = (dx * dx) + (dz * dz);
+            if distance_squared <= radius_squared {
+                relevant.push((candidate != player_id, distance_squared, entity));
             }
         }
+        stats.relevant = relevant.len();
+        // Relevance policy: the viewer first, then the nearest units. Kind and
+        // ID are unique together, so this is a total, deterministic order.
+        relevant.sort_unstable_by(|left, right| {
+            (left.0, left.1, left.2.kind, left.2.id).cmp(&(
+                right.0,
+                right.1,
+                right.2.kind,
+                right.2.id,
+            ))
+        });
+        relevant.truncate(MAX_VISIBLE_ENTITIES);
+        let entities = relevant.into_iter().map(|(_, _, entity)| entity).collect();
 
         Ok(PlayerProjection {
             snapshot: ZoneSnapshot {
@@ -878,23 +897,29 @@ mod tests {
     #[test]
     fn player_snapshot_applies_zone_owned_interest_policy() {
         let mut zone = ZoneSimulation::new(ZoneId::new(1));
-        for player_id in 1..=12 {
+        // The default grid spaces one row of spawn slots 200 units apart along
+        // +X: player 24 stands 4 600 units from player 1, beyond 45 m.
+        for player_id in 1..=24 {
             zone.add_player(player_id).unwrap();
         }
 
         let canonical = zone.snapshot().unwrap();
         let visible = zone.snapshot_for_player(1).unwrap();
 
-        assert_eq!(canonical.players.len(), 12);
+        assert_eq!(canonical.players.len(), 24);
         assert_eq!(visible.viewer_id, 1);
-        assert_eq!(visible.entities.len(), 11);
-        assert_eq!(visible.entities[0].id, 1);
+        assert_eq!(visible.entities.len(), 23);
         assert!(
             visible
                 .entities
                 .iter()
-                .all(|entity| entity.kind == EntityKind::Player && entity.id != 12)
+                .all(|entity| entity.kind == EntityKind::Player && entity.id != 24)
         );
+        // The viewer leads, then nearer units; equal distances order by ID.
+        let middle = zone.project_for_player(3).unwrap();
+        let order: Vec<_> = middle.snapshot.entities.iter().map(|e| e.id).collect();
+        assert_eq!(order[..5], [3, 2, 4, 1, 5]);
+        assert_eq!(middle.stats.relevant, 24);
     }
 
     #[test]
@@ -920,9 +945,13 @@ mod tests {
 
         assert_eq!(visible.viewer_id, 2);
         assert_eq!(visible.acknowledged_sequence, 1);
-        assert_eq!(visible.entities[0].velocity, [i16::MAX, i16::MIN, i16::MAX]);
-        assert_eq!(visible.entities[0].facing, 0);
-        assert_eq!(visible.entities[1].facing, 40_000);
+        let [viewer, other] = &visible.entities[..] else {
+            panic!("both players are relevant");
+        };
+        assert_eq!((viewer.id, viewer.facing), (2, 40_000), "the viewer leads");
+        assert_eq!(other.id, 1);
+        assert_eq!(other.velocity, [i16::MAX, i16::MIN, i16::MAX]);
+        assert_eq!(other.facing, 0);
         assert_eq!(
             zone.snapshot().unwrap().players[0].velocity,
             [70_000, -70_000, 32_767],

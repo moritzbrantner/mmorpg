@@ -37,7 +37,7 @@ The shared command fixture is `fixtures/protocol/commands-v2.hex`: one encoded c
 | 16 | 8 | Content revision |
 | 24 | 4 | Acknowledged command sequence of the addressed player |
 | 28 | 4 | Viewer player ID: the entity that is "self" |
-| 32 | 2 | Entity count, at most 512 |
+| 32 | 2 | Entity count, at most 64 (`MAX_VISIBLE_ENTITIES`) |
 | 34 | 25 × count | Entity records |
 
 Each entity record is 25 bytes:
@@ -50,7 +50,7 @@ Each entity record is 25 bytes:
 | 17 | 6 | Velocity (`3 × i16`) |
 | 23 | 2 | Facing (`u16` yaw) |
 
-Total size is `34 + 25 × count`. Records are ordered by `(kind, id)`. Velocity is presentation data: core saturates each component to the `i16` range when projecting, while canonical state keeps the exact physics velocity. The interest policy is unchanged: players within the inclusive 2,000-unit XZ radius, including the viewer.
+Total size is `34 + 25 × count`. Records are in relevance-priority order: the viewer first, then ascending `(squared XZ distance, kind, id)`. Velocity is presentation data: core saturates each component to the `i16` range when projecting, while canonical state keeps the exact physics velocity. The interest policy keeps players within the inclusive 4,500-unit (45 m) XZ radius, including the viewer, and caps the projection at the 64 highest-priority entities.
 
 Player IDs are zone/session-local. These snapshots have no authority epoch field; the future online session/routing envelope must bind the stream to a grant and reset presentation on grant changes. An acknowledgement supports future prediction reconciliation, not permission to mutate authoritative state.
 
