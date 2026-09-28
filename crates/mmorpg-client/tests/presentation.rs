@@ -1,6 +1,7 @@
 use mmorpg_client::presentation::Presentation;
 use mmorpg_core::{
-    EntityKind, EntitySnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneId, ZoneSnapshot, greyhaven_vale,
+    EntityFlags, EntityKind, EntitySnapshot, SNAPSHOT_SCHEMA_VERSION, ViewerState, ZoneId,
+    ZoneSnapshot, greyhaven_vale,
 };
 use mmorpg_scenery::greyhaven_vale_scenery;
 use std::{
@@ -20,12 +21,24 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
         content_revision: greyhaven_vale::REVISION,
         acknowledged_sequence: 1,
         viewer_id: 1,
+        viewer: ViewerState {
+            health: 50,
+            max_health: 50,
+            level: 1,
+            ..ViewerState::default()
+        },
+        target_of_target: None,
+        events: Vec::new(),
         entities: vec![EntitySnapshot {
             kind: EntityKind::Player,
             id: 1,
+            appearance: 0,
             position,
             velocity: [21, 0, 0],
             facing,
+            level: 1,
+            health_percent: 100,
+            flags: EntityFlags::default(),
         }],
     }
 }

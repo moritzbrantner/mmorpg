@@ -1,0 +1,354 @@
+//! Deterministic creature AI (tick step 2), in creature-ID order.
+//!
+//! - **Idle**: aggressive creatures engage the nearest living player within
+//!   their aggro radius, found through the zone's spatial index. Otherwise
+//!   they wait 5–15 s (zone RNG), then walk to a random point within their
+//!   wander radius at walking speed.
+//! - **Engaged**: the target is the threat leader. The creature steers
+//!   straight at it at run speed until it is inside melee reach and faces it;
+//!   combat swings on the swing timer. An empty threat table or straying
+//!   beyond the leash radius from the spawn point starts evading.
+//! - **Evading**: run home, ignoring damage, with a cleared threat table; on
+//!   arrival reset to full health and idle. A creature still away after
+//!   10 s is moved home through the physics API.
+//!
+//! When a creature engages from idle, idle creatures of its family within
+//! the assist radius engage the same target (one level, no chains). Steering
+//! sets body velocity only; physics resolves obstacles and contact.
+
+use std::sync::Arc;
+
+use physics_engine::Vec3i;
+
+use crate::creature::{Life, aggro_radius};
+use crate::entity::body_id;
+use crate::rng::ZoneRng;
+use crate::snapshot::CreatureAi;
+use crate::trig::{self, xz_length, yaw_from_vector};
+use crate::zone::physics_error;
+use crate::{
+    ARRIVAL_RADIUS_UNITS, ASSIST_RADIUS_UNITS, CREATURE_EVADE_SPEED_UNITS_PER_TICK,
+    CREATURE_RUN_SPEED_UNITS_PER_TICK, CREATURE_WALK_SPEED_UNITS_PER_TICK, CreatureBehaviour,
+    CreatureId, EVADE_TIMEOUT_TICKS, EntityRef, LEASH_RADIUS_UNITS, PLAYER_HALF_EXTENTS_UNITS,
+    PlayerId, WANDER_WAIT_TICKS, WANDER_WALK_TIMEOUT_TICKS, ZoneError, ZoneSimulation,
+    unit::CREATURE_REACH_UNITS,
+};
+
+/// Squared XZ distance.
+pub(crate) fn distance_squared(from: [i32; 2], to: [i32; 2]) -> i64 {
+    let dx = i64::from(to[0]) - i64::from(from[0]);
+    let dz = i64::from(to[1]) - i64::from(from[1]);
+    dx * dx + dz * dz
+}
+
+/// Velocity of at most `speed` along `(dx, dz)` without overshooting it.
+/// Integer normalisation: each component is `delta · step / length`, rounded
+/// toward zero.
+fn steer(dx: i32, dz: i32, speed: i32) -> [i32; 2] {
+    let length = xz_length(dx, dz);
+    if length == 0 {
+        return [0, 0];
+    }
+    let length = i64::try_from(length).unwrap_or(i64::MAX);
+    let step = i64::from(speed).min(length);
+    let scale = |delta: i32| i32::try_from(i64::from(delta) * step / length).unwrap_or(0);
+    [scale(dx), scale(dz)]
+}
+
+/// How close a creature must get to hit `target`: its reach plus the
+/// target's half-width.
+pub(crate) const fn creature_reach(target: EntityRef) -> i32 {
+    // Only players are attacked so far.
+    match target {
+        EntityRef::Player(_) | EntityRef::Creature(_) | EntityRef::Npc(_) => {
+            CREATURE_REACH_UNITS + PLAYER_HALF_EXTENTS_UNITS[0]
+        }
+    }
+}
+
+impl ZoneSimulation {
+    /// Step 2: every living creature decides and sets its body velocity.
+    pub(crate) fn decide_creatures(&mut self) -> Result<(), ZoneError> {
+        let ids: Vec<_> = self.creatures.keys().copied().collect();
+        for id in ids {
+            self.decide_creature(id)?;
+        }
+        Ok(())
+    }
+
+    fn decide_creature(&mut self, id: CreatureId) -> Result<(), ZoneError> {
+        let content = Arc::clone(&self.content);
+        let (spawn, template) = Self::creature_content(&content, id)?;
+        let Some(creature) = self.creatures.get(&id) else {
+            return Ok(());
+        };
+        if creature.life != Life::Alive {
+            return Ok(());
+        }
+        let body = body_id(EntityRef::Creature(id));
+        let current = self
+            .world
+            .body(body)
+            .ok_or_else(|| ZoneError::new("creature physics body is missing"))?;
+        let (position, vertical) = (current.position(), current.velocity().y);
+        let here = [position.x, position.z];
+        let (idle, level) = (
+            matches!(creature.ai, CreatureAi::Idle { .. }),
+            creature.level,
+        );
+
+        if idle
+            && template.behaviour == CreatureBehaviour::Aggressive
+            && let Some(player) = self.aggro_candidate(here, level)?
+        {
+            self.engage(id, EntityRef::Player(player), true)?;
+        }
+
+        // Read the chase target before mutating; dead or departed players
+        // already left every threat table.
+        let chase = match self.creatures.get(&id) {
+            Some(creature) if creature.ai == CreatureAi::Engaged => match creature.top_threat() {
+                Some(target @ EntityRef::Player(player)) => {
+                    let position = self.player_position(player)?;
+                    Some((target, [position.x, position.z]))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let Some(creature) = self.creatures.get_mut(&id) else {
+            return Ok(());
+        };
+        let home = spawn.position;
+        if creature.ai == CreatureAi::Engaged {
+            let leashed = distance_squared(home, here) > i64::from(LEASH_RADIUS_UNITS).pow(2);
+            if chase.is_none() || leashed {
+                creature.ai = CreatureAi::Evading { ticks: 0 };
+                creature.threat.clear();
+                creature.tapped_by = None;
+                creature.combat_timer = 0;
+            }
+        }
+
+        let mut teleport_home = false;
+        let (velocity, facing) = match creature.ai {
+            CreatureAi::Idle { .. } => wander(
+                &mut self.rng,
+                &mut creature.ai,
+                here,
+                home,
+                spawn.wander_radius,
+            ),
+            CreatureAi::Engaged => match chase {
+                Some((target, to)) => {
+                    let (dx, dz) = (to[0] - here[0], to[1] - here[1]);
+                    let reach = creature_reach(target);
+                    let velocity = if distance_squared(here, to) > i64::from(reach).pow(2) {
+                        let gap = i64::try_from(xz_length(dx, dz))
+                            .unwrap_or(i64::MAX)
+                            .saturating_sub(i64::from(reach));
+                        // Move at least one unit so rounding never stalls a chase.
+                        let step = i64::from(CREATURE_RUN_SPEED_UNITS_PER_TICK).min(gap + 1);
+                        steer(dx, dz, i32::try_from(step).unwrap_or(0))
+                    } else {
+                        [0, 0]
+                    };
+                    (velocity, yaw_from_vector(dx, dz))
+                }
+                None => ([0, 0], None),
+            },
+            CreatureAi::Evading { ticks } => {
+                let (dx, dz) = (home[0] - here[0], home[1] - here[1]);
+                let arrived =
+                    distance_squared(here, home) <= i64::from(ARRIVAL_RADIUS_UNITS).pow(2);
+                if arrived || ticks >= EVADE_TIMEOUT_TICKS {
+                    teleport_home = !arrived;
+                    creature.health = template.max_health(creature.level);
+                    creature.swing_timer = 0;
+                    creature.combat_timer = 0;
+                    creature.tapped_by = None;
+                    creature.ai = CreatureAi::Idle {
+                        timer: wander_wait(&mut self.rng),
+                        destination: None,
+                    };
+                    ([0, 0], None)
+                } else {
+                    creature.ai = CreatureAi::Evading { ticks: ticks + 1 };
+                    (
+                        steer(dx, dz, CREATURE_EVADE_SPEED_UNITS_PER_TICK),
+                        yaw_from_vector(dx, dz),
+                    )
+                }
+            }
+        };
+        if let Some(facing) = facing {
+            creature.facing = facing;
+        }
+        if teleport_home {
+            self.world
+                .set_position(body, Vec3i::new(home[0], template.half_extents[1], home[1]))
+                .map_err(physics_error)?;
+        }
+        self.world
+            .set_velocity(body, Vec3i::new(velocity[0], vertical, velocity[1]))
+            .map_err(physics_error)
+    }
+
+    /// The nearest living player inside its aggro radius, ties to the lowest ID.
+    fn aggro_candidate(&self, here: [i32; 2], level: u8) -> Result<Option<PlayerId>, ZoneError> {
+        let mut best: Option<(i64, PlayerId)> = None;
+        for entity in self
+            .interest
+            .near(here[0], here[1], crate::AGGRO_MAX_RADIUS_UNITS)
+        {
+            let EntityRef::Player(player_id) = entity else {
+                continue;
+            };
+            let Some(player) = self.players.get(&player_id) else {
+                continue;
+            };
+            if !player.is_alive() {
+                continue;
+            }
+            let position = self.player_position(player_id)?;
+            let distance = distance_squared(here, [position.x, position.z]);
+            let radius = i64::from(aggro_radius(level, player.level));
+            if distance <= radius * radius && best.is_none_or(|best| (distance, player_id) < best) {
+                best = Some((distance, player_id));
+            }
+        }
+        Ok(best.map(|(_, player_id)| player_id))
+    }
+
+    /// Puts `target` on a creature's threat table and engages it. Evading
+    /// creatures ignore it. An idle creature engaging with `assist` pulls in
+    /// idle creatures of its family within the assist radius.
+    pub(crate) fn engage(
+        &mut self,
+        id: CreatureId,
+        target: EntityRef,
+        assist: bool,
+    ) -> Result<(), ZoneError> {
+        let Some(creature) = self.creatures.get_mut(&id) else {
+            return Ok(());
+        };
+        if !creature.is_alive() || matches!(creature.ai, CreatureAi::Evading { .. }) {
+            return Ok(());
+        }
+        let was_idle = matches!(creature.ai, CreatureAi::Idle { .. });
+        creature.add_threat(target, 0);
+        creature.ai = CreatureAi::Engaged;
+        if !(was_idle && assist) {
+            return Ok(());
+        }
+        let content = Arc::clone(&self.content);
+        let (_, template) = Self::creature_content(&content, id)?;
+        let position = self
+            .world
+            .body(body_id(EntityRef::Creature(id)))
+            .ok_or_else(|| ZoneError::new("creature physics body is missing"))?
+            .position();
+        let here = [position.x, position.z];
+        for entity in self.interest.near(here[0], here[1], ASSIST_RADIUS_UNITS) {
+            let EntityRef::Creature(other) = entity else {
+                continue;
+            };
+            if other == id {
+                continue;
+            }
+            let Some(helper) = self.creatures.get(&other) else {
+                continue;
+            };
+            if !helper.is_alive() || !matches!(helper.ai, CreatureAi::Idle { .. }) {
+                continue;
+            }
+            let (_, helper_template) = Self::creature_content(&content, other)?;
+            if helper_template.family != template.family {
+                continue;
+            }
+            let helper_position = self
+                .world
+                .body(body_id(entity))
+                .ok_or_else(|| ZoneError::new("creature physics body is missing"))?
+                .position();
+            let distance = distance_squared(here, [helper_position.x, helper_position.z]);
+            if distance <= i64::from(ASSIST_RADIUS_UNITS).pow(2) {
+                self.engage(other, target, false)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn wander_wait(rng: &mut ZoneRng) -> u16 {
+    let wait = rng.inclusive(
+        u32::from(WANDER_WAIT_TICKS[0]),
+        u32::from(WANDER_WAIT_TICKS[1]),
+    );
+    u16::try_from(wait).unwrap_or(WANDER_WAIT_TICKS[1])
+}
+
+/// Idle behaviour: count down, pick a wander point, walk to it, repeat.
+/// Returns the horizontal velocity and a new facing, if any.
+fn wander(
+    rng: &mut ZoneRng,
+    ai: &mut CreatureAi,
+    here: [i32; 2],
+    home: [i32; 2],
+    radius: i32,
+) -> ([i32; 2], Option<u16>) {
+    let CreatureAi::Idle { timer, destination } = ai else {
+        return ([0, 0], None);
+    };
+    match *destination {
+        Some(to) => {
+            let arrived = distance_squared(here, to) <= i64::from(ARRIVAL_RADIUS_UNITS).pow(2);
+            if arrived || *timer == 0 {
+                *destination = None;
+                *timer = wander_wait(rng);
+                ([0, 0], None)
+            } else {
+                *timer -= 1;
+                let (dx, dz) = (to[0] - here[0], to[1] - here[1]);
+                (
+                    steer(dx, dz, CREATURE_WALK_SPEED_UNITS_PER_TICK),
+                    yaw_from_vector(dx, dz),
+                )
+            }
+        }
+        None if *timer > 0 => {
+            *timer -= 1;
+            ([0, 0], None)
+        }
+        None => {
+            // A random heading and distance around the spawn point.
+            let yaw = u16::try_from(rng.below(1 << 16)).unwrap_or(0);
+            let distance = i32::try_from(rng.inclusive(0, radius.unsigned_abs())).unwrap_or(0);
+            let (x, z) = trig::direction(yaw);
+            let offset = |unit| trig::checked_scale(distance, unit).unwrap_or(0);
+            let to = [home[0] + offset(x), home[1] + offset(z)];
+            *destination = Some(to);
+            *timer = WANDER_WALK_TIMEOUT_TICKS;
+            let (dx, dz) = (to[0] - here[0], to[1] - here[1]);
+            (
+                steer(dx, dz, CREATURE_WALK_SPEED_UNITS_PER_TICK),
+                yaw_from_vector(dx, dz),
+            )
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steering_normalises_with_integers_and_never_overshoots() {
+        assert_eq!(steer(0, 0, 19), [0, 0]);
+        assert_eq!(steer(300, 400, 19), [11, 15]);
+        assert_eq!(steer(-300, 400, 19), [-11, 15]);
+        assert_eq!(steer(3, 4, 19), [3, 4], "a short step lands on the target");
+        assert_eq!(steer(1_000, 0, 24), [24, 0]);
+    }
+}

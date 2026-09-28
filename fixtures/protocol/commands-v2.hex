@@ -5,3 +5,10 @@
 02010001abcd move 0 1 43981
 02010000ffff move 0 0 65535
 0202 jump
+0203020000006c select_target 2 108
+020301ee6b2800 select_target 1 4000000000
+02030300000005 select_target 3 5
+02030000000000 select_target 0 0
+0204 start_attack
+0205 stop_attack
+0206 release_spirit

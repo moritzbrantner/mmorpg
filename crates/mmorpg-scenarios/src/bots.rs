@@ -819,11 +819,12 @@ impl Runner<'_> {
     }
 }
 
-/// The player behind a visible entity. Players are the only kind so far; a new
-/// kind must decide here whether bots can name, count and position it.
+/// The player behind a visible entity. Bots name, count and position players
+/// only; creatures and NPCs have their own expectations.
 fn player_of_entity(entity: &EntitySnapshot) -> Option<PlayerId> {
     match entity.kind {
         EntityKind::Player => Some(entity.id),
+        EntityKind::Creature | EntityKind::Npc => None,
     }
 }
 

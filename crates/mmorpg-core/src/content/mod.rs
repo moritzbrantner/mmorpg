@@ -1,9 +1,21 @@
-//! Immutable collision content, shared by simulation construction and scene export.
-//! Render meshes/materials are presentation data; these boxes define physical truth.
-//! Generic validation lives here; each authored zone is its own submodule.
+//! Immutable zone content: collision geometry ([`ZoneDefinition`]) and the
+//! complete validated content of a zone ([`ZoneContent`]) with its creature
+//! templates, spawns, NPCs and graveyard. Render meshes/materials are
+//! presentation data; these boxes define physical truth. Generic validation
+//! lives here; each authored zone is its own submodule.
 
 pub mod greyhaven_vale;
+mod units;
+mod zone_content;
 
+pub use units::{
+    CreatureBehaviour, CreatureFamily, CreatureSpawn, CreatureTemplate,
+    MAX_CREATURE_HALF_EXTENT_UNITS, MAX_CREATURE_SPAWNS, MAX_CREATURE_TEMPLATES, MAX_NPCS,
+    MAX_UNIT_NAME_BYTES, MAX_WANDER_RADIUS_UNITS, Npc, NpcRole,
+};
+pub use zone_content::ZoneContent;
+
+use crate::entity::PLAYER_BODY_BASE;
 use crate::{MAX_PLAYERS_PER_ZONE, PLAYER_HALF_EXTENTS_UNITS, ZoneError};
 
 pub const MAX_STATIC_COLLIDERS: usize = 1_024;
@@ -121,7 +133,7 @@ impl ZoneDefinition {
         }
         colliders.sort_by_key(|collider| collider.id);
         for collider in &colliders {
-            if u64::from(collider.id) >= super::PLAYER_BODY_BASE {
+            if u64::from(collider.id) >= PLAYER_BODY_BASE {
                 return Err(ZoneError::new(
                     "static collider id overlaps player body namespace",
                 ));

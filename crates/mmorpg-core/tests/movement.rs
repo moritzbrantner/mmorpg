@@ -1,5 +1,7 @@
 //! Movement v3 semantics through the public zone API: facing-relative intent,
 //! run and backpedal speeds, grounded jumps, and fail-closed sequencing.
+use std::sync::Arc;
+
 use mmorpg_core::{
     BACKPEDAL_SPEED_UNITS_PER_TICK, CanonicalPlayerSnapshot, JUMP_VELOCITY_UNITS_PER_TICK,
     PLAYER_HALF_EXTENTS_UNITS, RUN_SPEED_UNITS_PER_TICK, StaticCollider, ZoneCommand,
@@ -123,7 +125,7 @@ fn zero_intent_stops_horizontally_but_gravity_keeps_vertical_velocity() {
     let mut airborne = zone.snapshot().unwrap();
     airborne.players[0].position = [0, 1_000, 0];
     airborne.players[0].velocity = [21, -3, 21];
-    let mut zone = ZoneSimulation::from_snapshot(airborne).unwrap();
+    let mut zone = ZoneSimulation::from_snapshot(airborne, Arc::clone(zone.content())).unwrap();
     zone.advance_tick().unwrap();
     let falling = player(&zone);
     assert_eq!(falling.velocity, [0, -4, 0]);
@@ -236,7 +238,7 @@ fn a_falling_body_beside_a_wall_cannot_jump() {
     zone.add_player(1).unwrap();
     let mut airborne = zone.snapshot().unwrap();
     airborne.players[0].position = [0, 1_500, 0];
-    let mut zone = ZoneSimulation::from_snapshot(airborne).unwrap();
+    let mut zone = ZoneSimulation::from_snapshot(airborne, Arc::clone(zone.content())).unwrap();
     zone.advance_tick().unwrap();
     let before = player(&zone);
     zone.apply_command(1, 1, ZoneCommand::Jump).unwrap();
@@ -251,7 +253,7 @@ fn standing_on_another_player_supports_a_jump() {
     zone.add_player(2).unwrap();
     let mut stacked = zone.snapshot().unwrap();
     stacked.players[1].position = [0, 3 * REST_Y, 0];
-    let mut zone = ZoneSimulation::from_snapshot(stacked).unwrap();
+    let mut zone = ZoneSimulation::from_snapshot(stacked, Arc::clone(zone.content())).unwrap();
     zone.apply_command(2, 1, ZoneCommand::Jump).unwrap();
     zone.advance_tick().unwrap();
     let top = zone.snapshot().unwrap().players[1].clone();

@@ -7,8 +7,10 @@ use game_server::{
     GameSimulation, HostError, MatchHost, MatchId, MatchIdError, MatchRuntime, SimulationError,
     SimulationSnapshot, SnapshotScope,
 };
-use mmorpg_core::{MAX_PLAYERS_PER_ZONE, TICK_HZ, ZoneId, ZoneSimulation};
-use mmorpg_protocol::{decode_command, encode_canonical_snapshot, encode_snapshot};
+use std::sync::Arc;
+
+use mmorpg_core::{MAX_PLAYERS_PER_ZONE, TICK_HZ, ZoneContent, ZoneId, ZoneSimulation};
+use mmorpg_protocol::{decode_command, encode_canonical_snapshot, pack_snapshot};
 
 pub const PINNED_GAME_SERVER_REVISION: &str = "a3851dab9c1fb25dd31b465fb554ca475769caab";
 pub const PINNED_PHYSICS_ENGINE_REVISION: &str = "1b98f84d409796b2a15b84f3fa4ed7f03a11f8bd";
@@ -63,12 +65,14 @@ impl ZoneGameServerAdapter {
         }
     }
 
-    pub fn with_definition(
+    /// A zone of the given content. Recovery replays onto a fresh adapter
+    /// built with the same content.
+    pub fn with_content(
         zone_id: ZoneId,
-        definition: mmorpg_core::ZoneDefinition,
+        content: Arc<ZoneContent>,
     ) -> Result<Self, mmorpg_core::ZoneError> {
         Ok(Self {
-            zone: ZoneSimulation::with_definition(zone_id, definition)?,
+            zone: ZoneSimulation::with_content(zone_id, content)?,
         })
     }
 
@@ -130,9 +134,9 @@ pub fn build_zone_matches(
         .into_iter()
         .map(|zone_id| {
             let match_id = zone_match_id(zone_id).map_err(ZoneHostBuildError::MatchId)?;
-            let simulation = ZoneGameServerAdapter::with_definition(
+            let simulation = ZoneGameServerAdapter::with_content(
                 zone_id,
-                mmorpg_core::greyhaven_vale_definition(),
+                mmorpg_core::greyhaven_vale::content(),
             )
             .map_err(ZoneHostBuildError::Content)?;
             Ok((match_id, simulation))
@@ -195,7 +199,11 @@ impl GameSimulation for ZoneGameServerAdapter {
             .zone
             .snapshot_for_player(player_id)
             .map_err(map_zone_error)?;
-        let payload = encode_snapshot(&snapshot).map_err(map_protocol_error)?;
+        // Budget-driven packing: entities beyond one datagram are omitted by
+        // relevance priority, never truncated by transport.
+        let payload = pack_snapshot(&snapshot)
+            .map_err(map_protocol_error)?
+            .payload;
         Ok(SimulationSnapshot::new(snapshot.tick, payload))
     }
 }
@@ -330,6 +338,68 @@ mod tests {
         assert!(snapshot.players[0].position[0] > 0);
         assert_eq!(reconnected.player_id, lease.player_id);
         assert_eq!(reconnected.connection_epoch, lease.connection_epoch + 1);
+    }
+
+    #[test]
+    fn recovery_replays_combat_intents_onto_the_hosted_content() {
+        use mmorpg_core::{EntityRef, NpcId};
+        let zone_id = ZoneId::new(1);
+        let hosted = || {
+            ZoneGameServerAdapter::with_content(zone_id, mmorpg_core::greyhaven_vale::content())
+                .unwrap()
+        };
+        let token = ReconnectToken([3; RECONNECT_TOKEN_BYTES]);
+        let mut runtime = MatchRuntime::new_with_replay_capture(hosted(), 120);
+        let lease = runtime.admit(token).unwrap();
+        // The marshal stands beside the plaza; attacking an NPC is refused
+        // with an event, not a session error.
+        let marshal = EntityRef::Npc(NpcId::new(1));
+        for (sequence, command) in [
+            ZoneCommand::SelectTarget(Some(marshal)),
+            ZoneCommand::StartAttack,
+            run(SOUTH),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            runtime
+                .submit_command(
+                    lease.player_id,
+                    lease.connection_epoch,
+                    u32::try_from(sequence).unwrap() + 1,
+                    &encode_command(command),
+                )
+                .unwrap();
+        }
+        runtime.advance_tick().unwrap();
+        let projection =
+            decode_snapshot(&runtime.snapshot_for(lease.player_id).unwrap().payload).unwrap();
+        assert_eq!(projection.viewer.target, Some(marshal));
+        assert_eq!(
+            projection.events,
+            [mmorpg_core::ZoneEvent::Error {
+                code: mmorpg_core::ErrorCode::NotAttackable,
+                target: Some(marshal)
+            }]
+        );
+        for _ in 0..90 {
+            runtime.advance_tick().unwrap();
+        }
+        runtime.freeze_for_recovery();
+        let expected = runtime.snapshot().unwrap().payload;
+        let image = runtime.recovery_image().unwrap();
+        let restored = MatchRuntime::restore_from_recovery(hosted(), image).unwrap();
+        assert_eq!(restored.snapshot().unwrap().payload, expected);
+        let canonical = decode_canonical_snapshot(&expected).unwrap();
+        assert_eq!(
+            canonical.creatures.len(),
+            59,
+            "the vale's creatures are hosted"
+        );
+        assert_eq!(
+            canonical.content_fingerprint,
+            mmorpg_core::greyhaven_vale::content().fingerprint()
+        );
     }
 
     #[test]
