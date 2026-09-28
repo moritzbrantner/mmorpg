@@ -77,7 +77,7 @@ The big-endian visible format is documented in [PROTOCOL.md](PROTOCOL.md). Rust 
 
 ## Native client and graphics
 
-`mmorpg-client` is a native Rust executable using winit 0.30.12 and wgpu 30.0.1. Its GPU adapter consumes pinned `three-d-core` geometry and `three-d-camera` matrices from 3d-lab revision `4f06559812cad1825aaba7be9e2a4860fa072e71`. Server crates do not depend on the desktop/GPU stack.
+`mmorpg-client` is a native Rust executable using winit 0.30.13 and wgpu 30.0.1. Its GPU adapter consumes pinned `three-d-core` geometry and `three-d-camera` matrices from 3d-lab revision `f484db8a3d2a7a555fa463eddf9c28790b240ce0`. Server crates do not depend on the desktop/GPU stack.
 
 Tauri is reserved for a future launcher/account/settings shell. The immediate game loop needs a native GPU surface, input and session ownership; adding a webview does not supply these capabilities. See [the native client decision](adr/0001-native-client.md) and [run instructions](NATIVE_CLIENT.md).
 

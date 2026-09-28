@@ -79,7 +79,7 @@ The control-plane implementation in this slice is a **reference model**, not yet
 
 ## Native multiplayer client
 
-The native client uses **wgpu 30.0.1 + winit 0.30.12**, shared Rust world geometry, and the existing WebTransport protocol. WASD/arrows send movement intent to the server; the GPU renders interpolated player-visible snapshots. Multiple client processes can join the same zone.
+The native client uses **wgpu 30.0.1 + winit 0.30.13**, shared Rust world geometry, and the existing WebTransport protocol. WASD/arrows send movement intent to the server; the GPU renders interpolated player-visible snapshots. Multiple client processes can join the same zone.
 
 ```sh
 python3 scripts/smoke-native.py --window
@@ -124,8 +124,9 @@ Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative du
 
 ## Pinned foundations
 
-- `physics-engine`: `c796ea382bdcb0276b9309e8a3cca34c8c28313b`
-- `game-server`: `769de47005cc37891011fc76ae183c18b7c5e0ae`
+- `physics-engine`: `1b98f84d409796b2a15b84f3fa4ed7f03a11f8bd`
+- `game-server`: `f7efa8fc6d61abffdbc55afaa05d6fde48c05da1`
+- `3d-lab` (`three-d-core`, `three-d-camera` and the browser `@moritzbrantner/three-d-renderer`, kept on one commit): `f484db8a3d2a7a555fa463eddf9c28790b240ce0`
 - reusable validation workflow: `45042e56be120b438096e774027637cac0280075`
 
 ## Validation

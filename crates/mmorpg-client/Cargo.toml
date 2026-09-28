@@ -14,13 +14,13 @@ tokio.workspace = true
 url = "=2.5.8"
 wtransport = { version = "=0.7.2", default-features = false, features = ["ring"] }
 wgpu = "=30.0.1"
-winit = "=0.30.12"
+winit = "=0.30.13"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
-three-d-core = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "4f06559812cad1825aaba7be9e2a4860fa072e71" }
-three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "4f06559812cad1825aaba7be9e2a4860fa072e71" }
+three-d-core = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f484db8a3d2a7a555fa463eddf9c28790b240ce0" }
+three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f484db8a3d2a7a555fa463eddf9c28790b240ce0" }
 
 [dev-dependencies]
-tempfile = "=3.23.0"
+tempfile = "=3.27.0"
 mmorpg-game-server = { path = "../mmorpg-game-server" }
 wtransport = { version = "=0.7.2", default-features = false, features = ["ring", "self-signed"] }
 
