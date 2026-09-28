@@ -11,7 +11,7 @@ use mmorpg_core::{
 
 /// Pins every content table of revision 3. Changing creatures, NPCs,
 /// colliders or areas requires a new revision and a new recorded value.
-const FINGERPRINT: u64 = 0x56ab_5f9e_f2fc_3ab6;
+const FINGERPRINT: u64 = 0x3cbc_808b_be89_b29c;
 
 #[test]
 fn the_content_identity_is_pinned() {

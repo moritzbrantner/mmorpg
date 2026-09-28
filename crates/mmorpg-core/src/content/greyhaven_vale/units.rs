@@ -161,7 +161,7 @@ type NpcRow = (u32, &'static str, NpcRole, u8, [i32; 2], u16);
 
 #[rustfmt::skip]
 const NPCS: [NpcRow; 9] = [
-    (1, "Marshal Elden Greywatch", NpcRole::QuestGiver, 10, [-1_700, 1_000], 0),
+    (1, "Marshal Elden Greywatch", NpcRole::QuestGiver, 10, [-2_200, 900], 0),
     (2, "Tanner Hilda Brook", NpcRole::QuestGiver, 5, [-2_400, 3_150], 32_768),
     (3, "Innkeeper Bram Tolliver", NpcRole::Vendor, 5, [1_500, 700], 0),
     (4, "Farmer Osric Mill", NpcRole::QuestGiver, 4, [6_200, 4_150], 32_768),
