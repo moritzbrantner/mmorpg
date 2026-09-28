@@ -206,6 +206,8 @@ class BrowserAcceptance(unittest.TestCase):
         self.open()
         self.assertEqual(self.page.get_by_role("button", name=re.compile("^(Save|Load|Export|Import) (game|save)$")).count(), 0,
                          "No control may claim to save world progress the demo cannot persist")
+        self.assertNotRegex(self.page.locator("body").text_content(), re.compile(r"saved (facing|position)", re.IGNORECASE),
+                            "No text may claim world state is saved; the demo cannot persist it")
         self.page.locator('[data-hat-style="ironcrest-helm"]').click()
         writes = self.page.evaluate("window.__calls.writes")
         self.enter_world()
