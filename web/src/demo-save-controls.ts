@@ -5,21 +5,32 @@ import "./demo-save-controls.css";
 /** Mount one shared command boundary in selection and the in-world HUD. */
 export function installDemoSaveControls(
   roots: readonly HTMLElement[],
-  characterId: string,
+  characterId: () => string,
   capture: () => DemoProgress,
   restore: (progress: DemoProgress) => void,
 ) {
-  const controller = new DemoSaveController(characterId, capture, restore, () => window.localStorage);
+  let controllerId: string | null = null;
+  let controller: DemoSaveController | null = null;
   const statuses: HTMLElement[] = [];
   const summaries: HTMLElement[] = [];
   const loadButtons: HTMLButtonElement[] = [];
   let feedbackOperation = 0;
 
+  function currentController(): DemoSaveController {
+    const nextId = characterId();
+    if (!controller || controllerId !== nextId) {
+      controller?.cancelPending();
+      controllerId = nextId;
+      controller = new DemoSaveController(nextId, capture, restore, () => window.localStorage);
+    }
+    return controller;
+  }
+
   function refresh() {
     let message: string;
     let canLoad = false;
     try {
-      const checkpoint = controller.inspect();
+      const checkpoint = currentController().inspect();
       canLoad = checkpoint !== null;
       message = checkpoint
         ? `Local checkpoint · ${hatOption(checkpoint.appearance.hat).name} · Position ${checkpoint.position.x.toFixed(1)}, ${checkpoint.position.z.toFixed(1)} · Waystone ${checkpoint.waystoneActive ? "active" : "inactive"}`
@@ -27,22 +38,34 @@ export function installDemoSaveControls(
     } catch {
       message = "Local checkpoint unavailable or invalid. Import/export remain available; existing saved bytes are untouched.";
     }
-    for (const summary of summaries) summary.textContent = message;
-    for (const button of loadButtons) button.disabled = !canLoad;
+    for (const summary of summaries) {
+      summary.textContent = message;
+    }
+    for (const button of loadButtons) {
+      button.disabled = !canLoad;
+    }
   }
 
   async function run(action: () => string | Promise<string>) {
     const operation = ++feedbackOperation;
     try {
       const message = await action();
-      if (operation !== feedbackOperation) return;
+      if (operation !== feedbackOperation) {
+        return;
+      }
       refresh();
-      for (const status of statuses) status.textContent = message;
+      for (const status of statuses) {
+        status.textContent = message;
+      }
     } catch (error) {
-      if (operation !== feedbackOperation) return;
+      if (operation !== feedbackOperation) {
+        return;
+      }
       refresh();
       const message = error instanceof Error ? error.message : "Save operation failed.";
-      for (const status of statuses) status.textContent = `${message} Current game and local save were not replaced.`;
+      for (const status of statuses) {
+        status.textContent = `${message} Current game and local save were not replaced.`;
+      }
     }
   }
 
@@ -69,18 +92,18 @@ export function installDemoSaveControls(
       return element;
     };
     button("Save game", () => void run(() => {
-      controller.save();
+      currentController().save();
       return "Game saved in this browser. Load game resumes this checkpoint.";
     }));
-    loadButtons.push(button("Load game", () => void run(() => controller.load()
+    loadButtons.push(button("Load game", () => void run(() => currentController().load()
       ? "Game loaded. Position, appearance, and waystone progress restored."
       : "No saved game exists for this character. Appearance-only saves are separate.")));
     button("Export save", () => void run(() => {
-      const raw = controller.export();
+      const raw = currentController().export();
       const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
       const link = document.createElement("a");
       link.href = url;
-      link.download = "mmorpg-greyhaven-save.json";
+      link.download = `mmorpg-greyhaven-${characterId()}.json`;
       document.body.append(link);
       try {
         link.click();
@@ -100,9 +123,14 @@ export function installDemoSaveControls(
     fileInput.addEventListener("change", () => {
       const file = fileInput.files?.[0];
       fileInput.value = "";
-      if (!file) return;
-      for (const status of statuses) status.textContent = "Reading and validating save…";
-      void run(async () => await controller.import(file)
+      if (!file) {
+        return;
+      }
+      for (const status of statuses) {
+        status.textContent = "Reading and validating save…";
+      }
+      const importController = currentController();
+      void run(async () => await importController.import(file)
         ? "Imported game restored. Press Save game to keep it in this browser."
         : "Import superseded by a newer action.");
     });
@@ -112,15 +140,19 @@ export function installDemoSaveControls(
   // Queries only on mount, commands, selection entry, or a relevant other-tab change.
   // Never serialize or access localStorage from the render/movement loop.
   window.addEventListener("storage", (event) => {
-    if (event.key === null || event.key === demoSaveKey(characterId)) refresh();
+    if (event.key === null || event.key === demoSaveKey(characterId())) {
+      refresh();
+    }
   });
   refresh();
   return {
     refresh,
     cancelPending() {
-      controller.cancelPending();
+      currentController().cancelPending();
       feedbackOperation += 1;
-      for (const status of statuses) status.textContent = "Current session retained. Save game keeps a checkpoint; no automatic save was made.";
+      for (const status of statuses) {
+        status.textContent = "Current session retained. Save game keeps a checkpoint; no automatic save was made.";
+      }
     },
   };
 }

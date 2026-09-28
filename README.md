@@ -69,6 +69,7 @@ The workspace provides:
 - a fenced runtime interface that rejects expired/stale owners before commands, admission, ticks, or publication in the reference model;
 - a runnable multi-zone host with one WebTransport routing surface and separate operational status;
 - a deliberately single-player GitHub Pages tech demo for a tiny explorable zone, consuming the pinned `3d-lab` renderer without introducing browser-side MMO authority;
+- local browser-demo character creation with Warden, Ranger, and Arcanist starter classes, male/female presentation variants, stable per-character local identities, and isolated save slots;
 - strict Rust/browser snapshot v2 compatibility tests and bounded client interpolation;
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.

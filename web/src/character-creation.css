@@ -1,0 +1,273 @@
+.character-roster {
+  display: grid;
+  gap: .5rem;
+}
+
+.roster-character {
+  cursor: pointer;
+}
+
+.roster-character:focus-visible,
+.new-character:focus-visible,
+.character-creation button:focus-visible,
+.character-creation input:focus-visible {
+  outline: 2px solid var(--gold-bright);
+  outline-offset: 2px;
+}
+
+.new-character {
+  opacity: 1;
+  cursor: pointer;
+  background: rgb(255 255 255 / 2%);
+}
+
+.new-character:hover:not(:disabled) {
+  border-color: rgb(208 177 96 / 38%);
+  background: rgb(183 148 70 / 10%);
+}
+
+.new-character:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.new-character > span:first-child {
+  display: grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px dashed rgb(218 195 129 / 38%);
+  color: #dec880;
+}
+
+.new-character .roster-copy small {
+  color: #91a098;
+  text-transform: none;
+}
+
+.roster-status {
+  min-height: 1.1rem;
+  margin: .45rem .15rem 0;
+  color: #c5b27a;
+  font-size: .66rem;
+  line-height: 1.35;
+}
+
+.character-creation {
+  position: relative;
+  grid-column: 1 / -1;
+  padding: 1rem;
+  border: 1px solid var(--panel-border);
+  background: linear-gradient(145deg, rgb(17 25 28 / 96%), rgb(7 12 15 / 94%));
+  box-shadow: 0 22px 80px rgb(0 0 0 / 38%);
+  color: #dce4df;
+}
+
+.character-creation[hidden] {
+  display: none;
+}
+
+.creation-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-bottom: .9rem;
+}
+
+.creation-heading h2 {
+  margin: .12rem 0 0;
+  color: #f1e7ce;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.25rem;
+  font-weight: 500;
+}
+
+.creation-close {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid rgb(255 255 255 / 10%);
+  background: transparent;
+  color: #cbd6cd;
+  font: inherit;
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.creation-name {
+  display: grid;
+  gap: .35rem;
+  color: #aab8b0;
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.creation-name input {
+  width: 100%;
+  min-height: 2.75rem;
+  box-sizing: border-box;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: .25rem;
+  background: #101a1b;
+  color: #f3ecda;
+  padding: .65rem .7rem;
+  font: inherit;
+}
+
+.creation-options {
+  min-width: 0;
+  margin: .9rem 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.creation-options legend {
+  margin-bottom: .45rem;
+  color: #9aa9a0;
+  font-size: .69rem;
+  font-weight: 750;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.class-options {
+  display: grid;
+  gap: .45rem;
+}
+
+.class-option,
+.sex-option {
+  position: relative;
+  display: block;
+  cursor: pointer;
+}
+
+.class-option input,
+.sex-option input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.class-option > span,
+.sex-option > span {
+  pointer-events: none;
+}
+
+.class-option > span {
+  display: grid;
+  gap: .12rem;
+  min-height: 3.4rem;
+  align-content: center;
+  padding: .58rem .7rem;
+  border: 1px solid rgb(255 255 255 / 9%);
+  background: rgb(255 255 255 / 3%);
+}
+
+.class-option strong {
+  color: #e9e1cd;
+  font-size: .82rem;
+  font-weight: 650;
+}
+
+.class-option small {
+  color: #91a098;
+  font-size: .68rem;
+}
+
+.class-option input:checked + span,
+.sex-option input:checked + span {
+  border-color: rgb(208 177 96 / 58%);
+  background: linear-gradient(90deg, rgb(183 148 70 / 18%), rgb(255 255 255 / 3%));
+  box-shadow: inset 3px 0 var(--gold);
+}
+
+.class-option input:focus-visible + span,
+.sex-option input:focus-visible + span {
+  outline: 2px solid var(--gold-bright);
+  outline-offset: 2px;
+}
+
+.sex-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .45rem;
+}
+
+.sex-option > span {
+  display: grid;
+  min-height: 2.75rem;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 9%);
+  background: rgb(255 255 255 / 3%);
+  color: #dce4df;
+  font-size: .78rem;
+  font-weight: 650;
+}
+
+.creation-status {
+  min-height: 1.2rem;
+  margin: .65rem 0 0;
+  color: #dcbf83;
+  font-size: .72rem;
+  line-height: 1.4;
+}
+
+.creation-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: .5rem;
+  margin-top: .7rem;
+}
+
+.creation-actions button {
+  min-height: 2.8rem;
+  border: 1px solid rgb(218 195 129 / 24%);
+  background: rgb(255 255 255 / 4%);
+  color: #e4e9e5;
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.creation-actions .create-confirm {
+  border-color: #d4b76d;
+  background: linear-gradient(#89713a, #5f4b25);
+  color: #fff4d7;
+}
+
+.creation-actions .create-confirm:hover {
+  background: linear-gradient(#a28642, #6f582c);
+}
+
+.creation-note {
+  margin: .65rem 0 0;
+  color: #87958d;
+  font-size: .65rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .new-character {
+    display: flex;
+  }
+
+  .character-creation {
+    padding: .85rem;
+  }
+
+  .class-options {
+    grid-template-columns: 1fr;
+  }
+
+  .creation-note {
+    display: none;
+  }
+}

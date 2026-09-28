@@ -1,4 +1,4 @@
-import type { CharacterPreview, EquipmentItem } from "./character-selection";
+import type { CharacterClassId, CharacterPreview, EquipmentItem } from "./character-selection";
 
 export const HAT_OPTIONS = [
   { id: "wayfarer-hood", name: "Wayfarer's Hood", accent: "#b7c6bd" },
@@ -10,6 +10,14 @@ export type HatStyle = (typeof HAT_OPTIONS)[number]["id"];
 export type CharacterAppearance = { hat: HatStyle };
 
 export const DEFAULT_CHARACTER_APPEARANCE: CharacterAppearance = { hat: "wayfarer-hood" };
+
+export function defaultAppearanceForClass(classId: CharacterClassId): CharacterAppearance {
+  switch (classId) {
+    case "warden": return { hat: "ironcrest-helm" };
+    case "ranger": return { hat: "ranger-cap" };
+    case "arcanist": return { hat: "wayfarer-hood" };
+  }
+}
 const SAVE_SCHEMA_VERSION = 1;
 const SAVE_KEY_PREFIX = "mmorpg.preview-character.v1";
 
