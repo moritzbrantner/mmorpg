@@ -79,4 +79,4 @@ python3 scripts/smoke-native.py --window
 
 The live convention stack for this change resolved to sourceRevision `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`. No existing locked package identity was removed during native dependency acquisition.
 
-Native resume was implemented from repository baseline `80acad9d0d810fd048019fd824d42a1633774953`. The shared `game-server` pin remains `769de47005cc37891011fc76ae183c18b7c5e0ae`. The client now directly declares the already-locked `url` 2.5.8 parser; no locked package version changed.
+Native resume was implemented from repository baseline `80acad9d0d810fd048019fd824d42a1633774953`. At that baseline the shared `game-server` pin was `769de47005cc37891011fc76ae183c18b7c5e0ae`; the current pin is listed in the README. The client now directly declares the already-locked `url` 2.5.8 parser; no locked package version changed.

@@ -125,7 +125,7 @@ Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative du
 ## Pinned foundations
 
 - `physics-engine`: `c796ea382bdcb0276b9309e8a3cca34c8c28313b`
-- `game-server`: `769de47005cc37891011fc76ae183c18b7c5e0ae`
+- `game-server`: `f7efa8fc6d61abffdbc55afaa05d6fde48c05da1`
 - reusable validation workflow: `45042e56be120b438096e774027637cac0280075`
 
 ## Validation
