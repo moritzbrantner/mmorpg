@@ -52,7 +52,7 @@ Each entity record is 16 bytes:
 
 Total size is `34 + 16 × count`. Records are in relevance-priority order: the viewer first, then ascending `(squared XZ distance, kind, id)`. The interest policy keeps players within the inclusive 4,500-unit (45 m) XZ radius, including the viewer, and caps the projection at the 64 (`MAX_VISIBLE_ENTITIES`) highest-priority entities.
 
-Positions are absolute `i16` units. Zone content keeps every collider bound and spawn slot within ±32,000 units (`MAX_CONTENT_COORDINATE_UNITS`), and boundary walls enclose everything reachable; the encoder fails closed rather than clamping a position outside the `i16` range. Canonical state keeps full `i32` positions. Velocity is presentation data: core saturates each component to the `i8` range when projecting, while canonical state keeps the exact physics velocity (run speed is 21 and jump velocity 16 units/tick, well inside that range).
+Positions are absolute `i16` units. Zone content keeps every collider bound and every spawned body within ±32,000 units (`MAX_CONTENT_COORDINATE_UNITS`). The simulation closes that cube with six fixed world-limit bodies that are not content, so no player admitted at a spawn slot can leave it, whatever the content's walls or gravity; content boundary walls, such as Greyhaven Vale's, are the gameplay boundary inside it. Recovery restores captured positions unchanged. The encoder still fails closed rather than clamping a position outside the `i16` range. Canonical state keeps full `i32` positions. Velocity is presentation data: core saturates each component to the `i8` range when projecting, while canonical state keeps the exact physics velocity (run speed is 21 and jump velocity 16 units/tick, well inside that range).
 
 ### Datagram byte budget
 
@@ -101,7 +101,7 @@ After the common prefix:
 | 33 | 4 | Last command sequence |
 | 37 | 2 | Spawn slot |
 
-The content constructor validates and orders colliders, keeps every collider bound and spawn slot within ±32,000 units, and proves all 512 spawn slots are clear of colliders. The decoder rejects a jump flag other than 0 or 1. Core validates player uniqueness, spawn slots and the forward/strafe range during recovery. Default engine configuration and pinned physics behavior are part of the continuation contract: recovering mid-run, mid-jump or with a pending jump reproduces the continuation exactly.
+The content constructor validates and orders colliders, keeps every collider bound and spawned body within ±32,000 units, and proves all 512 spawn slots are clear of colliders. World-limit bodies are derived from that range during construction and recovery; they are not serialized. The decoder rejects a jump flag other than 0 or 1. Core validates player uniqueness, spawn slots and the forward/strafe range during recovery. Default engine configuration and pinned physics behavior are part of the continuation contract: recovering mid-run, mid-jump or with a pending jump reproduces the continuation exactly.
 
 Canonical data is for trusted replay/recovery and server-side verification. It must never be passed to the browser renderer or substituted for a player projection.
 

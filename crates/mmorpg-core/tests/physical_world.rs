@@ -1,10 +1,13 @@
 use mmorpg_core::{
-    MAX_CONTENT_COORDINATE_UNITS, MAX_PLAYERS_PER_ZONE, SpawnGrid, StaticCollider, ZoneCommand,
-    ZoneDefinition, ZoneId, ZoneSimulation,
+    MAX_CONTENT_COORDINATE_UNITS, MAX_PLAYERS_PER_ZONE, PLAYER_HALF_EXTENTS_UNITS, SpawnGrid,
+    StaticCollider, ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation,
 };
 
-/// World-axis heading for forward movement: yaw 0 faces +Z, 90° faces +X.
+/// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
 const EAST: u16 = 16_384;
+const WEST: u16 = 49_152;
+const TOWARD_POSITIVE_Z: u16 = 0;
+const TOWARD_NEGATIVE_Z: u16 = 32_768;
 
 fn run(facing: u16) -> ZoneCommand {
     ZoneCommand::Move {
@@ -137,23 +140,79 @@ fn content_keeps_colliders_and_spawn_slots_in_the_compact_coordinate_range() {
             "static collider lies outside the content coordinate range"
         );
     }
-    // 512 slots in 32 columns: the last slot's feet are 31 and 15 spacings out.
+    // 512 slots in 32 columns: the last slot's feet are 31 and 15 spacings
+    // out. The whole spawned body, not only its feet, must lie in the range.
+    let [half_x, _, half_z] = PLAYER_HALF_EXTENTS_UNITS;
     let reaching = SpawnGrid {
-        origin: [limit - 31 * 100, -limit],
+        origin: [limit - half_x - 31 * 100, -limit + half_z],
         columns: 32,
         spacing: 100,
     };
     assert!(ZoneDefinition::with_spawn_grid(1, [0; 3], reaching, Vec::new()).is_ok());
-    let beyond = SpawnGrid {
-        origin: [limit - 31 * 100 + 1, -limit],
-        ..reaching
-    };
+    for origin in [
+        [reaching.origin[0] + 1, reaching.origin[1]],
+        [reaching.origin[0], reaching.origin[1] - 1],
+    ] {
+        let beyond = SpawnGrid { origin, ..reaching };
+        assert_eq!(
+            ZoneDefinition::with_spawn_grid(1, [0; 3], beyond, Vec::new())
+                .unwrap_err()
+                .message(),
+            "spawn slot lies outside the content coordinate range"
+        );
+    }
+}
+
+#[test]
+fn world_limits_hold_bodies_in_the_compact_range_on_unenclosed_content() {
+    let limit = MAX_CONTENT_COORDINATE_UNITS;
+    let [half_x, half_y, half_z] = PLAYER_HALF_EXTENTS_UNITS;
+    // Default content has no colliders and no gravity. Each player runs along
+    // one horizontal axis for longer than an `i16` position lasts at 21
+    // units per tick (about 1,561 ticks).
+    let mut open = ZoneSimulation::new(ZoneId::new(1));
+    for (player_id, facing) in [
+        (1, WEST),
+        (2, EAST),
+        (3, TOWARD_NEGATIVE_Z),
+        (4, TOWARD_POSITIVE_Z),
+    ] {
+        open.add_player(player_id).unwrap();
+        open.apply_command(player_id, 1, run(facing)).unwrap();
+    }
+    for _ in 0..1_600 {
+        open.advance_tick().unwrap();
+    }
+    let players = open.snapshot().unwrap().players;
+    let positions: Vec<_> = players.iter().map(|player| player.position).collect();
     assert_eq!(
-        ZoneDefinition::with_spawn_grid(1, [0; 3], beyond, Vec::new())
-            .unwrap_err()
-            .message(),
-        "spawn slot lies outside the content coordinate range"
+        positions,
+        [
+            [-limit + half_x, 90, 0],
+            [limit - half_x, 90, 0],
+            [400, 90, -limit + half_z],
+            [600, 90, limit - half_z],
+        ]
     );
+    // Recovery installs the same limits.
+    let mut restored = ZoneSimulation::from_snapshot(open.snapshot().unwrap()).unwrap();
+    open.advance_tick().unwrap();
+    restored.advance_tick().unwrap();
+    assert_eq!(restored.snapshot().unwrap(), open.snapshot().unwrap());
+    assert_eq!(open.snapshot().unwrap().players, players);
+
+    // Gravity without ground or ceiling carries a body to the floor or ceiling limit.
+    for (gravity, y) in [(-1, -limit + half_y), (1, limit - half_y)] {
+        let definition = ZoneDefinition::new(1, [0, gravity, 0], Vec::new()).unwrap();
+        let mut zone = ZoneSimulation::with_definition(ZoneId::new(1), definition).unwrap();
+        zone.add_player(1).unwrap();
+        for _ in 0..300 {
+            zone.advance_tick().unwrap();
+        }
+        let player = &zone.snapshot().unwrap().players[0];
+        assert_eq!(player.position, [0, y, 0], "gravity {gravity}");
+        assert_eq!(player.velocity, [0, 0, 0], "gravity {gravity}");
+    }
 }
 
 #[test]

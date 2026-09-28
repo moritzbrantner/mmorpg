@@ -2,8 +2,9 @@
 mod visibility_oracle;
 
 use mmorpg_core::{
-    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS, SNAPSHOT_SCHEMA_VERSION,
-    ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation, greyhaven_vale_definition,
+    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS,
+    MAX_CONTENT_COORDINATE_UNITS, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneDefinition, ZoneId,
+    ZoneSimulation, greyhaven_vale_definition,
 };
 use mmorpg_protocol::encode_snapshot;
 use visibility_oracle::exhaustive_projection;
@@ -147,4 +148,35 @@ fn collision_corrections_and_failed_step_preserve_reference_parity() {
         "entity position is outside the compact wire range",
         "unrepresentable positions never reach the wire"
     );
+}
+
+#[test]
+fn players_running_on_unenclosed_content_stay_encodable() {
+    // Default content has no walls, no ground and no gravity. Two players who
+    // see each other run east for longer than an `i16` position lasts at 21
+    // units per tick (about 1,561 ticks); the world limits stop them first.
+    let mut zone = ZoneSimulation::new(ZoneId::new(9));
+    for player_id in [1, 2] {
+        zone.add_player(player_id).unwrap();
+        zone.apply_command(player_id, 1, run(EAST)).unwrap();
+    }
+    for _ in 0..1_600 {
+        zone.advance_tick().unwrap();
+        for viewer in [1, 2] {
+            let projection = zone.snapshot_for_player(viewer).unwrap();
+            assert_eq!(projection.entities.len(), 2);
+            encode_snapshot(&projection).unwrap();
+        }
+    }
+    let positions: Vec<_> = zone
+        .snapshot()
+        .unwrap()
+        .players
+        .iter()
+        .map(|player| player.position)
+        .collect();
+    // Player 2 spawned 2 m ahead and rests against the limit; player 1 rests against it.
+    let front = MAX_CONTENT_COORDINATE_UNITS - 30;
+    assert_eq!(positions, [[front - 60, 90, 0], [front, 90, 0]]);
+    assert_wire_parity(&zone);
 }

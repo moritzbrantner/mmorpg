@@ -33,6 +33,11 @@ pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
 pub const MAX_VISIBLE_ENTITIES: usize = 64;
 
 const PLAYER_BODY_BASE: u64 = 1_000_000;
+/// World-limit body IDs start above every player body ID.
+const WORLD_LIMIT_BODY_BASE: u64 = PLAYER_BODY_BASE + (1 << 32);
+/// The engine sweeps motion, so any positive thickness stops a body; a thick
+/// slab also keeps contact correction pushing overlapping bodies back inside.
+const WORLD_LIMIT_THICKNESS_UNITS: i32 = 1_000;
 /// Character collision box: 0.6 m × 1.8 m × 0.6 m, shared with clients.
 pub const PLAYER_HALF_EXTENTS_UNITS: [i32; 3] = [30, 90, 30];
 const PLAYER_HALF_EXTENTS: Vec3i = Vec3i::new(
@@ -239,6 +244,9 @@ impl ZoneSimulation {
                     ),
                 ))
                 .map_err(physics_error)?;
+        }
+        for body in world_limit_bodies() {
+            world.add_body(body).map_err(physics_error)?;
         }
         Ok(Self {
             zone_id,
@@ -621,6 +629,30 @@ impl ZoneSimulation {
             .ok_or_else(|| ZoneError::new("player spawn slot is out of range"))?;
         Ok(Vec3i::new(feet[0], PLAYER_HALF_EXTENTS_UNITS[1], feet[2]))
     }
+}
+
+/// Six fixed slabs whose inner faces close the cube `±MAX_CONTENT_COORDINATE_UNITS`.
+/// Content walls are the gameplay boundary; these bodies are not content. They
+/// keep every body admitted at a spawn slot inside the range that player
+/// projections encode, whatever the content's walls or gravity.
+fn world_limit_bodies() -> impl Iterator<Item = RigidBody> {
+    let limit = MAX_CONTENT_COORDINATE_UNITS;
+    let half_thickness = WORLD_LIMIT_THICKNESS_UNITS / 2;
+    let span = limit + WORLD_LIMIT_THICKNESS_UNITS;
+    let slabs = (0..3_usize).flat_map(|axis| [(axis, -1), (axis, 1)]);
+    (WORLD_LIMIT_BODY_BASE..)
+        .zip(slabs)
+        .map(move |(id, (axis, side))| {
+            let mut position = [0; 3];
+            position[axis] = side * (limit + half_thickness);
+            let mut half_extents = [span; 3];
+            half_extents[axis] = half_thickness;
+            RigidBody::fixed(
+                BodyId(id),
+                Vec3i::new(position[0], position[1], position[2]),
+                Vec3i::new(half_extents[0], half_extents[1], half_extents[2]),
+            )
+        })
 }
 
 /// Horizontal controller velocity: `speed × direction(facing + local offset)`,

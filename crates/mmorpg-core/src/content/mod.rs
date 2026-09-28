@@ -9,9 +9,11 @@ use crate::{MAX_PLAYERS_PER_ZONE, PLAYER_HALF_EXTENTS_UNITS, ZoneError};
 pub const MAX_STATIC_COLLIDERS: usize = 1_024;
 /// One render metre corresponds to 100 integer simulation units; Y points up.
 pub const UNITS_PER_METRE: i32 = 100;
-/// Every collider bound and spawn position lies within `±` this many units on
-/// each axis. Player projections carry positions as `i16`; walls inside this
-/// range keep every reachable position representable with headroom.
+/// Every collider bound and every spawned body lies within `±` this many units
+/// on each axis. `ZoneSimulation` closes this cube with fixed world-limit
+/// bodies, so no body admitted at a spawn slot leaves it, whatever the
+/// content's walls or gravity. Player projections carry positions as `i16`,
+/// which leaves 767 units of headroom beyond the limit.
 pub const MAX_CONTENT_COORDINATE_UNITS: i32 = 32_000;
 
 /// Half-open XZ rectangle `[min, max)` in units.
@@ -104,9 +106,10 @@ impl ZoneDefinition {
 
     /// IDs occupy a disjoint namespace from player bodies. Sorting once gives
     /// stable construction, snapshots, and scene export independent of authoring order.
-    /// Every collider bound and all `MAX_PLAYERS_PER_ZONE` spawn slots must lie
-    /// within [`MAX_CONTENT_COORDINATE_UNITS`], and no spawned body may overlap a
-    /// collider (touching, such as feet on the ground, is allowed).
+    /// Every collider bound and the body at each of the `MAX_PLAYERS_PER_ZONE`
+    /// spawn slots must lie within [`MAX_CONTENT_COORDINATE_UNITS`], and no
+    /// spawned body may overlap a collider (touching, such as feet on the
+    /// ground, is allowed).
     pub fn with_spawn_grid(
         revision: u64,
         gravity: [i32; 3],
@@ -176,7 +179,8 @@ const fn within_content_range(value: i32) -> bool {
     -MAX_CONTENT_COORDINATE_UNITS <= value && value <= MAX_CONTENT_COORDINATE_UNITS
 }
 
-/// Spawned bodies may touch each other and colliders, but never overlap them.
+/// Spawned bodies lie inside the content range and may touch each other and
+/// colliders, but never overlap them.
 fn validate_spawn_grid(grid: SpawnGrid, colliders: &[StaticCollider]) -> Result<(), ZoneError> {
     let body = PLAYER_HALF_EXTENTS_UNITS;
     if grid.columns == 0 || grid.spacing < 2 * body[0].max(body[2]) {
@@ -189,12 +193,21 @@ fn validate_spawn_grid(grid: SpawnGrid, colliders: &[StaticCollider]) -> Result<
             .ok()
             .and_then(|slot| grid.feet(slot))
             .ok_or_else(|| ZoneError::new("spawn grid overflows"))?;
-        if !feet.iter().copied().all(within_content_range) {
+        let center = [feet[0], body[1], feet[2]];
+        let inside = (0..3).all(|axis| {
+            let (Some(min), Some(max)) = (
+                center[axis].checked_sub(body[axis]),
+                center[axis].checked_add(body[axis]),
+            ) else {
+                return false;
+            };
+            within_content_range(min) && within_content_range(max)
+        });
+        if !inside {
             return Err(ZoneError::new(
                 "spawn slot lies outside the content coordinate range",
             ));
         }
-        let center = [feet[0], body[1], feet[2]];
         let blocked = colliders.iter().any(|collider| {
             (0..3).all(|axis| {
                 let distance = (i64::from(center[axis]) - i64::from(collider.position[axis])).abs();
