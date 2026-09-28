@@ -66,25 +66,13 @@ python3 scripts/smoke-native.py      # offscreen end-to-end: host + client + GPU
 
 - Balance playable-game progress with the distributed foundation. Gameplay slices are welcome but must not break the ownership, fencing, handoff or determinism contracts above.
 
-## Git and merging
+## Shared conventions
 
-- Work on a branch named `agent/<short-topic>`; never commit directly to `main`.
-- Open a PR, wait for CI, and merge it yourself with a merge commit (`gh pr merge --merge --delete-branch`) when all checks are green.
-- You may also review and merge Renovate PRs, other agents' PRs and the owner's feature PRs once they are reviewed and green.
-- Never weaken, skip, or delete a failing test or check to get green.
-
-## Design decisions
-
-- Implement directly; no planning issue is needed first.
-- When you make a real architecture decision (new boundary, dependency, persistence/protocol shape, trade-off that is hard to reverse), record it as an ADR in `docs/adr/NNNN-<slug>.md` in the same PR.
+General engineering rules (git and merging, commits, testing, ADRs, docs, dependencies, Rust style, …) come from `coding-agent-conventions`, installed in `.conventions/`. Read the rule briefing in `.conventions/index.md` before implementing and open the linked source when a rule applies. Do not edit `.conventions/`; refresh it with `coding-tooling conventions update`. Rules below are repository-specific additions or exceptions.
 
 ## Shared foundations
 
-- If a task needs a change in a shared foundation repo (`game-server`, `physics-engine`, `3d-lab`, …, checked out beside this repo under `~/privat/`), change it there: PR, merge when green, then bump the pinned rev here in the same task. Do not work around a foundation bug locally.
-
-## Testing
-
-- Every behavior change or bug fix comes with a test. For bugs, write the failing test that reproduces it first, then fix.
+- Shared foundations (`game-server`, `physics-engine`, `3d-lab`, …) are checked out beside this repo under `~/privat/`. Fix defects there and bump the pin here (DEP-003).
 
 ## Done means
 
