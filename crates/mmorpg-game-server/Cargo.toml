@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# Hosts never depend on presentation data such as mmorpg-scenery;
+# tests/dependency_boundary.rs checks the resolved graph.
 [dependencies]
 game-server.workspace = true
 mmorpg-core.workspace = true

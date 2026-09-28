@@ -1172,6 +1172,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mmorpg-scenery"
+version = "0.1.0"
+dependencies = [
+ "mmorpg-core",
+]
+
+[[package]]
 name = "mmorpg-wasm"
 version = "0.1.0"
 dependencies = [

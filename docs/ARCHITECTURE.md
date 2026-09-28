@@ -29,7 +29,11 @@ flowchart TD
     Directory --> Core
     Core --> Physics[physics-engine: integration and collision]
     Client --> Renderer[3d-lab: graphics]
+    Client --> Scenery[mmorpg-scenery: presentation scenery]
+    Scenery --> Core
 ```
+
+`mmorpg-scenery` is presentation-only: it derives props, road surfaces, water and relief from core content for clients. It depends on `mmorpg-core`; hosts never depend on it. `mmorpg-game-server/tests/dependency_boundary.rs` walks the committed lockfile graph to prove that no host-side crate reaches it, and `cargo tree --locked -p mmorpg-game-server -e normal -i mmorpg-scenery` reports that the package is not in the host's graph.
 
 The control plane imports core domain identifiers, but never holds or mutates a `ZoneSimulation`. `game-server` continues to own session sequencing, ticks, reconnect, replay, recovery and transport. MMO composition must not fork these implementations. Foundations remain pinned to exact revisions.
 
@@ -63,6 +67,16 @@ Greyhaven Vale (`mmorpg_core::greyhaven_vale`, content revision 2) is the starte
 - `areas()`: the five named subzones as a `ZoneAreas` table, ordered by `AreaId` with disjoint bounds, for future exploration objectives and for presentation names.
 
 Collider IDs are grouped by structure in `greyhaven_vale::ids` so presentation can derive its visuals from the collider table without core knowing about visuals.
+
+## Presentation scenery
+
+`mmorpg-scenery` (`greyhaven_vale_scenery()`) turns that content into a deterministic `Scenery` value for clients:
+
+- **props**: one visual per structure collider, mapped by collider ID (keep, inn, houses, palisade segments, gate posts, trees, rocks, cliffs, tents …), plus seeded decorations (grass tufts, flowers, bushes, reeds, background pines on the mountain slopes, crop rows, lamps, signposts, barrels, carts, a dock) placed by a SplitMix64 stream and rejected against colliders, roads, the plaza and water. Each prop has a kind, feet position on y = 0, `u16` yaw, per-mille scale and optional collider ID. Tests assert the collider mapping is one-to-one and that no prop intersects a collider it does not visualise;
+- **roads** (3 m wide over core's centre lines) and **water** (Stillwater Lake as an ellipse with a 0.15 m surface; the water is walkable and has no collider);
+- **relief**: `height_at(x, z)` in integer units from seeded integer value noise, at most ±0.6 m inside the playable square, exactly 0 under and near structures, roads, the plaza, the spawn slots and water, and rising to 40 m mountains beyond the walls. `terrain_grid(step)` samples heights and biome colours (grass, road dirt, plaza, forest floor, farmland, sand, rock, snow) over ±200 m.
+
+Relief is presentation-only: walkable ground stays physically flat, and clients draw a unit at its physics position plus `height_at` at its XZ. Walkable slopes would need a heightfield or step-up controller in `physics-engine`. `Scenery::stable_hash` pins the derived output, so every platform renders the same vale.
 
 Movement intent is `Move { forward, strafe, facing }` with each axis in `[-1, 1]` and a `u16` facing (65 536 steps per turn, 0 facing +Z, increasing toward +X). Core rotates the intent into one of eight headings relative to the facing through `trig::direction`, a quarter-wave sine table generated at compile time with integer arithmetic; no floating point decides authoritative state. The character's right is `direction(facing − 90°)`. Run and strafe speed is 21 units/tick (6.3 m/s); any backward component uses 13 units/tick. Facing is stored per player and has no collision effect.
 

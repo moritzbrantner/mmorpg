@@ -14,6 +14,7 @@ The native Rust client now connects to the standalone zone host and renders serv
 | Session ticks, reconnects, replay/recovery, WebTransport | `game-server` |
 | Zone placement, lease fencing, host routing, handoff metadata | `mmorpg-control-plane` |
 | Adapter from a zone simulation into `game-server` | `mmorpg-game-server` |
+| Presentation scenery: props, roads, water, relief, terrain grid (clients only) | `mmorpg-scenery` |
 | Native graphics | `mmorpg-client`: wgpu/winit adapter over pinned `3d-lab` mesh/camera models |
 | Browser graphics | pinned `3d-lab` browser renderer |
 | Browser zone host (single-player demo) | `mmorpg-wasm`: thin wasm-bindgen adapter over `mmorpg-core` and `mmorpg-protocol` |
