@@ -1,0 +1,54 @@
+import type { WorldCommand } from "../../src/command-wire";
+import type { EntityState, ZoneSnapshot } from "../../src/replication";
+import type { WorldSource } from "../../src/world/world-source";
+
+/** An in-memory world that honours the `WorldSource` contract without any rules. */
+export class FakeWorldSource implements WorldSource {
+  readonly sent: { player: number; command: WorldCommand }[] = [];
+  #nextPlayer = 1;
+  #player: number | null = null;
+  #tick = 0n;
+  #latest: ZoneSnapshot | null = null;
+
+  join(): number {
+    if (this.#player !== null) throw new Error("already joined");
+    this.#player = this.#nextPlayer;
+    this.#nextPlayer += 1;
+    this.#publish();
+    return this.#player;
+  }
+
+  leave(): void {
+    this.#player = null;
+    this.#latest = null;
+  }
+
+  sendCommand(command: WorldCommand): void {
+    if (this.#player === null) throw new Error("not joined");
+    this.sent.push({ player: this.#player, command });
+  }
+
+  advance(deltaSeconds: number): void {
+    if (this.#player !== null && deltaSeconds > 0) {
+      this.#tick += 1n;
+      this.#publish();
+    }
+  }
+
+  latestProjection(): ZoneSnapshot | null {
+    return this.#latest;
+  }
+
+  sample(): readonly EntityState[] {
+    return this.#latest?.entities ?? [];
+  }
+
+  #publish(): void {
+    const player = this.#player;
+    if (player === null) return;
+    this.#latest = {
+      zoneId: 1, tick: this.#tick, contentRevision: 1n, acknowledgedSequence: 0, viewerId: player,
+      entities: [{ kind: "player", entityId: player, position: [0, 90, 0], velocity: [0, 0, 0], facing: 0 }],
+    };
+  }
+}

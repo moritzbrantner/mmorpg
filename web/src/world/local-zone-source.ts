@@ -1,0 +1,114 @@
+import { encodeCommand, type WorldCommand } from "../command-wire";
+import { FixedTickClock } from "../demo-clock";
+import { decodeSnapshot, SnapshotBuffer, type EntityState, type ZoneSnapshot } from "../replication";
+import type { WorldSource } from "./world-source";
+
+/** The subset of the wasm-bindgen `LocalZone` this source drives. */
+export type LocalZoneHandle = {
+  join(): number;
+  leave(player: number): boolean;
+  submit(player: number, sequence: number, command: Uint8Array): boolean;
+  tick(): bigint;
+  projection(player: number): Uint8Array;
+};
+
+const MAX_SEQUENCE = 0xffff_ffff;
+
+/**
+ * A single-player world hosted in this page: the shared Rust zone simulation
+ * compiled to WASM, advanced in fixed 30 Hz ticks from a bounded accumulator.
+ * Every tick's encoded player-scoped projection goes through the same decoder
+ * and history a network source uses; canonical state never reaches here.
+ */
+export class LocalZoneSource implements WorldSource {
+  readonly #zone: LocalZoneHandle;
+  readonly #clock = new FixedTickClock();
+  readonly #history = new SnapshotBuffer();
+  #player: number | null = null;
+  #sequence = 0;
+  #latest: ZoneSnapshot | null = null;
+
+  constructor(zone: LocalZoneHandle) {
+    this.#zone = zone;
+  }
+
+  join(): number {
+    if (this.#player !== null) {
+      throw new Error("Already in the world; leave before joining again.");
+    }
+    const player = this.#zone.join();
+    this.#player = player;
+    this.#sequence = 0;
+    this.#clock.reset();
+    this.#history.reset();
+    this.#latest = null;
+    this.#publish(player);
+    return player;
+  }
+
+  leave(): void {
+    const player = this.#player;
+    if (player === null) {
+      return;
+    }
+    this.#player = null;
+    this.#latest = null;
+    this.#history.reset();
+    this.#clock.reset();
+    this.#zone.leave(player);
+  }
+
+  sendCommand(command: WorldCommand): void {
+    const player = this.#requirePlayer();
+    if (this.#sequence >= MAX_SEQUENCE) {
+      throw new Error("Command sequences are exhausted for this player.");
+    }
+    const payload = encodeCommand(command);
+    this.#sequence += 1;
+    if (!this.#zone.submit(player, this.#sequence, payload)) {
+      throw new Error(`The local zone ignored fresh sequence ${this.#sequence}.`);
+    }
+  }
+
+  advance(deltaSeconds: number): void {
+    const player = this.#player;
+    const due = this.#clock.advance(deltaSeconds);
+    if (player === null) {
+      return;
+    }
+    for (let tick = 0; tick < due; tick += 1) {
+      this.#zone.tick();
+      this.#publish(player);
+    }
+  }
+
+  latestProjection(): ZoneSnapshot | null {
+    return this.#latest;
+  }
+
+  sample(): readonly EntityState[] {
+    const latest = this.#latest;
+    if (!latest) {
+      return [];
+    }
+    // One tick of interpolation delay: blend from the previous tick toward the latest.
+    const renderTick = latest.tick > 0n ? latest.tick - 1n : 0n;
+    return this.#history.sample(renderTick, this.#clock.fraction);
+  }
+
+  #requirePlayer(): number {
+    if (this.#player === null) {
+      throw new Error("Join the world before sending commands.");
+    }
+    return this.#player;
+  }
+
+  #publish(player: number): void {
+    const snapshot = decodeSnapshot(this.#zone.projection(player));
+    if (snapshot.viewerId !== player) {
+      throw new Error("The local zone addressed a projection to another player.");
+    }
+    this.#latest = snapshot;
+    this.#history.push(snapshot);
+  }
+}

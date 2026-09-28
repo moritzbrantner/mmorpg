@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { IndexedMeshGeometry, RendererSceneNode } from "@moritzbrantner/three-d-renderer";
+import { createLocalWorld, type LocalZoneModule } from "../src/world/local-world";
 import { createSceneryProvider, decodeScenery } from "../src/world/scenery";
 import { appendBox, buildSceneryNodes } from "../src/world/scenery-nodes";
 import { placeUnit, unitNodes } from "../src/world/unit-nodes";
@@ -132,7 +133,7 @@ describe("static scenery nodes", () => {
   });
 });
 
-describe("scenery provider", () => {
+describe("scenery provider and local world", () => {
   const content = (areaId: number | undefined) => ({
     scenery: () => JSON.stringify(exportJson()),
     areaAt: () => areaId,
@@ -144,6 +145,22 @@ describe("scenery provider", () => {
     expect(createSceneryProvider(content(undefined)).areaAt(0, 0)).toBeNull();
     expect(() => createSceneryProvider(content(9)).areaAt(0, 0)).toThrow("missing");
     expect(createSceneryProvider(content(1)).reliefAt(1.4, 2.6)).toBe(4);
+  });
+
+  test("refuses scenery from another content revision than the zone", () => {
+    const module = (revision: bigint): LocalZoneModule => ({
+      ...content(1),
+      LocalZone: class {
+        join() { return 1; }
+        leave() { return true; }
+        submit() { return true; }
+        tick() { return 1n; }
+        projection(): Uint8Array { throw new Error("unused"); }
+        contentRevision() { return revision; }
+      },
+    });
+    expect(() => createLocalWorld(module(8n))).toThrow("does not match");
+    expect(createLocalWorld(module(7n)).scenery.scenery.contentRevision).toBe(7n);
   });
 });
 
