@@ -1,9 +1,11 @@
 # The browser demo's session, end to end through the hosted runtime: enter,
 # run and strafe relative to a camera heading, jump mid-run, report the core
 # area, stop, leave (disconnect until grace expiry removes the unit), and
-# enter again as a new player at the free spawn. The WASM local host drives
-# the same core with the same commands; mmorpg-wasm's tests prove its
-# projections are byte-identical to this runtime's.
+# enter again as a new player at the free spawn. mmorpg-wasm's host test
+# browser_local_session_projections_match_the_network_runtime replays these
+# steps against the WASM local host and requires byte-identical projections
+# every tick while joined; leave differs there (the local host removes the
+# unit at once), so the away ticks are not compared. Keep both in step.
 name = "browser-local-session"
 zone = 1
 ticks = 54

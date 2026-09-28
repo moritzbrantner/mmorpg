@@ -119,7 +119,7 @@ MMORPG_SCENARIOS_UPDATE=1 cargo test -p mmorpg-scenarios --test scenarios --lock
 
 ## Limits
 
-- The bot runner covers one zone per scenario and the `Move` and `Jump` commands. `browser-local-session` scripts the browser demo's session (enter, camera-relative run and strafe, jump arc, area, leave, re-enter) through the hosted runtime; `mmorpg-wasm`'s tests prove the WASM local host produces byte-identical projections for the same commands.
+- The bot runner covers one zone per scenario and the `Move` and `Jump` commands. `browser-local-session` scripts the browser demo's session (enter, camera-relative run and strafe, jump arc, area, leave, re-enter) through the hosted runtime. `mmorpg-wasm`'s host tests replay the same steps against the WASM local host and `MatchRuntime` and require byte-identical projections every tick while the player is joined (ticks 1–44 and 51–54). Leaving is modelled differently: the local host removes the unit at once, the hosted runtime after reconnect grace, so the away ticks are not compared. The scenario file and that test are separate copies of the steps; changing one needs the same change in the other.
 - Scenarios run in process. Transport framing, datagram size limits, TLS and real reconnect timing are not covered. `scripts/smoke-native.py` and `mmorpg-client`'s loopback test still cover those.
 - A network mode against `mmorpg-zone-host` is not implemented. The reusable client session lives in `mmorpg-client`, which depends on wgpu and winit unconditionally.
 - The control-plane runner checks the in-memory reference model. It does not check a distributed deployment.

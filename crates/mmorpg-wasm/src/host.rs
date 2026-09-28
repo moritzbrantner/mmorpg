@@ -288,6 +288,108 @@ mod tests {
         }
     }
 
+    /// A step of `scenarios/bots/browser-local-session.toml`.
+    enum SessionStep {
+        Join,
+        Command(ZoneCommand),
+        Leave,
+    }
+
+    /// Replays the browser demo's scripted session against both hosts. While
+    /// the player is joined, every projection must be byte-identical. Leaving
+    /// differs by design: the local host removes the unit at once, the network
+    /// host only after reconnect grace, so nothing is compared while away.
+    #[test]
+    fn browser_local_session_projections_match_the_network_runtime() {
+        const GRACE_TICKS: u64 = 3;
+        const TICKS: u64 = 54;
+        let intent = |forward, strafe| ZoneCommand::Move {
+            forward,
+            strafe,
+            facing: EAST,
+        };
+        let steps = [
+            (0, SessionStep::Join),
+            (0, SessionStep::Command(intent(1, 0))),
+            (10, SessionStep::Command(ZoneCommand::Jump)),
+            (20, SessionStep::Command(intent(0, 1))),
+            (30, SessionStep::Command(intent(0, 0))),
+            (44, SessionStep::Leave),
+            (50, SessionStep::Join),
+        ];
+        let mut local = LocalZoneHost::new().unwrap();
+        let (_, adapter) = build_zone_matches([LOCAL_ZONE_ID])
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let mut network = MatchRuntime::new(adapter, GRACE_TICKS);
+        let mut tokens = 0_u8;
+        let mut session = None;
+        let mut sequence = 0_u32;
+        let mut compared = Vec::new();
+        let mut steps = steps.into_iter().peekable();
+        for tick in 0..TICKS {
+            while let Some((_, step)) = steps.next_if(|(at, _)| *at == tick) {
+                match step {
+                    SessionStep::Join => {
+                        tokens += 1;
+                        let lease = network
+                            .admit(ReconnectToken([tokens; RECONNECT_TOKEN_BYTES]))
+                            .unwrap();
+                        assert_eq!(local.join().unwrap(), lease.player_id);
+                        session = Some(lease);
+                        sequence = 0;
+                    }
+                    SessionStep::Command(command) => {
+                        let lease = session.unwrap();
+                        sequence += 1;
+                        let payload = encode_command(command);
+                        assert_eq!(
+                            network.submit_command(
+                                lease.player_id,
+                                lease.connection_epoch,
+                                sequence,
+                                &payload
+                            ),
+                            Ok(CommandOutcome::Applied)
+                        );
+                        assert_eq!(
+                            local.submit(lease.player_id, sequence, &payload),
+                            Ok(SubmitOutcome::Applied)
+                        );
+                    }
+                    SessionStep::Leave => {
+                        let lease = session.take().unwrap();
+                        assert!(network.disconnect(lease.player_id, lease.connection_epoch));
+                        assert!(local.leave(lease.player_id));
+                    }
+                }
+            }
+            network.advance_tick().unwrap();
+            assert_eq!(local.tick().unwrap(), tick + 1);
+            if let Some(lease) = session {
+                assert_eq!(
+                    network.snapshot_for(lease.player_id).unwrap().payload,
+                    local.projection(lease.player_id).unwrap(),
+                    "identical projection bytes for player {} at tick {}",
+                    lease.player_id,
+                    tick + 1
+                );
+                compared.push((lease.player_id, tick + 1));
+            }
+        }
+        assert!(steps.next().is_none(), "every scripted step ran");
+        let expected: Vec<_> = (1..=44)
+            .map(|tick| (1, tick))
+            .chain((51..=TICKS).map(|tick| (2, tick)))
+            .collect();
+        assert_eq!(
+            compared, expected,
+            "compared the first session and the re-entered one"
+        );
+    }
+
     #[test]
     fn unknown_players_and_left_players_fail_closed() {
         let mut host = LocalZoneHost::new().unwrap();
