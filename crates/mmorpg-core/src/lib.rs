@@ -6,7 +6,8 @@ mod interest;
 pub mod trig;
 pub use areas::{Area, AreaId, MAX_AREA_NAME_BYTES, MAX_ZONE_AREAS, ZoneAreas, outpost_areas};
 pub use content::{
-    MAX_STATIC_COLLIDERS, StaticCollider, UNITS_PER_METRE, ZoneDefinition, outpost_definition,
+    MAX_CONTENT_COORDINATE_UNITS, MAX_STATIC_COLLIDERS, SpawnGrid, StaticCollider, UNITS_PER_METRE,
+    ZoneDefinition, outpost_definition,
 };
 use interest::InterestIndex;
 pub use interest::{InterestMaintenanceStats, InterestQueryStats, PlayerProjection};
@@ -22,7 +23,7 @@ pub type PlayerId = u32;
 
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 3;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 4;
 /// Inclusive XZ radius of player-scoped relevance (45 m).
 pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
 /// Deterministic relevance cap of one player projection: the viewer plus its
@@ -46,8 +47,6 @@ pub const BACKPEDAL_SPEED_UNITS_PER_TICK: i32 = 13;
 pub const JUMP_VELOCITY_UNITS_PER_TICK: i32 = 16;
 /// The grounded probe spans this many units directly below the feet.
 const GROUND_PROBE_DEPTH_UNITS: i32 = 2;
-const SPAWN_GRID_WIDTH: u32 = 32;
-const SPAWN_SPACING: i32 = 200;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ZoneId(u32);
@@ -91,9 +90,9 @@ pub struct EntitySnapshot {
     pub kind: EntityKind,
     pub id: u32,
     pub position: [i32; 3],
-    /// Presentation-only velocity, saturated to the `i16` range. Canonical
-    /// state keeps the exact physics velocity.
-    pub velocity: [i16; 3],
+    /// Presentation-only velocity, saturated to the `i8` range per axis.
+    /// Canonical state keeps the exact physics velocity.
+    pub velocity: [i8; 3],
     pub facing: u16,
 }
 
@@ -333,17 +332,17 @@ impl ZoneSimulation {
         let spawn_slot = self
             .available_spawn_slot()
             .ok_or_else(|| ZoneError::new("zone spawn capacity reached"))?;
+        let position = self.spawn_position(spawn_slot)?;
 
         self.world
             .add_body(RigidBody::dynamic(
                 Self::body_id(player_id),
-                Self::spawn_position(spawn_slot),
+                position,
                 Vec3i::ZERO,
                 PLAYER_HALF_EXTENTS,
             ))
             .map_err(physics_error)?;
 
-        let position = Self::spawn_position(spawn_slot);
         self.interest.insert(player_id, position.x, position.z);
         self.interest_work.bucket_inserts += 1;
         self.players.insert(
@@ -568,7 +567,7 @@ impl ZoneSimulation {
             kind: EntityKind::Player,
             id: player_id,
             position: [position.x, position.y, position.z],
-            velocity: [velocity.x, velocity.y, velocity.z].map(saturate_i16),
+            velocity: [velocity.x, velocity.y, velocity.z].map(saturate_i8),
             facing: state.facing,
         })
     }
@@ -611,18 +610,15 @@ impl ZoneSimulation {
             .and_then(|slot| u16::try_from(slot).ok())
     }
 
-    fn spawn_position(spawn_slot: u16) -> Vec3i {
-        let spawn_slot = u32::from(spawn_slot);
-        let column = i32::try_from(spawn_slot % SPAWN_GRID_WIDTH)
-            .expect("spawn grid column always fits in i32");
-        let row = i32::try_from(spawn_slot / SPAWN_GRID_WIDTH)
-            .expect("spawn grid row always fits in i32");
-        // Feet rest on y = 0, the top of flat walkable ground.
-        Vec3i::new(
-            column * SPAWN_SPACING,
-            PLAYER_HALF_EXTENTS_UNITS[1],
-            row * SPAWN_SPACING,
-        )
+    /// Body centre for a slot of the content's validated spawn grid; feet
+    /// rest on y = 0, the top of flat walkable ground.
+    fn spawn_position(&self, spawn_slot: u16) -> Result<Vec3i, ZoneError> {
+        let feet = self
+            .definition
+            .spawn_grid()
+            .feet(spawn_slot)
+            .ok_or_else(|| ZoneError::new("player spawn slot is out of range"))?;
+        Ok(Vec3i::new(feet[0], PLAYER_HALF_EXTENTS_UNITS[1], feet[2]))
     }
 }
 
@@ -685,8 +681,8 @@ fn is_grounded(world: &World, body: &RigidBody) -> Result<bool, ZoneError> {
     Ok(hits.into_iter().any(|hit| hit != body.id()))
 }
 
-fn saturate_i16(value: i32) -> i16 {
-    i16::try_from(value).unwrap_or(if value < 0 { i16::MIN } else { i16::MAX })
+fn saturate_i8(value: i32) -> i8 {
+    i8::try_from(value).unwrap_or(if value < 0 { i8::MIN } else { i8::MAX })
 }
 
 fn physics_error(error: physics_engine::PhysicsError) -> ZoneError {
@@ -950,7 +946,7 @@ mod tests {
         };
         assert_eq!((viewer.id, viewer.facing), (2, 40_000), "the viewer leads");
         assert_eq!(other.id, 1);
-        assert_eq!(other.velocity, [i16::MAX, i16::MIN, i16::MAX]);
+        assert_eq!(other.velocity, [i8::MAX, i8::MIN, i8::MAX]);
         assert_eq!(other.facing, 0);
         assert_eq!(
             zone.snapshot().unwrap().players[0].velocity,

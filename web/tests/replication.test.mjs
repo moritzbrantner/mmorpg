@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { decodeSnapshot, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v3.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v4.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
 const player = (entityId, x, facing = 0) => ({
   kind: "player", entityId, position: [x, 90, 0], velocity: [21, 0, 0], facing,
@@ -17,7 +17,7 @@ describe("Rust/browser snapshot contract", () => {
       zoneId: 42, tick: 99n, contentRevision: 42n, acknowledgedSequence: 81, viewerId: 7,
       entities: [
         { kind: "player", entityId: 7, position: [10, 20, -30], velocity: [1, -2, 3], facing: 16_384 },
-        { kind: "player", entityId: 9, position: [-400, 90, 2_500], velocity: [-13, 16, -32_768], facing: 49_152 },
+        { kind: "player", entityId: 9, position: [-400, 90, 2_500], velocity: [-13, 16, -128], facing: 49_152 },
       ],
     });
     const offsetBuffer = new Uint8Array(fixture.length + 4);
@@ -29,8 +29,8 @@ describe("Rust/browser snapshot contract", () => {
     for (let length = 0; length < fixture.length; length++) {
       expect(() => decodeSnapshot(fixture.slice(0, length))).toThrow();
     }
-    // Wire v2, canonical scope, schema v2, count above capacity, reserved and unknown kinds.
-    for (const [offset, value] of [[0, 2], [1, 1], [3, 2], [32, 255], [34, 2], [34, 0], [59, 3]]) {
+    // Wire v3, canonical scope, schema v3, count above records, reserved and unknown kinds.
+    for (const [offset, value] of [[0, 3], [1, 1], [3, 3], [32, 255], [34, 2], [34, 0], [50, 3]]) {
       const invalid = fixture.slice();
       invalid[offset] = value;
       expect(() => decodeSnapshot(invalid)).toThrow();
@@ -39,6 +39,18 @@ describe("Rust/browser snapshot contract", () => {
     new DataView(fewer.buffer).setUint16(32, 1);
     expect(() => decodeSnapshot(fewer)).toThrow("count");
     expect(() => decodeSnapshot(new Uint8Array([...fixture, 0]))).toThrow();
+    expect(() => decodeSnapshot(new Uint8Array(1_078))).toThrow("budget");
+  });
+
+  test("requires the viewer to lead the priority-ordered records", () => {
+    const swapped = new Uint8Array(fixture.length);
+    swapped.set(fixture.slice(0, 34));
+    swapped.set(fixture.slice(50, 66), 34);
+    swapped.set(fixture.slice(34, 50), 50);
+    expect(() => decodeSnapshot(swapped)).toThrow("viewer");
+    const otherViewer = fixture.slice();
+    new DataView(otherViewer.buffer).setUint32(28, 9);
+    expect(() => decodeSnapshot(otherViewer)).toThrow("viewer");
   });
 
   test("preserves 64-bit ticks without floating point rounding", () => {
@@ -48,9 +60,9 @@ describe("Rust/browser snapshot contract", () => {
   });
 
   test("rejects duplicate entity identities", () => {
-    const encoded = new Uint8Array(fixture.length + 25);
+    const encoded = new Uint8Array(fixture.length + 16);
     encoded.set(fixture);
-    encoded.set(fixture.slice(34, 59), fixture.length);
+    encoded.set(fixture.slice(34, 50), fixture.length);
     new DataView(encoded.buffer).setUint16(32, 3);
     expect(() => decodeSnapshot(encoded)).toThrow("Duplicate");
   });

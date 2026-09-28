@@ -72,7 +72,8 @@ The workspace provides:
 - a deliberately single-player GitHub Pages tech demo that runs the shared zone simulation as a local WASM zone host and renders its player-scoped projections with the pinned `3d-lab` renderer;
 - local browser-demo character creation with Warden, Ranger, and Arcanist starter classes, male/female presentation variants, stable per-character local identities, and per-character appearance saves;
 - facing-relative movement (run, strafe, backpedal) and grounded jumps driven by a const-generated integer trigonometry table;
-- strict Rust/browser snapshot v3 and command v2 compatibility tests (entity kinds, facing, viewer identity, golden command bytes) and bounded client interpolation;
+- strict Rust/browser snapshot v4 and command v2 compatibility tests (compact priority-ordered records, facing, viewer identity, golden command bytes) and bounded client interpolation;
+- player projections capped by deterministic relevance priority and a measured single-datagram byte budget;
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
 - [headless deterministic scenario runners](docs/SCENARIOS.md) for scripted bots against the real zone host path and for control-plane lease/handoff sequences with invariant checks after every step;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
@@ -109,7 +110,7 @@ Start the complete local native development environment with:
 
 Building the page requires the Rust toolchain from `rust-toolchain.toml` (with the `wasm32-unknown-unknown` target) and the `wasm-bindgen` CLI at the crate's exact version: `cargo install wasm-bindgen-cli --version =0.2.129 --locked`. `bun test` and `bun run build` compile the module first; the generated bindings are ignored build output.
 
-Snapshot schema/wire version 3 carries entity kinds, facing and the viewer's identity, and command wire version 2 carries `Move`/`Jump`; v2 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
+Snapshot schema/wire version 4 carries compact, priority-ordered entity records within a one-datagram byte budget, and command wire version 2 carries `Move`/`Jump`; v3 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
 
 ## Scaling model
 
@@ -158,7 +159,7 @@ bun test
 bun run build
 ```
 
-Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v3.hex` and `fixtures/protocol/commands-v2.hex`.
+Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v4.hex` and `fixtures/protocol/commands-v2.hex`.
 
 ## Run a standalone zone host
 

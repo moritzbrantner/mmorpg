@@ -30,9 +30,10 @@ fn assert_wire_parity(zone: &ZoneSimulation) {
         let expected = exhaustive_projection(&canonical, observer);
         let actual = zone.snapshot_for_player(observer.player_id).unwrap();
         assert_eq!(actual, expected, "observer {}", observer.player_id);
+        // Positions beyond the compact wire range fail closed identically.
         assert_eq!(
-            encode_snapshot(&actual).unwrap(),
-            encode_snapshot(&expected).unwrap(),
+            encode_snapshot(&actual),
+            encode_snapshot(&expected),
             "observer {} at tick {}",
             observer.player_id,
             canonical.tick
@@ -135,4 +136,11 @@ fn collision_corrections_and_failed_step_preserve_reference_parity() {
     assert!(edge.advance_tick().is_err());
     assert_eq!(edge.interest_maintenance_stats(), work);
     assert_wire_parity(&edge);
+    assert_eq!(
+        encode_snapshot(&edge.snapshot_for_player(1).unwrap())
+            .unwrap_err()
+            .to_string(),
+        "entity position is outside the compact wire range",
+        "unrepresentable positions never reach the wire"
+    );
 }

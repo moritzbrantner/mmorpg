@@ -12,7 +12,7 @@ mod visibility_oracle;
 use visibility_oracle::exhaustive_projection;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    for name in ["sparse-travel-512", "dense-hub-512", "outpost-spawn-512"] {
+    for name in ["sparse-grid-512", "dense-hub-512", "outpost-spawn-512"] {
         measure(name)?;
     }
     Ok(())
@@ -31,7 +31,12 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
     for index in 0..MAX_PLAYERS_PER_ZONE {
         let value = i32::try_from(index)?;
         let position = match name {
-            "sparse-travel-512" => [value * 6000, y, 0],
+            // 23 columns 28 m apart span ±308 m, inside the compact wire range.
+            "sparse-grid-512" => [
+                (value % 23) * 2_800 - 30_800,
+                y,
+                (value / 23) * 2_800 - 30_800,
+            ],
             "dense-hub-512" => [(value % 23) * 64 - 704, y, (value / 23) * 64 - 704],
             "outpost-spawn-512" => [(value % 32) * 200, y, (value / 32) * 200],
             _ => return Err("unknown workload".into()),
@@ -61,8 +66,7 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
     let removes = after.bucket_removes - before.bucket_removes;
     let moves = after.bucket_moves - before.bucket_moves;
     let inspected = after.players_inspected - before.players_inspected;
-    if name == "sparse-travel-512" && (rebuilds != 0 || inserts != 0 || removes != 0 || moves != 0)
-    {
+    if name == "sparse-grid-512" && (rebuilds != 0 || inserts != 0 || removes != 0 || moves != 0) {
         return Err("stationary workload rewrote bucket memberships".into());
     }
     let canonical = zone.snapshot()?;

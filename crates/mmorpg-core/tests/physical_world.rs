@@ -1,4 +1,7 @@
-use mmorpg_core::{StaticCollider, ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation};
+use mmorpg_core::{
+    MAX_CONTENT_COORDINATE_UNITS, MAX_PLAYERS_PER_ZONE, SpawnGrid, StaticCollider, ZoneCommand,
+    ZoneDefinition, ZoneId, ZoneSimulation,
+};
 
 /// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
 const EAST: u16 = 16_384;
@@ -108,6 +111,121 @@ fn content_rejects_ambiguous_ids_invalid_extents_and_overflow() {
             }]
         )
         .is_err()
+    );
+}
+
+#[test]
+fn content_keeps_colliders_and_spawn_slots_in_the_compact_coordinate_range() {
+    let limit = MAX_CONTENT_COORDINATE_UNITS;
+    let edge = StaticCollider {
+        id: 1,
+        position: [limit - 10, 0, -limit + 10],
+        half_extents: [10, 10, 10],
+    };
+    assert!(ZoneDefinition::new(1, [0; 3], vec![edge.clone()]).is_ok());
+    for position in [[limit - 9, 0, 0], [0, -limit + 9, 0], [0, 0, limit]] {
+        let error = ZoneDefinition::new(
+            1,
+            [0; 3],
+            vec![StaticCollider {
+                position,
+                ..edge.clone()
+            }],
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.message(),
+            "static collider lies outside the content coordinate range"
+        );
+    }
+    // 512 slots in 32 columns: the last slot's feet are 31 and 15 spacings out.
+    let reaching = SpawnGrid {
+        origin: [limit - 31 * 100, -limit],
+        columns: 32,
+        spacing: 100,
+    };
+    assert!(ZoneDefinition::with_spawn_grid(1, [0; 3], reaching, Vec::new()).is_ok());
+    let beyond = SpawnGrid {
+        origin: [limit - 31 * 100 + 1, -limit],
+        ..reaching
+    };
+    assert_eq!(
+        ZoneDefinition::with_spawn_grid(1, [0; 3], beyond, Vec::new())
+            .unwrap_err()
+            .message(),
+        "spawn slot lies outside the content coordinate range"
+    );
+}
+
+#[test]
+fn every_spawn_slot_is_validated_clear_of_colliders() {
+    let grid = SpawnGrid {
+        origin: [-1_000, 2_000],
+        columns: 16,
+        spacing: 60,
+    };
+    let ground = StaticCollider {
+        id: 1,
+        position: [0, -50, 0],
+        half_extents: [5_000, 50, 5_000],
+    };
+    let definition =
+        ZoneDefinition::with_spawn_grid(3, [0, -1, 0], grid, vec![ground.clone()]).unwrap();
+    assert_eq!(definition.spawn_grid(), grid);
+    // The last slot of the configured capacity, and a crate on top of it.
+    let last = u16::try_from(MAX_PLAYERS_PER_ZONE - 1).unwrap();
+    let feet = grid.feet(last).unwrap();
+    assert_eq!(feet, [-1_000 + 15 * 60, 0, 2_000 + 31 * 60]);
+    let crate_on_last_slot = StaticCollider {
+        id: 2,
+        position: [feet[0] + 50, 100, feet[2]],
+        half_extents: [25, 100, 25],
+    };
+    assert_eq!(
+        ZoneDefinition::with_spawn_grid(
+            3,
+            [0, -1, 0],
+            grid,
+            vec![ground.clone(), crate_on_last_slot]
+        )
+        .unwrap_err()
+        .message(),
+        "spawn slot overlaps a static collider"
+    );
+    // Touching the body's side is allowed, like touching the ground.
+    let touching = StaticCollider {
+        id: 2,
+        position: [feet[0] + 55, 100, feet[2]],
+        half_extents: [25, 100, 25],
+    };
+    assert!(
+        ZoneDefinition::with_spawn_grid(3, [0, -1, 0], grid, vec![ground.clone(), touching])
+            .is_ok()
+    );
+    for invalid in [
+        SpawnGrid { columns: 0, ..grid },
+        SpawnGrid {
+            spacing: 59,
+            ..grid
+        },
+    ] {
+        assert!(ZoneDefinition::with_spawn_grid(3, [0; 3], invalid, Vec::new()).is_err());
+    }
+    let mut zone = ZoneSimulation::with_definition(ZoneId::new(1), definition).unwrap();
+    for id in 0..MAX_PLAYERS_PER_ZONE {
+        zone.add_player(u32::try_from(id).unwrap()).unwrap();
+    }
+    let players = zone.snapshot().unwrap().players;
+    assert_eq!(players[0].position, [-1_000, 90, 2_000]);
+    assert_eq!(
+        players[MAX_PLAYERS_PER_ZONE - 1].position,
+        [feet[0], 90, feet[2]]
+    );
+    zone.advance_tick().unwrap();
+    assert_eq!(
+        zone.snapshot().unwrap().players,
+        players,
+        "a full grid rests"
     );
 }
 

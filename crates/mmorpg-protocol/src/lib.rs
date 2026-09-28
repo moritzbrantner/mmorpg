@@ -6,11 +6,26 @@ use std::fmt;
 use mmorpg_core::{
     CanonicalPlayerSnapshot, CanonicalZoneSnapshot, EntityKind, EntitySnapshot,
     MAX_PLAYERS_PER_ZONE, MAX_STATIC_COLLIDERS, MAX_VISIBLE_ENTITIES, SNAPSHOT_SCHEMA_VERSION,
-    StaticCollider, ZoneCommand, ZoneDefinition, ZoneId, ZoneSnapshot,
+    SpawnGrid, StaticCollider, ZoneCommand, ZoneDefinition, ZoneId, ZoneSnapshot,
 };
 
 pub const COMMAND_WIRE_VERSION: u8 = 2;
-pub const SNAPSHOT_WIRE_VERSION: u8 = 3;
+pub const SNAPSHOT_WIRE_VERSION: u8 = 4;
+
+/// Smallest WebTransport datagram payload measured over the pinned stack:
+/// QUIC's 1,200-byte initial MTU before path MTU discovery, observed as 1,161
+/// bytes by both peers (`mmorpg-client` `connected_world` tests). The pinned
+/// `game-server` captures its limit when a connection starts, which on a real
+/// path can precede discovery, and closes the session for a larger snapshot.
+pub const MEASURED_MIN_DATAGRAM_BYTES: usize = 1_161;
+/// `game-server` session frame header in front of every snapshot payload.
+pub const SESSION_SNAPSHOT_HEADER_BYTES: usize = 20;
+/// Headroom for transport overhead the measurement does not cover.
+pub const DATAGRAM_SAFETY_MARGIN_BYTES: usize = 64;
+/// Largest player projection payload: one datagram until `game-server`
+/// snapshot fragmentation is pinned (issue #18), when this budget can rise.
+pub const MAX_PLAYER_PROJECTION_BYTES: usize =
+    MEASURED_MIN_DATAGRAM_BYTES - SESSION_SNAPSHOT_HEADER_BYTES - DATAGRAM_SAFETY_MARGIN_BYTES;
 
 const MOVE_TAG: u8 = 1;
 const JUMP_TAG: u8 = 2;
@@ -22,9 +37,20 @@ const PLAYER_SNAPSHOT_SCOPE: u8 = 2;
 const PLAYER_ENTITY_KIND: u8 = 1;
 /// Wire version, scope, schema, zone ID and tick start every snapshot.
 const COMMON_HEADER_BYTES: usize = 16;
-const PLAYER_SNAPSHOT_HEADER_BYTES: usize = 34;
-const ENTITY_RECORD_BYTES: usize = 25;
+pub const PLAYER_SNAPSHOT_HEADER_BYTES: usize = 34;
+/// Kind, ID, `3 × i16` position, `3 × i8` velocity and `u16` facing.
+pub const ENTITY_RECORD_BYTES: usize = 16;
+/// Records that fit the budget after the header: (1,077 − 34) / 16 = 65.
+const MAX_WIRE_ENTITIES: usize =
+    (MAX_PLAYER_PROJECTION_BYTES - PLAYER_SNAPSHOT_HEADER_BYTES) / ENTITY_RECORD_BYTES;
 const CANONICAL_PLAYER_RECORD_BYTES: usize = 39;
+
+// A projection at core's relevance cap always fits one datagram:
+// 34 + 64 × 16 = 1,058 ≤ 1,077 bytes.
+const _: () = assert!(
+    PLAYER_SNAPSHOT_HEADER_BYTES + MAX_VISIBLE_ENTITIES * ENTITY_RECORD_BYTES
+        <= MAX_PLAYER_PROJECTION_BYTES
+);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolError {
@@ -102,19 +128,32 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
     }
 }
 
-pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError> {
-    let count = encode_count(
-        snapshot.entities.len(),
-        MAX_VISIBLE_ENTITIES,
-        "snapshot exceeds configured visible entity capacity",
-    )?;
-    let capacity = snapshot
+/// A player projection packed within [`MAX_PLAYER_PROJECTION_BYTES`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackedSnapshot {
+    pub payload: Vec<u8>,
+    /// Leading entities of the projection that fit; the rest were omitted.
+    pub packed_entities: usize,
+}
+
+/// Budget-driven packing: writes the header, then entities in the projection's
+/// priority order until the next record would exceed
+/// [`MAX_PLAYER_PROJECTION_BYTES`]. The viewer leads every projection and must
+/// always fit; later higher-priority sections (and the viewer's current target)
+/// will be written before the remaining entities. Positions outside the `i16`
+/// range fail closed rather than being clamped.
+pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, ProtocolError> {
+    let viewer = (EntityKind::Player, snapshot.viewer_id);
+    if snapshot
         .entities
-        .len()
-        .checked_mul(ENTITY_RECORD_BYTES)
-        .and_then(|bytes| bytes.checked_add(PLAYER_SNAPSHOT_HEADER_BYTES))
-        .ok_or_else(|| ProtocolError::new("snapshot size overflow"))?;
-    let mut payload = Vec::with_capacity(capacity);
+        .first()
+        .is_none_or(|entity| (entity.kind, entity.id) != viewer)
+    {
+        return Err(ProtocolError::new(
+            "player projection must start with the viewer",
+        ));
+    }
+    let mut payload = Vec::with_capacity(MAX_PLAYER_PROJECTION_BYTES);
     encode_common_header(
         &mut payload,
         PLAYER_SNAPSHOT_SCOPE,
@@ -125,20 +164,54 @@ pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError
     payload.extend_from_slice(&snapshot.content_revision.to_be_bytes());
     payload.extend_from_slice(&snapshot.acknowledged_sequence.to_be_bytes());
     payload.extend_from_slice(&snapshot.viewer_id.to_be_bytes());
-    payload.extend_from_slice(&count.to_be_bytes());
+    let count_offset = payload.len();
+    payload.extend_from_slice(&0_u16.to_be_bytes());
 
+    let mut packed_entities = 0_u16;
     for entity in &snapshot.entities {
-        payload.push(entity_kind_code(entity.kind));
-        payload.extend_from_slice(&entity.id.to_be_bytes());
-        for component in entity.position {
-            payload.extend_from_slice(&component.to_be_bytes());
+        if payload.len() + ENTITY_RECORD_BYTES > MAX_PLAYER_PROJECTION_BYTES {
+            break;
         }
-        for component in entity.velocity {
-            payload.extend_from_slice(&component.to_be_bytes());
-        }
-        payload.extend_from_slice(&entity.facing.to_be_bytes());
+        encode_entity(&mut payload, entity)?;
+        packed_entities += 1;
     }
-    Ok(payload)
+    if packed_entities == 0 {
+        return Err(ProtocolError::new(
+            "player projection budget cannot hold the viewer",
+        ));
+    }
+    payload[count_offset..count_offset + 2].copy_from_slice(&packed_entities.to_be_bytes());
+    Ok(PackedSnapshot {
+        payload,
+        packed_entities: usize::from(packed_entities),
+    })
+}
+
+/// Encodes a complete player projection. Fails closed, never truncating
+/// silently, when any entity would not fit [`MAX_PLAYER_PROJECTION_BYTES`].
+pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError> {
+    let packed = pack_snapshot(snapshot)?;
+    if packed.packed_entities < snapshot.entities.len() {
+        return Err(ProtocolError::new(
+            "player projection exceeds the byte budget",
+        ));
+    }
+    Ok(packed.payload)
+}
+
+fn encode_entity(payload: &mut Vec<u8>, entity: &EntitySnapshot) -> Result<(), ProtocolError> {
+    payload.push(entity_kind_code(entity.kind));
+    payload.extend_from_slice(&entity.id.to_be_bytes());
+    for component in entity.position {
+        let component = i16::try_from(component)
+            .map_err(|_| ProtocolError::new("entity position is outside the compact wire range"))?;
+        payload.extend_from_slice(&component.to_be_bytes());
+    }
+    for component in entity.velocity {
+        payload.extend_from_slice(&component.to_be_bytes());
+    }
+    payload.extend_from_slice(&entity.facing.to_be_bytes());
+    Ok(())
 }
 
 pub fn encode_canonical_snapshot(
@@ -182,6 +255,11 @@ pub fn encode_canonical_snapshot(
 }
 
 pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
+    if payload.len() > MAX_PLAYER_PROJECTION_BYTES {
+        return Err(ProtocolError::new(
+            "snapshot exceeds the player projection byte budget",
+        ));
+    }
     let mut offset = 0;
     let (schema_version, zone_id, tick) =
         decode_common_header(payload, &mut offset, PLAYER_SNAPSHOT_SCOPE)?;
@@ -191,7 +269,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     let count = decode_count(
         payload,
         &mut offset,
-        MAX_VISIBLE_ENTITIES,
+        MAX_WIRE_ENTITIES,
         "snapshot exceeds configured visible entity capacity",
     )?;
 
@@ -199,11 +277,16 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     for _ in 0..count {
         let kind = decode_entity_kind(read_u8(payload, &mut offset)?)?;
         let id = u32::from_be_bytes(take(payload, &mut offset)?);
-        let position = read_vector(payload, &mut offset)?;
+        let position = [
+            i16::from_be_bytes(take(payload, &mut offset)?),
+            i16::from_be_bytes(take(payload, &mut offset)?),
+            i16::from_be_bytes(take(payload, &mut offset)?),
+        ]
+        .map(i32::from);
         let velocity = [
-            i16::from_be_bytes(take(payload, &mut offset)?),
-            i16::from_be_bytes(take(payload, &mut offset)?),
-            i16::from_be_bytes(take(payload, &mut offset)?),
+            i8::from_be_bytes(take(payload, &mut offset)?),
+            i8::from_be_bytes(take(payload, &mut offset)?),
+            i8::from_be_bytes(take(payload, &mut offset)?),
         ];
         let facing = u16::from_be_bytes(take(payload, &mut offset)?);
         entities.push(EntitySnapshot {
@@ -216,6 +299,14 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     }
 
     ensure_fully_consumed(payload, offset)?;
+    if entities
+        .first()
+        .is_none_or(|entity| (entity.kind, entity.id) != (EntityKind::Player, viewer_id))
+    {
+        return Err(ProtocolError::new(
+            "player projection must start with the viewer",
+        ));
+    }
 
     Ok(ZoneSnapshot {
         content_revision,
@@ -297,6 +388,12 @@ fn encode_definition(payload: &mut Vec<u8>, definition: &ZoneDefinition) {
     for component in definition.gravity() {
         payload.extend_from_slice(&component.to_be_bytes());
     }
+    let spawn_grid = definition.spawn_grid();
+    for component in spawn_grid.origin {
+        payload.extend_from_slice(&component.to_be_bytes());
+    }
+    payload.extend_from_slice(&spawn_grid.columns.to_be_bytes());
+    payload.extend_from_slice(&spawn_grid.spacing.to_be_bytes());
     let count = u16::try_from(definition.colliders().len())
         .expect("validated static collider capacity fits u16");
     payload.extend_from_slice(&count.to_be_bytes());
@@ -311,6 +408,14 @@ fn encode_definition(payload: &mut Vec<u8>, definition: &ZoneDefinition) {
 fn decode_definition(payload: &[u8], offset: &mut usize) -> Result<ZoneDefinition, ProtocolError> {
     let revision = u64::from_be_bytes(take(payload, offset)?);
     let gravity = read_vector(payload, offset)?;
+    let spawn_grid = SpawnGrid {
+        origin: [
+            i32::from_be_bytes(take(payload, offset)?),
+            i32::from_be_bytes(take(payload, offset)?),
+        ],
+        columns: u16::from_be_bytes(take(payload, offset)?),
+        spacing: i32::from_be_bytes(take(payload, offset)?),
+    };
     let count = usize::from(u16::from_be_bytes(take(payload, offset)?));
     if count > MAX_STATIC_COLLIDERS {
         return Err(ProtocolError::new("zone static collider capacity reached"));
@@ -323,7 +428,7 @@ fn decode_definition(payload: &[u8], offset: &mut usize) -> Result<ZoneDefinitio
             half_extents: read_vector(payload, offset)?,
         });
     }
-    ZoneDefinition::new(revision, gravity, colliders)
+    ZoneDefinition::with_spawn_grid(revision, gravity, spawn_grid, colliders)
         .map_err(|error| ProtocolError::new(error.to_string()))
 }
 
@@ -429,7 +534,7 @@ fn take<const N: usize>(payload: &[u8], offset: &mut usize) -> Result<[u8; N], P
 mod tests {
     use super::*;
 
-    fn player(id: u32, position: [i32; 3], velocity: [i16; 3], facing: u16) -> EntitySnapshot {
+    fn player(id: u32, position: [i32; 3], velocity: [i8; 3], facing: u16) -> EntitySnapshot {
         EntitySnapshot {
             kind: EntityKind::Player,
             id,
@@ -450,13 +555,13 @@ mod tests {
             tick: 99,
             entities: vec![
                 player(7, [10, 20, -30], [1, -2, 3], 16_384),
-                player(9, [-400, 90, 2_500], [-13, 16, i16::MIN], 49_152),
+                player(9, [-400, 90, 2_500], [-13, 16, i8::MIN], 49_152),
             ],
         }
     }
 
     fn fixture_bytes() -> Vec<u8> {
-        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v3.hex").trim();
+        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v4.hex").trim();
         (0..fixture.len())
             .step_by(2)
             .map(|offset| u8::from_str_radix(&fixture[offset..offset + 2], 16).unwrap())
@@ -598,7 +703,7 @@ mod tests {
     fn player_snapshot_matches_the_shared_golden_fixture() {
         let snapshot = fixture_snapshot();
         let encoded = encode_snapshot(&snapshot).unwrap();
-        assert_eq!(encoded.len(), 34 + 2 * 25);
+        assert_eq!(encoded.len(), 34 + 2 * 16);
         assert_eq!(encoded, fixture_bytes());
         assert_eq!(decode_snapshot(&encoded).unwrap(), snapshot);
     }
@@ -616,12 +721,13 @@ mod tests {
             "snapshot payload contains trailing bytes"
         );
         for (offset, value, message) in [
-            (0, 2, "unsupported snapshot wire version"),
+            (0, 3, "unsupported snapshot wire version"),
             (1, 1, "unexpected snapshot scope"),
-            (3, 2, "unsupported core snapshot schema version"),
+            (3, 3, "unsupported core snapshot schema version"),
             (34, 0, "unknown entity kind"),
             (34, 2, "unknown entity kind"),
-            (59, 3, "unknown entity kind"),
+            (50, 3, "unknown entity kind"),
+            (31, 9, "player projection must start with the viewer"),
         ] {
             let mut invalid = encoded.clone();
             invalid[offset] = value;
@@ -631,6 +737,12 @@ mod tests {
                 "byte {offset} = {value}"
             );
         }
+        let mut swapped = encoded.clone();
+        swapped[34..].rotate_left(ENTITY_RECORD_BYTES);
+        assert_eq!(
+            decode_snapshot(&swapped).unwrap_err().to_string(),
+            "player projection must start with the viewer"
+        );
         let mut fewer = encoded.clone();
         fewer[32..34].copy_from_slice(&1_u16.to_be_bytes());
         assert!(decode_snapshot(&fewer).is_err(), "count must match records");
@@ -640,27 +752,108 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_decoder_rejects_counts_above_capacity_before_allocation() {
+    fn snapshot_decoder_rejects_counts_and_sizes_above_the_budget_before_allocation() {
         let mut encoded = encode_snapshot(&ZoneSnapshot {
-            entities: Vec::new(),
+            entities: vec![fixture_snapshot().entities[0].clone()],
             ..fixture_snapshot()
         })
         .unwrap();
-        let excessive_count =
-            u16::try_from(MAX_VISIBLE_ENTITIES + 1).expect("configured capacity fits u16");
+        let excessive_count = u16::try_from(MAX_WIRE_ENTITIES + 1).unwrap();
         encoded[32..34].copy_from_slice(&excessive_count.to_be_bytes());
-
-        let error = decode_snapshot(&encoded).unwrap_err();
-
         assert_eq!(
-            error.to_string(),
+            decode_snapshot(&encoded).unwrap_err().to_string(),
             "snapshot exceeds configured visible entity capacity"
         );
-        let oversized = ZoneSnapshot {
-            entities: vec![player(1, [0; 3], [0; 3], 0); MAX_VISIBLE_ENTITIES + 1],
+        let oversized = vec![0; MAX_PLAYER_PROJECTION_BYTES + 1];
+        assert_eq!(
+            decode_snapshot(&oversized).unwrap_err().to_string(),
+            "snapshot exceeds the player projection byte budget"
+        );
+    }
+
+    #[test]
+    fn largest_projection_with_extreme_values_fits_the_datagram_budget() {
+        assert_eq!(MAX_PLAYER_PROJECTION_BYTES, 1_161 - 20 - 64);
+        let viewer_id = u32::MAX;
+        let entities: Vec<_> = (0..MAX_VISIBLE_ENTITIES)
+            .map(|index| {
+                let offset = u32::try_from(index).unwrap();
+                let (low, high) = if index % 2 == 0 {
+                    (i16::MIN, i16::MAX)
+                } else {
+                    (i16::MAX, i16::MIN)
+                };
+                player(
+                    viewer_id - offset,
+                    [low, high, low].map(i32::from),
+                    [i8::MIN, i8::MAX, i8::MIN],
+                    u16::MAX,
+                )
+            })
+            .collect();
+        let snapshot = ZoneSnapshot {
+            content_revision: u64::MAX,
+            acknowledged_sequence: u32::MAX,
+            viewer_id,
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            zone_id: ZoneId::new(u32::MAX),
+            tick: u64::MAX,
+            entities,
+        };
+        let encoded = encode_snapshot(&snapshot).unwrap();
+        assert_eq!(
+            encoded.len(),
+            PLAYER_SNAPSHOT_HEADER_BYTES + MAX_VISIBLE_ENTITIES * ENTITY_RECORD_BYTES
+        );
+        assert!(encoded.len() <= MAX_PLAYER_PROJECTION_BYTES);
+        assert!(
+            encoded.len() + SESSION_SNAPSHOT_HEADER_BYTES + DATAGRAM_SAFETY_MARGIN_BYTES
+                <= MEASURED_MIN_DATAGRAM_BYTES
+        );
+        assert_eq!(decode_snapshot(&encoded).unwrap(), snapshot);
+    }
+
+    #[test]
+    fn packing_keeps_priority_order_within_the_budget_and_strict_encoding_fails_closed() {
+        let entities: Vec<_> = (1..=100)
+            .map(|id| player(id, [i32::try_from(id).unwrap(), 90, 0], [0; 3], 0))
+            .collect();
+        let snapshot = ZoneSnapshot {
+            viewer_id: 1,
+            entities,
             ..fixture_snapshot()
         };
-        assert!(encode_snapshot(&oversized).is_err());
+        let packed = pack_snapshot(&snapshot).unwrap();
+        assert_eq!(packed.packed_entities, MAX_WIRE_ENTITIES);
+        assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
+        let decoded = decode_snapshot(&packed.payload).unwrap();
+        assert_eq!(decoded.entities, snapshot.entities[..MAX_WIRE_ENTITIES]);
+        assert_eq!(
+            encode_snapshot(&snapshot).unwrap_err().to_string(),
+            "player projection exceeds the byte budget"
+        );
+    }
+
+    #[test]
+    fn snapshot_encoding_fails_closed_on_missing_viewer_or_wide_positions() {
+        let mut no_viewer = fixture_snapshot();
+        no_viewer.entities.clear();
+        let mut viewer_second = fixture_snapshot();
+        viewer_second.entities.reverse();
+        for invalid in [no_viewer, viewer_second] {
+            assert_eq!(
+                encode_snapshot(&invalid).unwrap_err().to_string(),
+                "player projection must start with the viewer"
+            );
+        }
+        for component in [i32::from(i16::MAX) + 1, i32::from(i16::MIN) - 1] {
+            let mut wide = fixture_snapshot();
+            wide.entities[1].position[2] = component;
+            assert_eq!(
+                encode_snapshot(&wide).unwrap_err().to_string(),
+                "entity position is outside the compact wire range"
+            );
+        }
     }
 
     #[test]
@@ -697,14 +890,14 @@ mod tests {
         };
 
         let encoded = encode_canonical_snapshot(&snapshot).unwrap();
-        assert_eq!(encoded.len(), 18 + 22 + 2 * 39);
+        assert_eq!(encoded.len(), 18 + 36 + 2 * 39);
         assert_eq!(decode_canonical_snapshot(&encoded).unwrap(), snapshot);
         assert_eq!(
             decode_snapshot(&encoded).unwrap_err().to_string(),
             "unexpected snapshot scope"
         );
-        // Record 0 starts after the 18-byte header and the 22-byte empty definition.
-        let jump_flag = 18 + 22 + 32;
+        // Record 0 starts after the 18-byte header and the 36-byte empty definition.
+        let jump_flag = 18 + 36 + 32;
         assert_eq!(encoded[jump_flag], 1);
         let mut invalid_flag = encoded.clone();
         invalid_flag[jump_flag] = 2;
@@ -714,21 +907,27 @@ mod tests {
                 .to_string(),
             "jump flag must be 0 or 1"
         );
-        for (offset, value) in [(0, 2), (3, 2)] {
+        for (offset, value) in [(0, 3), (3, 3)] {
             let mut legacy = encoded.clone();
             legacy[offset] = value;
             assert!(
                 decode_canonical_snapshot(&legacy).is_err(),
-                "v2 recovery bytes are rejected"
+                "v3 recovery bytes are rejected"
             );
         }
     }
 
     #[test]
     fn canonical_wire_restores_physical_world_and_rejects_invalid_content() {
-        let definition = ZoneDefinition::new(
+        let spawn_grid = SpawnGrid {
+            origin: [-500, 300],
+            columns: 8,
+            spacing: 120,
+        };
+        let definition = ZoneDefinition::with_spawn_grid(
             7,
             [0, -1, 0],
+            spawn_grid,
             vec![StaticCollider {
                 id: 1,
                 position: [0, -50, 0],
@@ -740,6 +939,7 @@ mod tests {
             mmorpg_core::ZoneSimulation::with_definition(ZoneId::new(1), definition).unwrap();
         zone.add_player(1).unwrap();
         let mut state = zone.snapshot().unwrap();
+        assert_eq!(state.players[0].position, [-500, 90, 300]);
         state.players[0].position[1] = 400;
         state.players[0].velocity[1] = -5;
         let encoded = encode_canonical_snapshot(&state).unwrap();
@@ -748,11 +948,17 @@ mod tests {
             decode_canonical_snapshot(&encoded).unwrap(),
         )
         .unwrap();
+        assert_eq!(restored.definition().spawn_grid(), spawn_grid);
         for _ in 0..40 {
             original.advance_tick().unwrap();
             restored.advance_tick().unwrap();
             assert_eq!(original.snapshot().unwrap(), restored.snapshot().unwrap());
         }
+        restored.add_player(2).unwrap();
+        assert_eq!(
+            restored.snapshot().unwrap().players[1].position,
+            [-380, 90, 300]
+        );
         for length in 0..encoded.len() {
             assert!(decode_canonical_snapshot(&encoded[..length]).is_err());
         }
@@ -767,12 +973,21 @@ mod tests {
                 .to_string(),
             "snapshot exceeds configured zone player capacity"
         );
+        // Header 18, revision 8, gravity 12, spawn grid 14, then the collider count.
         let mut excessive_colliders = encoded.clone();
-        excessive_colliders[38..40].copy_from_slice(&u16::MAX.to_be_bytes());
+        excessive_colliders[52..54].copy_from_slice(&u16::MAX.to_be_bytes());
         assert!(decode_canonical_snapshot(&excessive_colliders).is_err());
         let mut invalid_extent = encoded.clone();
-        invalid_extent[56..60].copy_from_slice(&(-1_i32).to_be_bytes());
+        invalid_extent[70..74].copy_from_slice(&(-1_i32).to_be_bytes());
         assert!(decode_canonical_snapshot(&invalid_extent).is_err());
+        let mut empty_spawn_grid = encoded.clone();
+        empty_spawn_grid[46..48].copy_from_slice(&0_u16.to_be_bytes());
+        assert_eq!(
+            decode_canonical_snapshot(&empty_spawn_grid)
+                .unwrap_err()
+                .to_string(),
+            "spawn grid needs columns and non-overlapping slots"
+        );
         let mut legacy = encoded;
         legacy[0] = 1;
         assert!(decode_canonical_snapshot(&legacy).is_err());

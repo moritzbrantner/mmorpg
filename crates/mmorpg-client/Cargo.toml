@@ -22,7 +22,7 @@ three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "
 [dev-dependencies]
 tempfile = "=3.27.0"
 mmorpg-game-server = { path = "../mmorpg-game-server" }
-wtransport = { version = "=0.7.2", default-features = false, features = ["ring", "self-signed"] }
+wtransport = { version = "=0.7.2", default-features = false, features = ["ring", "self-signed", "quinn"] }
 
 [lints]
 workspace = true

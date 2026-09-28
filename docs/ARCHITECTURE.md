@@ -70,12 +70,14 @@ Interest uses a zone-owned XZ spatial index followed by the exact inclusive dist
 
 Canonical and player-visible snapshots have separate scope tags:
 
-- canonical snapshots contain the full definition, every player's position and velocity, facing, forward/strafe intent, pending jump, last sequence and spawn slot;
-- player-visible snapshots contain the viewer's own ID, the content revision, the receiving player's acknowledged command sequence, and relevant entities with kind, ID, position, presentation velocity (saturated to `i16`) and facing. Only players exist so far; creature and NPC kinds are reserved.
+- canonical snapshots contain the full definition (including its spawn grid), every player's position and velocity, facing, forward/strafe intent, pending jump, last sequence and spawn slot;
+- player-visible snapshots contain the viewer's own ID, the content revision, the receiving player's acknowledged command sequence, and up to 64 priority-ordered entities with kind, ID, compact `i16` position, presentation velocity (saturated to `i8`) and facing. Only players exist so far; creature and NPC kinds are reserved.
+
+A player projection must fit one datagram of the pinned `game-server` transport: `MAX_PLAYER_PROJECTION_BYTES` (1,077) is the measured 1,161-byte datagram floor minus the 20-byte session header and a 64-byte margin, and the relevance cap is sized so its largest projection (1,058 bytes) fits. The encoder packs entities by priority within that budget and fails closed on overflow; see [PROTOCOL.md](PROTOCOL.md#datagram-byte-budget). The budget rises once snapshot fragmentation lands in `game-server` (#18).
 
 Recovering while airborne, mid-run or with a pending jump must reproduce subsequent contact and movement exactly. Restoring only positions and zeroing velocity is insufficient. Immutable content is embedded in the canonical format so restoring does not silently substitute a newer scene. A future content-addressed checkpoint may replace embedded content only if exact availability and integrity are guaranteed.
 
-Snapshot wire and core schema are **version 3**; command wire is **version 2**. Old snapshots and commands are rejected explicitly; no automatic v2 recovery migration is provided. Replay/recovery hashes change with this schema, and recorded version 1 command payloads no longer decode. Existing recovery bundles require an intentional compatibility/migration decision before an upgrade.
+Snapshot wire and core schema are **version 4**; command wire is **version 2**. Old snapshots and commands are rejected explicitly; no automatic v3 recovery migration is provided. Replay/recovery hashes change with this schema. Existing recovery bundles require an intentional compatibility/migration decision before an upgrade.
 
 The big-endian visible format is documented in [PROTOCOL.md](PROTOCOL.md). Rust and browser tests read the same golden fixture. Decoders reject wrong scope/version, excessive counts, truncation and trailing bytes. Canonical decoding also validates collision content. Canonical state must never be sent to browser clients.
 

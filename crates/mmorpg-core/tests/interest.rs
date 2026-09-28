@@ -79,7 +79,7 @@ fn assert_matches_exhaustive(zone: &ZoneSimulation) {
                 position: candidate.position,
                 velocity: candidate
                     .velocity
-                    .map(|component| component.clamp(-32_768, 32_767) as i16),
+                    .map(|component| component.clamp(-128, 127) as i8),
                 facing: candidate.facing,
             })
             .collect();
