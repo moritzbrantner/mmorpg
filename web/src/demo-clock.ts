@@ -1,20 +1,8 @@
 /** Presentation clock helpers; they never change authoritative tick semantics. */
 import { TICK_HZ } from "./replication";
 
-/** Offline presentation clock; this never changes server-authoritative tick semantics. */
-export const MAX_DEMO_TICK = 18446744073709551615n;
-
 /** A long stall runs at most this many catch-up ticks; the rest is dropped. */
 export const MAX_CATCH_UP_TICKS = 4;
-
-export function advanceDemoTick(tick: bigint, presentation: { reset(): void }): bigint {
-  if (tick === MAX_DEMO_TICK) {
-    // A restarted clock must not interpolate against the previous tick epoch.
-    presentation.reset();
-    return 0n;
-  }
-  return tick + 1n;
-}
 
 export function frameDeltaSeconds(now: number, previous: number): number {
   if (!Number.isFinite(now) || !Number.isFinite(previous)) {

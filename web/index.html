@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#11161c" />
-    <meta name="description" content="Single-player browser tech demo for the mmorpg repository." />
+    <meta name="description" content="Single-player browser tech demo for the mmorpg repository: the shared Rust zone simulation runs in the page through WebAssembly." />
     <title>MMORPG · character selection</title>
   </head>
   <body>
@@ -63,7 +63,6 @@
                 <button class="hat-option" type="button" data-hat-style="ranger-cap" aria-pressed="false"><span class="hat-icon hat-icon--cap" aria-hidden="true"></span><span>Ranger cap</span></button>
                 <button class="hat-option" type="button" data-hat-style="ironcrest-helm" aria-pressed="false"><span class="hat-icon hat-icon--helm" aria-hidden="true"></span><span>Iron helm</span></button>
               </div>
-              <div data-game-save-controls aria-label="Offline game progress"></div>
               <details class="appearance-storage">
                 <summary>Appearance-only saves</summary>
                 <div class="save-actions"><button id="save-character" type="button">Save appearance</button><button id="load-character" type="button">Load appearance</button></div>
@@ -125,22 +124,20 @@
 
           <footer id="selection-actions" class="selection-actions">
             <div class="world-destination"><small>Destination</small><strong id="character-location">Greyhaven Outpost</strong></div>
-            <button id="enter-world" class="enter-world" type="button"><span id="enter-world-label">Enter World</span><small id="enter-world-note">Start exploring Greyhaven</small></button>
-            <p class="selection-note">Offline prototype. Load game resumes the selected character's local checkpoint; Enter World uses that character's current session.</p>
+            <button id="enter-world" class="enter-world" type="button" disabled><span id="enter-world-label">Enter World</span><small id="enter-world-note">Loading the zone simulation…</small></button>
+            <p class="selection-note">Single-player demo: the shared Rust zone simulation runs in this browser. World progress is not saved yet; returning to characters leaves the zone.</p>
           </footer>
         </div>
       </section>
 
       <header class="topbar" data-world-ui hidden>
-        <div><p class="eyebrow">MMORPG / browser tech demo</p><h1>Greyhaven Outpost</h1></div>
-        <div class="world-toolbar"><div class="status" id="status">Exploring</div><button id="return-to-characters" type="button">Characters</button></div>
+        <div><p class="eyebrow">Greyhaven Vale · local zone host</p><h1 id="area-name">Greyhaven Vale</h1></div>
+        <div class="world-toolbar"><button id="return-to-characters" type="button">Characters</button></div>
       </header>
       <section class="hud" data-world-ui aria-label="Controls" hidden>
-        <p><kbd>WASD</kbd> move · <kbd>Shift</kbd> sprint · <kbd>E</kbd> interact · <kbd>Esc</kbd> characters</p>
-        <p id="objective">Reach the old waystone and activate it.</p>
-        <div data-game-save-controls aria-label="Offline game progress"></div>
+        <p><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · drag to orbit · wheel to zoom · <kbd>Esc</kbd> characters</p>
+        <p id="objective">Explore Greyhaven Vale. Quests are not in this build yet.</p>
       </section>
-      <aside class="prompt" id="prompt" hidden></aside>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

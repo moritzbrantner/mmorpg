@@ -238,6 +238,7 @@ button { font: inherit; }
   text-shadow: 0 1px 2px #000;
 }
 .enter-world:hover { background: linear-gradient(#a28642, #6f582c); }
+.enter-world:disabled { cursor: progress; filter: saturate(.45) brightness(.8); }
 .enter-world:focus-visible { outline: 2px solid #f5de97; outline-offset: 3px; }
 .enter-world span { display: block; font-family: Georgia, "Times New Roman", serif; font-size: 1rem; letter-spacing: .04em; }
 .enter-world small { display: block; margin-top: .12rem; color: #d5c79f; font-size: .62rem; letter-spacing: .05em; }
@@ -262,8 +263,7 @@ button { font: inherit; }
 .fallback-pedestal { left: -2.8rem; bottom: -.2rem; width: 13.6rem; height: 2.2rem; border-radius: 50%; border: 1px solid rgb(218 195 129 / 28%); background: radial-gradient(ellipse, #4a5a51 0 48%, #24312c 49% 70%, transparent 71%); }
 
 .topbar,
-.hud,
-.prompt {
+.hud {
   position: fixed;
   z-index: 2;
   border: 1px solid rgb(255 255 255 / 10%);
@@ -295,12 +295,6 @@ button { font: inherit; }
 .topbar h1 {
   margin: 0;
   font-size: clamp(1rem, 2vw, 1.35rem);
-  font-weight: 650;
-}
-
-.status {
-  color: #b9d9bf;
-  font-size: .82rem;
   font-weight: 650;
 }
 
@@ -338,16 +332,6 @@ kbd {
   font-size: .72rem;
 }
 
-.prompt {
-  left: 50%;
-  bottom: 7rem;
-  transform: translateX(-50%);
-  padding: .65rem .85rem;
-  border-radius: .65rem;
-  color: #f5f8f5;
-  font-size: .8rem;
-  font-weight: 650;
-}
 
 @media (max-width: 880px) {
   .character-select::after { inset: .6rem; }

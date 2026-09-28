@@ -7,7 +7,6 @@ import {
   type CharacterPreview,
 } from "./character-selection";
 import { storageKeyForCharacter } from "./character-customization";
-import { demoSaveKey } from "./demo-save";
 
 const ROSTER_SCHEMA_VERSION = 1;
 const ROSTER_KEY = "mmorpg.offline-roster.v1";
@@ -44,6 +43,16 @@ function decodeStoredCharacter(value: unknown): CharacterPreview {
 
 export function characterRosterStorageKey(): string {
   return ROSTER_KEY;
+}
+
+/**
+ * Storage key of the retired offline game checkpoint (position and waystone
+ * progress). The browser no longer writes or loads these; existing ones still
+ * retire their character ID so a new character never reuses it.
+ */
+export function legacyCheckpointKey(characterId: string): string {
+  if (!characterId || characterId.length > 128) throw new Error("A valid character ID is required.");
+  return `mmorpg.offline-demo.v1.${characterId}`;
 }
 
 export function loadCreatedCharacters(storage: CharacterRosterStorage): CharacterPreview[] {
@@ -115,13 +124,13 @@ export function saveCreatedCharacters(
 }
 
 /**
- * True while a game checkpoint or appearance save still exists for `characterId`.
+ * True while a legacy game checkpoint or an appearance save still exists for `characterId`.
  * Such an identity must not be reissued to a new character, even when the roster
  * entry itself was lost or reset. Unreadable storage retains nothing.
  */
 export function hasRetainedCharacterSaves(storage: CharacterRosterStorage, characterId: string): boolean {
   try {
-    return storage.getItem(demoSaveKey(characterId)) !== null ||
+    return storage.getItem(legacyCheckpointKey(characterId)) !== null ||
       storage.getItem(storageKeyForCharacter(characterId)) !== null;
   } catch {
     return false;
