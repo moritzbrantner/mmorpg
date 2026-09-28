@@ -15,7 +15,7 @@ import type { Color } from "./scenery";
  * node ID under the unit's ID, so the renderer reuses its objects and only
  * transforms change between frames.
  */
-export type HumanoidLook = { visuals: CharacterVisualProfile; hat: HatStyle | null; skin: Color; hair: Color };
+export type HumanoidLook = { visuals: CharacterVisualProfile; hat: HatStyle | null; skin: Color; hair: Color; longHair: boolean };
 
 const SKIN: Color = "#d7a582";
 
@@ -26,6 +26,7 @@ export function characterLook(character: Pick<CharacterPreview, "classId" | "sex
     hat,
     skin: SKIN,
     hair: character.sex === "female" ? "#8a5632" : "#4a3222",
+    longHair: character.sex === "female",
   };
 }
 
@@ -127,24 +128,27 @@ function part(parts: Part[], name: string, shapeName: ShapeName, color: Color, f
   parts.push({ name, shape: shapeName, color, frame, scale });
 }
 
-/** Proportions in metres for a look, read from the character visual profile. */
+/**
+ * Proportions in metres for a look, read from the character visual profile:
+ * a stylised build with a broad chest, thick limbs and big hands and feet.
+ */
 function build(visuals: CharacterVisualProfile) {
   const stature = visuals.bodyHeight / 1.7;
-  const shoulder = 0.21 * (visuals.shoulderSpan / 0.52);
+  const shoulder = 0.23 * (visuals.shoulderSpan / 0.52);
   const limb = visuals.armRadius / 0.16;
   return {
-    pelvisY: 0.92 * stature,
-    thigh: 0.42 * stature,
-    shin: 0.41 * stature,
-    torso: 0.44 * stature,
-    upperArm: 0.28 * stature,
-    forearm: 0.25 * stature,
+    pelvisY: 0.9 * stature,
+    thigh: 0.4 * stature,
+    shin: 0.4 * stature,
+    torso: 0.46 * stature,
+    upperArm: 0.27 * stature,
+    forearm: 0.24 * stature,
     shoulder,
-    hip: shoulder * visuals.hipRatio * 0.62,
-    waist: 0.13 * (visuals.chestSize[0] / 0.86) * (0.8 + 0.2 * visuals.hipRatio),
-    chest: shoulder * 0.98,
-    depth: 0.105 * (visuals.chestSize[2] / 0.5),
-    head: 0.12 * (visuals.headRadius / 0.34),
+    hip: shoulder * visuals.hipRatio * 0.6,
+    waist: 0.14 * (visuals.chestSize[0] / 0.86) * (0.82 + 0.2 * visuals.hipRatio),
+    chest: shoulder * 1.02,
+    depth: 0.12 * (visuals.chestSize[2] / 0.5),
+    head: 0.13 * (visuals.headRadius / 0.34),
     limb,
   };
 }
@@ -182,12 +186,12 @@ export function humanoidNodes(id: string, placement: UnitPlacement, look: Humano
   const legs: [string, 1 | -1, LegPose][] = [["left", 1, pose.leftLeg], ["right", -1, pose.rightLeg]];
   for (const [side, sign, leg] of legs) {
     const hip = child(pelvis, [sign * b.hip, -0.02, 0], euler(-leg.swing, 0, sign * leg.spread));
-    part(parts, `${side}-thigh`, "limb", pants, hip, [0.085 * b.limb, b.thigh, 0.09 * b.limb]);
+    part(parts, `${side}-thigh`, "limb", pants, hip, [0.098 * b.limb, b.thigh, 0.1 * b.limb]);
     const knee = child(hip, [0, -b.thigh, 0], euler(leg.knee));
-    part(parts, `${side}-shin`, "limb", pants, knee, [0.066 * b.limb, b.shin, 0.07 * b.limb]);
-    part(parts, `${side}-boot`, "limb", BOOTS, child(knee, [0, -b.shin * 0.45, 0]), [0.074 * b.limb, b.shin * 0.55, 0.078 * b.limb]);
+    part(parts, `${side}-shin`, "limb", pants, knee, [0.074 * b.limb, b.shin, 0.078 * b.limb]);
+    part(parts, `${side}-boot`, "limb", BOOTS, child(knee, [0, -b.shin * 0.42, 0]), [0.084 * b.limb, b.shin * 0.58, 0.088 * b.limb]);
     const ankle = child(knee, [0, -b.shin, 0], euler(leg.foot - leg.knee * 0.25 + leg.swing * 0.2));
-    part(parts, `${side}-foot`, "box", BOOTS, child(ankle, [0, -0.035, 0.055]), [0.058, 0.04, 0.125]);
+    part(parts, `${side}-foot`, "box", BOOTS, child(ankle, [0, -0.04, 0.06]), [0.066, 0.045, 0.14]);
   }
 
   // Spine, chest and head.
@@ -195,7 +199,10 @@ export function humanoidNodes(id: string, placement: UnitPlacement, look: Humano
   const torsoShape: ShapeName = `torso-${Math.round((b.chest / b.waist) * 100)}`;
   const breathe = 1 + pose.breathe;
   part(parts, "torso", torsoShape, visuals.bodyColor, spine, [b.waist / 0.707 * breathe, b.torso, b.depth / 0.707 * breathe]);
-  part(parts, "chest-plate", "box", visuals.chestColor, child(spine, [0, b.torso * 0.62, b.depth * 0.55]), [b.chest * 0.62, b.torso * 0.26, 0.035]);
+  // The torso widens upward: its front face sits at the waist depth scaled by the taper.
+  const plateHeight = 0.62;
+  const plateDepth = b.depth * (1 + (b.chest / b.waist - 1) * plateHeight) * breathe;
+  part(parts, "chest-plate", "box", visuals.chestColor, child(spine, [0, b.torso * plateHeight, plateDepth]), [b.chest * 0.6, b.torso * 0.24, 0.02]);
   part(parts, "belt", "box", LEATHER, child(spine, [0, 0.03, 0]), [b.waist + 0.012, 0.035, b.depth + 0.012]);
   part(parts, "buckle", "box", METAL, child(spine, [0, 0.03, b.depth + 0.012]), [0.03, 0.028, 0.01]);
   const neck = child(spine, [0, b.torso + 0.02, 0], euler(pose.headPitch));
@@ -207,6 +214,11 @@ export function humanoidNodes(id: string, placement: UnitPlacement, look: Humano
     part(parts, `eye-${sign > 0 ? "left" : "right"}`, "box", "#2a2320", child(head, [sign * b.head * 0.38, b.head * 0.18, b.head * 0.88]), [0.014, 0.016, 0.01]);
   }
   hat(parts, look, head, b.head);
+  if (look.longHair) {
+    // A braid down the back, under any hat.
+    part(parts, "braid", "limb", look.hair, child(head, [0, -b.head * 0.2, -b.head * 0.85], euler(0.25)), [0.045, 0.3, 0.04]);
+    part(parts, "braid-tie", "blob", LEATHER, child(head, [0, -b.head * 0.2 - 0.29, -b.head * 0.85 - 0.075]), [0.035, 0.03, 0.035]);
+  }
 
   // Arms.
   const arms: [string, 1 | -1, ArmPose][] = [["left", 1, pose.leftArm], ["right", -1, pose.rightArm]];
@@ -214,21 +226,26 @@ export function humanoidNodes(id: string, placement: UnitPlacement, look: Humano
   const forearms: Record<string, Frame> = {};
   for (const [side, sign, arm] of arms) {
     const shoulder = child(spine, [sign * b.shoulder, b.torso - 0.06, 0], euler(-arm.swing, 0, sign * arm.spread));
-    part(parts, `${side}-upper-arm`, "limb", visuals.bodyColor, shoulder, [0.058 * b.limb, b.upperArm, 0.058 * b.limb]);
+    part(parts, `${side}-upper-arm`, "limb", visuals.bodyColor, shoulder, [0.068 * b.limb, b.upperArm, 0.068 * b.limb]);
     const elbow = child(shoulder, [0, -b.upperArm, 0], euler(-arm.elbow));
     forearms[side] = elbow;
-    part(parts, `${side}-forearm`, "limb", robe ? visuals.chestColor : visuals.bodyColor, elbow, [0.05 * b.limb, b.forearm, 0.05 * b.limb]);
-    part(parts, `${side}-glove`, "limb", LEATHER, child(elbow, [0, -b.forearm * 0.55, 0]), [0.054 * b.limb, b.forearm * 0.45, 0.054 * b.limb]);
-    const hand = child(elbow, [0, -b.forearm - 0.04, 0]);
+    part(parts, `${side}-forearm`, "limb", robe ? visuals.chestColor : visuals.bodyColor, elbow, [0.058 * b.limb, b.forearm, 0.058 * b.limb]);
+    part(parts, `${side}-glove`, "limb", LEATHER, child(elbow, [0, -b.forearm * 0.52, 0]), [0.064 * b.limb, b.forearm * 0.48, 0.064 * b.limb]);
+    const hand = child(elbow, [0, -b.forearm - 0.045, 0]);
     hands[side] = hand;
-    part(parts, `${side}-hand`, "blob", look.skin, hand, [0.045, 0.055, 0.05]);
+    part(parts, `${side}-hand`, "blob", look.skin, hand, [0.052, 0.064, 0.058]);
     part(parts, `${side}-shoulder`, "blob", visuals.shoulderColor, child(spine, [sign * b.shoulder, b.torso - 0.02, 0]),
-      visuals.weapon === "sword" ? [0.105, 0.075, 0.11] : [0.08, 0.06, 0.085]);
+      visuals.weapon === "sword" ? [0.12, 0.085, 0.125] : [0.09, 0.068, 0.095]);
   }
 
   // Cloak or robe hem, swinging back with speed.
   if (robe) {
-    part(parts, "robe", "skirt", visuals.chestColor, child(pelvis, [0, 0.06, 0], euler(pose.cape * 0.35)), [b.hip + 0.07, 0.72 * (b.thigh + b.shin) / 0.83, b.depth + 0.04]);
+    const skirt = child(pelvis, [0, 0.06, 0], euler(pose.cape * 0.35));
+    const length = 0.72 * (b.thigh + b.shin) / 0.8;
+    part(parts, "robe", "skirt", visuals.chestColor, skirt, [b.hip + 0.07, length, b.depth + 0.04]);
+    // A gold hem and a sash break up the robe.
+    part(parts, "robe-hem", "post", "#c9a85a", child(skirt, [0, -length, 0]), [(b.hip + 0.07) * 1.46, 0.05, (b.depth + 0.04) * 1.46]);
+    part(parts, "sash", "box", "#c9a85a", child(spine, [0.05, b.torso * 0.5, 0], euler(0, 0, 0.55)), [0.03, b.torso * 0.62, b.depth * 1.22]);
   }
   // The cloak hangs from the shoulders, its centre half its length below them.
   // A positive pitch swings a hanging part's lower end backward (−Z).
@@ -302,8 +319,9 @@ function gear(
       return;
     }
     case "bow": {
-      // The bow stays upright beside the left hand, tilted with the arm.
-      const bow: Frame = { p: left.p, q: qMul(root.q, euler(0.15, 0, 0.1)) };
+      // The bow stays upright beside the left hand, its curve facing sideways so
+      // it reads from behind and in front.
+      const bow: Frame = { p: left.p, q: qMul(root.q, euler(0.12, Math.PI / 2, 0.08)) };
       part(parts, "bow-grip", "box", LEATHER, bow, [0.022, 0.07, 0.024]);
       for (const sign of [1, -1]) {
         const limb = child(bow, [0, sign * 0.33, -0.05], euler(sign * 0.3));
