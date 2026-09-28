@@ -20,7 +20,7 @@ three-d-core = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f4
 three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f484db8a3d2a7a555fa463eddf9c28790b240ce0" }
 
 [dev-dependencies]
-tempfile = "=3.23.0"
+tempfile = "=3.27.0"
 mmorpg-game-server = { path = "../mmorpg-game-server" }
 wtransport = { version = "=0.7.2", default-features = false, features = ["ring", "self-signed"] }
 
