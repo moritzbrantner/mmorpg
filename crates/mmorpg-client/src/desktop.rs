@@ -1,5 +1,7 @@
-use mmorpg_client::session::NetworkUpdate;
-use mmorpg_client::{ClientError, graphics::WindowRenderer, presentation::Presentation};
+use mmorpg_client::session::{MovementInput, NetworkUpdate};
+use mmorpg_client::{
+    ClientError, camera::OrbitCamera, graphics::WindowRenderer, presentation::Presentation,
+};
 use mmorpg_core::ZoneDefinition;
 use std::{
     collections::HashSet,
@@ -9,7 +11,8 @@ use std::{
 use tokio::sync::watch;
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, WindowEvent},
+    dpi::PhysicalPosition,
+    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -19,7 +22,7 @@ pub fn run(
     runtime: Arc<tokio::runtime::Runtime>,
     player_id: u32,
     definition: ZoneDefinition,
-    input: watch::Sender<[i8; 2]>,
+    input: watch::Sender<MovementInput>,
     updates: watch::Receiver<NetworkUpdate>,
     frames: Option<u32>,
 ) -> Result<(), ClientError> {
@@ -33,6 +36,9 @@ pub fn run(
         input,
         updates,
         keys: HashSet::new(),
+        camera: OrbitCamera::default(),
+        orbit_buttons: HashSet::new(),
+        cursor: None,
         error: None,
         frames,
         rendered: 0,
@@ -51,30 +57,68 @@ struct App {
     renderer: Option<WindowRenderer>,
     presentation: Presentation,
     connection_epoch: Option<u32>,
-    input: watch::Sender<[i8; 2]>,
+    input: watch::Sender<MovementInput>,
     updates: watch::Receiver<NetworkUpdate>,
     keys: HashSet<KeyCode>,
+    camera: OrbitCamera,
+    /// Held mouse buttons that orbit the camera while the cursor moves.
+    orbit_buttons: HashSet<MouseButton>,
+    cursor: Option<PhysicalPosition<f64>>,
     error: Option<String>,
     frames: Option<u32>,
     rendered: u32,
     next_frame: Instant,
 }
 
+const FORWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyW, KeyCode::ArrowUp];
+const BACKWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyS, KeyCode::ArrowDown];
+const LEFT_KEYS: [KeyCode; 3] = [KeyCode::KeyA, KeyCode::KeyQ, KeyCode::ArrowLeft];
+const RIGHT_KEYS: [KeyCode; 3] = [KeyCode::KeyD, KeyCode::KeyE, KeyCode::ArrowRight];
+
+/// Browser-style pixel scrolling: this many pixels count as one wheel line.
+const PIXELS_PER_WHEEL_LINE: f64 = 40.0;
+const CONTROL_HINTS: &str = "MMORPG — W/S move · A/D or Q/E strafe · Space jumps · drag to orbit · wheel zooms · Esc closes";
+
 impl App {
+    fn stop(&self) {
+        self.input.send_if_modified(|input| {
+            let moving = input.forward != 0 || input.strafe != 0;
+            input.forward = 0;
+            input.strafe = 0;
+            moving
+        });
+    }
+
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: impl ToString) {
-        self.input.send_replace([0, 0]);
+        self.stop();
         self.error = Some(error.to_string());
         event_loop.exit();
     }
 
+    /// While any movement key is held, the character faces the camera's yaw.
     fn update_movement(&self) {
-        let held = |first, second| self.keys.contains(&first) || self.keys.contains(&second);
-        self.input.send_replace([
-            i8::from(held(KeyCode::KeyD, KeyCode::ArrowRight))
-                - i8::from(held(KeyCode::KeyA, KeyCode::ArrowLeft)),
-            i8::from(held(KeyCode::KeyS, KeyCode::ArrowDown))
-                - i8::from(held(KeyCode::KeyW, KeyCode::ArrowUp)),
-        ]);
+        let held = |keys: &[KeyCode]| keys.iter().any(|key| self.keys.contains(key));
+        let forward = i8::from(held(&FORWARD_KEYS)) - i8::from(held(&BACKWARD_KEYS));
+        let strafe = i8::from(held(&RIGHT_KEYS)) - i8::from(held(&LEFT_KEYS));
+        let steering =
+            held(&FORWARD_KEYS) || held(&BACKWARD_KEYS) || held(&LEFT_KEYS) || held(&RIGHT_KEYS);
+        let facing = steering.then(|| self.camera.facing());
+        self.input.send_if_modified(|input| {
+            let next = MovementInput {
+                forward,
+                strafe,
+                facing: facing.unwrap_or(input.facing),
+                jumps: input.jumps,
+            };
+            let changed = *input != next;
+            *input = next;
+            changed
+        });
+    }
+
+    fn jump(&self) {
+        self.input
+            .send_modify(|input| input.jumps = input.jumps.wrapping_add(1));
     }
 }
 
@@ -114,7 +158,7 @@ impl ApplicationHandler for App {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                self.input.send_replace([0, 0]);
+                self.stop();
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
@@ -124,13 +168,47 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(false) => {
                 self.keys.clear();
+                self.orbit_buttons.clear();
                 self.update_movement();
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if matches!(button, MouseButton::Left | MouseButton::Right) {
+                    match state {
+                        ElementState::Pressed => self.orbit_buttons.insert(button),
+                        ElementState::Released => self.orbit_buttons.remove(&button),
+                    };
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(previous) = self.cursor.replace(position)
+                    && !self.orbit_buttons.is_empty()
+                {
+                    self.camera
+                        .orbit(position.x - previous.x, position.y - previous.y);
+                    // A held movement key keeps the character facing the camera.
+                    self.update_movement();
+                }
+            }
+            WindowEvent::CursorLeft { .. } => self.cursor = None,
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, lines) => f64::from(lines),
+                    MouseScrollDelta::PixelDelta(position) => position.y / PIXELS_PER_WHEEL_LINE,
+                };
+                self.camera.zoom(lines as f32);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if code == KeyCode::Escape && event.state == ElementState::Pressed {
                         event_loop.exit();
                         return;
+                    }
+                    // Jump is edge-triggered: key repeat never queues more jumps.
+                    if code == KeyCode::Space
+                        && event.state == ElementState::Pressed
+                        && !event.repeat
+                    {
+                        self.jump();
                     }
                     if event.state == ElementState::Pressed {
                         self.keys.insert(code);
@@ -166,7 +244,7 @@ impl ApplicationHandler for App {
                             window.set_title(if self.presentation.is_stalled(now) {
                                 "MMORPG — connection stalled"
                             } else {
-                                "MMORPG — WASD / arrows move · Esc closes"
+                                CONTROL_HINTS
                             });
                         }
                     }
@@ -178,7 +256,7 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = &mut self.renderer
                     && let Err(error) = renderer.render(
                         &self.presentation.scene(now),
-                        self.presentation.camera_target(now),
+                        self.camera.view(self.presentation.camera_target(now)),
                     )
                 {
                     self.fail(event_loop, error);

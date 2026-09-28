@@ -4,10 +4,11 @@ mod desktop;
 
 use mmorpg_client::{
     ClientError,
+    camera::OrbitCamera,
     graphics::render_offscreen,
     network::ClientSession,
     presentation::Presentation,
-    session::{NetworkUpdate, run_session},
+    session::{MovementInput, NetworkUpdate, run_session},
 };
 use mmorpg_core::{ZoneId, outpost_definition};
 use std::{
@@ -67,7 +68,7 @@ impl Options {
 fn main() -> Result<(), ClientError> {
     let Some(options) = Options::parse(std::env::args().skip(1))? else {
         println!(
-            "mmorpg-client [--url https://host:4433/game/matches/zone-1] [--zone 1] [--certificate cert.pem] [--smoke] [--frames N]\nWASD/arrows move. Escape closes. --smoke connects and verifies an offscreen GPU frame.\nWithout --certificate, system certificate trust is used."
+            "mmorpg-client [--url https://host:4433/game/matches/zone-1] [--zone 1] [--certificate cert.pem] [--smoke] [--frames N]\nW/S move, A/D or Q/E strafe, Space jumps; drag a mouse button to orbit, wheel zooms. Escape closes. --smoke connects and verifies an offscreen GPU frame.\nWithout --certificate, system certificate trust is used."
         );
         return Ok(());
     };
@@ -90,12 +91,13 @@ fn main() -> Result<(), ClientError> {
             let mut presentation = Presentation::new(player_id, definition, Instant::now());
             presentation.push(snapshot, Instant::now())?;
             let now = Instant::now();
-            let colors = render_offscreen(&presentation.scene(now), presentation.camera_target(now)).await?;
+            let view = OrbitCamera::default().view(presentation.camera_target(now));
+            let colors = render_offscreen(&presentation.scene(now), view).await?;
             println!("{{\"event\":\"client_smoke_passed\",\"player_id\":{player_id},\"tick\":{tick},\"connection_epoch\":{connection_epoch},\"rendered_colors\":{colors}}}");
             Ok(())
         });
     }
-    let (input_sender, input_receiver) = watch::channel([0_i8; 2]);
+    let (input_sender, input_receiver) = watch::channel(MovementInput::default());
     let (update_sender, update_receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let mut task = runtime.spawn(async move {

@@ -8,6 +8,19 @@ use mmorpg_core::{
 use mmorpg_protocol::encode_snapshot;
 use visibility_oracle::exhaustive_projection;
 
+/// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
+const EAST: u16 = 16_384;
+const SOUTH: u16 = 32_768;
+const SOUTH_WEST: u16 = 40_960;
+
+fn run(facing: u16) -> ZoneCommand {
+    ZoneCommand::Move {
+        forward: 1,
+        strafe: 0,
+        facing,
+    }
+}
+
 fn assert_wire_parity(zone: &ZoneSimulation) {
     let canonical = zone.snapshot().unwrap();
     for observer in &canonical.players {
@@ -37,8 +50,10 @@ fn zone_at(positions: &[[i32; 3]], definition: ZoneDefinition) -> ZoneSimulation
                 player_id: u32::try_from(positions.len() - index).unwrap(),
                 position,
                 velocity: [0; 3],
-                movement_x: 0,
-                movement_z: 0,
+                facing: 0,
+                forward: 0,
+                strafe: 0,
+                jump_pending: false,
                 last_sequence: 3,
                 spawn_slot: u16::try_from(index).unwrap(),
             })
@@ -62,14 +77,11 @@ fn multi_tick_membership_transitions_match_exhaustive_wire_output() {
     assert_wire_parity(&zone);
     zone.advance_tick().unwrap(); // stationary
     assert_wire_parity(&zone);
-    zone.apply_command(3, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap(); // same cell
+    zone.apply_command(3, 4, run(EAST)).unwrap(); // same cell
     zone.advance_tick().unwrap();
     assert_wire_parity(&zone);
-    zone.apply_command(5, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
-    zone.apply_command(4, 4, ZoneCommand::SetMovement { x: -1, z: -1 })
-        .unwrap(); // crosses both negative axes
+    zone.apply_command(5, 4, run(EAST)).unwrap();
+    zone.apply_command(4, 4, run(SOUTH_WEST)).unwrap(); // crosses both negative axes
     for tick in 0..18 {
         zone.advance_tick().unwrap();
         assert_wire_parity(&zone);
@@ -90,10 +102,8 @@ fn multi_tick_membership_transitions_match_exhaustive_wire_output() {
 
 #[test]
 fn collision_corrections_and_failed_step_preserve_reference_parity() {
-    let mut colliding = zone_at(&[[0, 50, 0], [2000, 50, 0]], outpost_definition());
-    colliding
-        .apply_command(2, 4, ZoneCommand::SetMovement { x: 0, z: -1 })
-        .unwrap();
+    let mut colliding = zone_at(&[[0, 90, 0], [2000, 90, 0]], outpost_definition());
+    colliding.apply_command(2, 4, run(SOUTH)).unwrap();
     for _ in 0..120 {
         colliding.advance_tick().unwrap();
         assert_wire_parity(&colliding);
@@ -112,11 +122,10 @@ fn collision_corrections_and_failed_step_preserve_reference_parity() {
     );
 
     let mut edge = zone_at(
-        &[[i32::MAX - 31, 50, 0], [i32::MIN + 31, 50, 0]],
+        &[[i32::MAX - 50, 50, 0], [i32::MIN + 31, 50, 0]],
         ZoneDefinition::default(),
     );
-    edge.apply_command(2, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
+    edge.apply_command(2, 4, run(EAST)).unwrap();
     edge.advance_tick().unwrap();
     edge.advance_tick().unwrap();
     let work = edge.interest_maintenance_stats();

@@ -1,18 +1,34 @@
 //! Snapshot-only presentation. Local input never changes authoritative positions.
 use crate::ClientError;
 use mmorpg_core::{
-    PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, UNITS_PER_METRE, ZoneDefinition, ZoneSnapshot,
+    EntityKind, EntitySnapshot, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, UNITS_PER_METRE,
+    ZoneDefinition, ZoneSnapshot,
 };
 use std::{
     collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},
 };
 
+/// Nose marker in metres: small enough to read as facing, not as a collider.
+const NOSE_SIZE: [f32; 3] = [0.14, 0.14, 0.2];
+/// The nose sits at head height, just in front of the body's face.
+const NOSE_HEIGHT_ABOVE_CENTER: f32 = 0.55;
+
+/// A box rotated by `yaw` radians about +Y (0 keeps local +Z on world +Z).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneBox {
     pub position: [f32; 3],
     pub size: [f32; 3],
     pub color: [f32; 3],
+    pub yaw: f32,
+}
+
+/// Interpolated presentation pose of one player, in metres and radians.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlayerPose {
+    pub position: [f32; 3],
+    /// World yaw convention (0 faces +Z, increasing toward +X), within one turn.
+    pub yaw: f32,
 }
 
 pub struct Presentation {
@@ -43,13 +59,16 @@ impl Presentation {
         if snapshot.content_revision != self.definition.revision() {
             return Err("snapshot content revision mismatch".into());
         }
-        let mut ids = std::collections::BTreeSet::new();
+        if snapshot.viewer_id != self.player_id {
+            return Err("snapshot is addressed to another player".into());
+        }
+        let mut entities = std::collections::BTreeSet::new();
         if snapshot
-            .players
+            .entities
             .iter()
-            .any(|player| !ids.insert(player.player_id))
+            .any(|entity| !entities.insert((entity.kind, entity.id)))
         {
-            return Err("duplicate player in snapshot".into());
+            return Err("duplicate entity in snapshot".into());
         }
         if let Some(latest) = self.history.back() {
             if snapshot.zone_id != latest.zone_id {
@@ -70,9 +89,10 @@ impl Presentation {
         Ok(true)
     }
 
-    /// Two ticks of interpolation delay; packet loss holds the latest position.
+    /// Two ticks of interpolation delay; packet loss holds the latest pose.
+    /// Facing interpolates along the shorter arc.
     #[must_use]
-    pub fn players(&self, now: Instant) -> BTreeMap<u32, [f32; 3]> {
+    pub fn players(&self, now: Instant) -> BTreeMap<u32, PlayerPose> {
         let Some(latest) = self.history.back() else {
             return BTreeMap::new();
         };
@@ -89,31 +109,30 @@ impl Presentation {
                 let before_age = (latest.tick - before.tick) as f64;
                 let alpha =
                     ((before_age - delay) / (before_age - after_age)).clamp(0.0, 1.0) as f32;
-                return before
-                    .players
-                    .iter()
+                return visible_players(before)
                     .map(|player| {
-                        let position = metres(player.position);
-                        let next = after
-                            .players
-                            .iter()
-                            .find(|next| next.player_id == player.player_id);
-                        let position = next.map_or(position, |next| {
+                        let pose = pose(player);
+                        let next = visible_players(after).find(|next| next.id == player.id);
+                        let pose = next.map_or(pose, |next| {
                             let target = metres(next.position);
-                            std::array::from_fn(|axis| {
-                                position[axis] + (target[axis] - position[axis]) * alpha
-                            })
+                            // Wrapping u16 difference, read as signed, is the shorter arc.
+                            let arc = f32::from(next.facing.wrapping_sub(player.facing) as i16);
+                            PlayerPose {
+                                position: std::array::from_fn(|axis| {
+                                    pose.position[axis]
+                                        + (target[axis] - pose.position[axis]) * alpha
+                                }),
+                                yaw: yaw_radians(f32::from(player.facing) + arc * alpha),
+                            }
                         });
-                        (player.player_id, position)
+                        (player.id, pose)
                     })
                     .collect();
             }
             before = after;
         }
-        before
-            .players
-            .iter()
-            .map(|player| (player.player_id, metres(player.position)))
+        visible_players(before)
+            .map(|player| (player.id, pose(player)))
             .collect()
     }
 
@@ -132,21 +151,35 @@ impl Presentation {
                     5 => [0.2, 0.7, 0.65],
                     _ => [0.5, 0.49, 0.43],
                 },
+                yaw: 0.0,
             })
             .collect();
-        boxes.extend(
-            self.players(now)
-                .into_iter()
-                .map(|(id, position)| SceneBox {
-                    position,
-                    size: metres(PLAYER_HALF_EXTENTS_UNITS).map(|value| value * 2.0),
-                    color: if id == self.player_id {
-                        [0.95, 0.75, 0.25]
-                    } else {
-                        [0.3, 0.6, 0.95]
-                    },
-                }),
-        );
+        let body = metres(PLAYER_HALF_EXTENTS_UNITS).map(|value| value * 2.0);
+        for (id, pose) in self.players(now) {
+            let color = if id == self.player_id {
+                [0.95, 0.75, 0.25]
+            } else {
+                [0.3, 0.6, 0.95]
+            };
+            boxes.push(SceneBox {
+                position: pose.position,
+                size: body,
+                color,
+                yaw: pose.yaw,
+            });
+            // The nose touches the body's front face: half depth plus half nose depth.
+            let reach = (body[2] + NOSE_SIZE[2]) / 2.0;
+            boxes.push(SceneBox {
+                position: [
+                    pose.position[0] + pose.yaw.sin() * reach,
+                    pose.position[1] + NOSE_HEIGHT_ABOVE_CENTER,
+                    pose.position[2] + pose.yaw.cos() * reach,
+                ],
+                size: NOSE_SIZE,
+                color: color.map(|channel| channel * 0.45),
+                yaw: pose.yaw,
+            });
+        }
         boxes
     }
 
@@ -154,14 +187,41 @@ impl Presentation {
     pub fn camera_target(&self, now: Instant) -> [f32; 3] {
         self.players(now)
             .get(&self.player_id)
-            .copied()
-            .unwrap_or([0.0, 0.5, 0.0])
+            .map_or([0.0, 0.5, 0.0], |pose| pose.position)
     }
 
     #[must_use]
     pub fn is_stalled(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.latest_received) > Duration::from_secs(1)
     }
+}
+
+fn visible_players(snapshot: &ZoneSnapshot) -> impl Iterator<Item = &EntitySnapshot> {
+    snapshot
+        .entities
+        .iter()
+        .filter(|entity| entity.kind == EntityKind::Player)
+}
+
+/// Converts a presentation angle (radians, 0 facing +Z, turning toward +X)
+/// into the nearest `u16` yaw intent.
+#[must_use]
+pub fn yaw_from_radians(radians: f32) -> u16 {
+    let turns = (radians / std::f32::consts::TAU).rem_euclid(1.0);
+    // A full turn rounds to 65 536, which wraps to yaw 0.
+    ((turns * 65_536.0).round() as u32 % 65_536) as u16
+}
+
+fn pose(player: &EntitySnapshot) -> PlayerPose {
+    PlayerPose {
+        position: metres(player.position),
+        yaw: yaw_radians(f32::from(player.facing)),
+    }
+}
+
+/// Converts yaw steps (possibly fractional or outside one turn) to radians within one turn.
+fn yaw_radians(steps: f32) -> f32 {
+    (steps / 65_536.0).rem_euclid(1.0) * std::f32::consts::TAU
 }
 
 fn metres(value: [i32; 3]) -> [f32; 3] {

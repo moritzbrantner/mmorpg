@@ -3,7 +3,8 @@ use std::error::Error;
 
 use mmorpg_core::{
     CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE,
-    SNAPSHOT_SCHEMA_VERSION, ZoneDefinition, ZoneId, ZoneSimulation, outpost_definition,
+    PLAYER_HALF_EXTENTS_UNITS, SNAPSHOT_SCHEMA_VERSION, ZoneDefinition, ZoneId, ZoneSimulation,
+    outpost_definition,
 };
 use mmorpg_protocol::{SNAPSHOT_WIRE_VERSION, encode_canonical_snapshot, encode_snapshot};
 #[path = "../tests/support/visibility_oracle.rs"]
@@ -25,20 +26,24 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
         tick: 0,
         players: Vec::new(),
     };
+    // Feet rest on y = 0, the outpost ground; the empty workloads have no gravity.
+    let y = PLAYER_HALF_EXTENTS_UNITS[1];
     for index in 0..MAX_PLAYERS_PER_ZONE {
         let value = i32::try_from(index)?;
         let position = match name {
-            "sparse-travel-512" => [value * 6000, 50, 0],
-            "dense-hub-512" => [(value % 23) * 64 - 704, 50, (value / 23) * 64 - 704],
-            "outpost-spawn-512" => [(value % 32) * 200, 50, (value / 32) * 200],
+            "sparse-travel-512" => [value * 6000, y, 0],
+            "dense-hub-512" => [(value % 23) * 64 - 704, y, (value / 23) * 64 - 704],
+            "outpost-spawn-512" => [(value % 32) * 200, y, (value / 32) * 200],
             _ => return Err("unknown workload".into()),
         };
         canonical.players.push(CanonicalPlayerSnapshot {
             player_id: u32::try_from(index)? + 1,
             position,
             velocity: [0; 3],
-            movement_x: 0,
-            movement_z: 0,
+            facing: 0,
+            forward: 0,
+            strafe: 0,
+            jump_pending: false,
             last_sequence: 0,
             spawn_slot: u16::try_from(index)?,
         });
@@ -76,7 +81,7 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
         }
         candidates += projection.stats.candidates_tested;
         cells += projection.stats.cells_visited;
-        visible += projection.snapshot.players.len();
+        visible += projection.snapshot.entities.len();
         bytes += encoded.len();
         max_bytes = max_bytes.max(encoded.len());
     }

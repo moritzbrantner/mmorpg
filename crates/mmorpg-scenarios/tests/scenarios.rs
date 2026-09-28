@@ -123,14 +123,15 @@ action = "join"
 tick = 1
 bot = "alice"
 action = "move"
-x = 1
-z = 0
+forward = 1
+strafe = 0
+facing = 16384
 seq = 0
 [[expect]]
 kind = "position"
 bot = "alice"
 tick = 2
-position = [999, 50, 0]
+position = [999, 90, 0]
 "#,
     )
     .unwrap();
@@ -138,7 +139,7 @@ position = [999, 50, 0]
     assert!(!report.passed());
     assert_eq!(report.failures(), 2, "{text}");
     assert!(text.contains("FAIL expected applied"), "{text}");
-    assert!(text.contains("got [0, 50, 0]"), "{text}");
+    assert!(text.contains("got [0, 90, 0]"), "{text}");
     assert!(text.ends_with("failures=2\n"), "{text}");
 }
 
@@ -175,7 +176,19 @@ fn invalid_scenarios_are_rejected_at_load() {
         ),
         (
             "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"move\"",
-            "x and z",
+            "forward, strafe and facing",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"move\"\nforward = 1\nstrafe = 0",
+            "forward, strafe and facing",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"join\"\nfacing = 0",
+            "forward, strafe and facing",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"move\"\nx = 1\nz = 0",
+            "unknown field",
         ),
         (
             "name = \"x\"\nzone = 1\nticks = 2\ntypo = 1\n[[bots]]\nname = \"a\"",

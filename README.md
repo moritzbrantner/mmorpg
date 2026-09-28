@@ -70,7 +70,8 @@ The workspace provides:
 - a runnable multi-zone host with one WebTransport routing surface and separate operational status;
 - a deliberately single-player GitHub Pages tech demo for a tiny explorable zone, consuming the pinned `3d-lab` renderer without introducing browser-side MMO authority;
 - local browser-demo character creation with Warden, Ranger, and Arcanist starter classes, male/female presentation variants, stable per-character local identities, and isolated save slots;
-- strict Rust/browser snapshot v2 compatibility tests and bounded client interpolation;
+- facing-relative movement (run, strafe, backpedal) and grounded jumps driven by a const-generated integer trigonometry table;
+- strict Rust/browser snapshot v3 compatibility tests (entity kinds, facing, viewer identity) and bounded client interpolation;
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
 - [headless deterministic scenario runners](docs/SCENARIOS.md) for scripted bots against the real zone host path and for control-plane lease/handoff sequences with invariant checks after every step;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
@@ -79,7 +80,7 @@ The control-plane implementation in this slice is a **reference model**, not yet
 
 ## Native multiplayer client
 
-The native client uses **wgpu 30.0.1 + winit 0.30.13**, shared Rust world geometry, and the existing WebTransport protocol. WASD/arrows send movement intent to the server; the GPU renders interpolated player-visible snapshots. Multiple client processes can join the same zone.
+The native client uses **wgpu 30.0.1 + winit 0.30.13**, shared Rust world geometry, and the existing WebTransport protocol. W/S run and backpedal, A/D or Q/E strafe relative to a third-person orbit camera (drag to orbit, wheel to zoom), and Space jumps; the client only sends intent and the GPU renders interpolated player-visible snapshots with each character's facing. Multiple client processes can join the same zone.
 
 ```sh
 python3 scripts/smoke-native.py --window
@@ -103,7 +104,7 @@ Start the complete local native development environment with:
 
 The renderer is consumed from an exact `3d-lab` commit. The demo advances local movement at 30 Hz and renders interpolated snapshots. `web/src/replication.ts` decodes the Rust player-visible protocol and provides bounded presentation history for a future online source. Local interaction remains demo-only; replacing the source must preserve server gameplay authority.
 
-The standalone host and native client share the Rust outpost definition. The browser prototype still has its own illustrative scene. Snapshot schema/wire version 2 preserves content and velocity; v1 snapshots and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
+The standalone host and native client share the Rust outpost definition. The browser prototype still has its own illustrative scene. Snapshot schema/wire version 3 carries entity kinds, facing and the viewer's identity, and command wire version 2 carries `Move`/`Jump`; v2 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
 
 ## Scaling model
 
@@ -146,7 +147,7 @@ bun test
 bun run build
 ```
 
-Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v2.hex`.
+Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v3.hex`.
 
 ## Run a standalone zone host
 

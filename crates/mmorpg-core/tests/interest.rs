@@ -1,7 +1,23 @@
 use mmorpg_core::{
-    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE,
-    PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation,
+    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, EntityKind, EntitySnapshot,
+    INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE, SNAPSHOT_SCHEMA_VERSION, ZoneCommand,
+    ZoneDefinition, ZoneId, ZoneSimulation,
 };
+
+/// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
+const NORTH_EAST: u16 = 8_192;
+const EAST: u16 = 16_384;
+const SOUTH: u16 = 32_768;
+const SOUTH_WEST: u16 = 40_960;
+const WEST: u16 = 49_152;
+
+fn run(facing: u16) -> ZoneCommand {
+    ZoneCommand::Move {
+        forward: 1,
+        strafe: 0,
+        facing,
+    }
+}
 
 fn zone_at(positions: &[[i32; 3]]) -> ZoneSimulation {
     ZoneSimulation::from_snapshot(CanonicalZoneSnapshot {
@@ -17,8 +33,10 @@ fn zone_at(positions: &[[i32; 3]]) -> ZoneSimulation {
                 player_id: u32::try_from(positions.len() - slot).unwrap(),
                 position,
                 velocity: [0; 3],
-                movement_x: 0,
-                movement_z: 0,
+                facing: 0,
+                forward: 0,
+                strafe: 0,
+                jump_pending: false,
                 last_sequence: 3,
                 spawn_slot: u16::try_from(slot).unwrap(),
             })
@@ -38,10 +56,14 @@ fn assert_matches_exhaustive(zone: &ZoneSimulation) {
                 let dz = i128::from(candidate.position[2]) - i128::from(observer.position[2]);
                 dx * dx + dz * dz <= i128::from(INTEREST_RADIUS_UNITS).pow(2)
             })
-            .map(|candidate| PlayerSnapshot {
-                player_id: candidate.player_id,
+            .map(|candidate| EntitySnapshot {
+                kind: EntityKind::Player,
+                id: candidate.player_id,
                 position: candidate.position,
-                velocity: candidate.velocity,
+                velocity: candidate
+                    .velocity
+                    .map(|component| component.clamp(-32_768, 32_767) as i16),
+                facing: candidate.facing,
             })
             .collect();
         let actual = zone.snapshot_for_player(observer.player_id).unwrap();
@@ -50,10 +72,11 @@ fn assert_matches_exhaustive(zone: &ZoneSimulation) {
             mmorpg_core::ZoneSnapshot {
                 content_revision: canonical.definition.revision(),
                 acknowledged_sequence: observer.last_sequence,
+                viewer_id: observer.player_id,
                 schema_version: canonical.schema_version,
                 zone_id: canonical.zone_id,
                 tick: canonical.tick,
-                players: expected,
+                entities: expected,
             },
             "observer {}",
             observer.player_id
@@ -86,10 +109,8 @@ fn visibility_preserves_inclusive_radius_height_independence_and_extreme_coordin
 #[test]
 fn visibility_tracks_movement_admission_removal_and_recovery() {
     let mut zone = zone_at(&[[1990, 50, -2010], [3995, 50, -2010], [-1990, 50, 1990]]);
-    zone.apply_command(3, 4, ZoneCommand::SetMovement { x: 1, z: 1 })
-        .unwrap();
-    zone.apply_command(1, 4, ZoneCommand::SetMovement { x: -1, z: -1 })
-        .unwrap();
+    zone.apply_command(3, 4, run(NORTH_EAST)).unwrap();
+    zone.apply_command(1, 4, run(SOUTH_WEST)).unwrap();
     let mut restored = ZoneSimulation::from_snapshot(zone.snapshot().unwrap()).unwrap();
     for _ in 0..60 {
         zone.advance_tick().unwrap();
@@ -135,7 +156,7 @@ fn sparse_work_is_bounded_and_dense_visibility_is_never_truncated() {
     for player in sparse.snapshot().unwrap().players {
         let projection = sparse.project_for_player(player.player_id).unwrap();
         assert_eq!(projection.stats.cells_visited, 9);
-        assert_eq!(projection.snapshot.players.len(), 1);
+        assert_eq!(projection.snapshot.entities.len(), 1);
         sparse_candidates += projection.stats.candidates_tested;
     }
     // The full-scan baseline does N*N distance tests for the same recipients.
@@ -154,7 +175,7 @@ fn sparse_work_is_bounded_and_dense_visibility_is_never_truncated() {
     for player in dense.snapshot().unwrap().players {
         let projection = dense.project_for_player(player.player_id).unwrap();
         assert_eq!(projection.stats.cells_visited, 9);
-        assert_eq!(projection.snapshot.players.len(), MAX_PLAYERS_PER_ZONE);
+        assert_eq!(projection.snapshot.entities.len(), MAX_PLAYERS_PER_ZONE);
         dense_candidates += projection.stats.candidates_tested;
     }
     assert_eq!(dense_candidates, MAX_PLAYERS_PER_ZONE.pow(2));
@@ -167,16 +188,14 @@ fn projection_tracks_collision_resolution_and_failed_physics_steps() {
         ZoneSimulation::with_definition(ZoneId::new(7), mmorpg_core::outpost_definition()).unwrap();
     zone.add_player(1).unwrap();
     zone.add_player(2).unwrap();
-    zone.apply_command(1, 1, ZoneCommand::SetMovement { x: 0, z: -1 })
-        .unwrap();
+    zone.apply_command(1, 1, run(SOUTH)).unwrap();
     for _ in 0..150 {
         zone.advance_tick().unwrap();
         assert_matches_exhaustive(&zone);
     }
 
-    let mut edge = zone_at(&[[i32::MAX - 31, 50, 0], [i32::MIN + 31, 50, 0]]);
-    edge.apply_command(2, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
+    let mut edge = zone_at(&[[i32::MAX - 50, 50, 0], [i32::MIN + 31, 50, 0]]);
+    edge.apply_command(2, 4, run(EAST)).unwrap();
     edge.advance_tick().unwrap();
     edge.advance_tick().unwrap();
     let before_failure = edge.interest_maintenance_stats();
@@ -194,10 +213,8 @@ fn crossing_into_a_previously_unqueried_cell_becomes_visible_on_the_next_tick() 
         [-1999, 50, 5000],
         [-4001, 50, 5000],
     ]);
-    zone.apply_command(3, 4, ZoneCommand::SetMovement { x: -1, z: 0 })
-        .unwrap();
-    zone.apply_command(1, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
+    zone.apply_command(3, 4, run(WEST)).unwrap();
+    zone.apply_command(1, 4, run(EAST)).unwrap();
     let mut recovered = ZoneSimulation::from_snapshot(zone.snapshot().unwrap()).unwrap();
     for simulation in [&mut zone, &mut recovered] {
         for observer in [4, 2] {
@@ -205,7 +222,7 @@ fn crossing_into_a_previously_unqueried_cell_becomes_visible_on_the_next_tick() 
                 simulation
                     .snapshot_for_player(observer)
                     .unwrap()
-                    .players
+                    .entities
                     .len(),
                 1
             );
@@ -216,7 +233,7 @@ fn crossing_into_a_previously_unqueried_cell_becomes_visible_on_the_next_tick() 
                 simulation
                     .snapshot_for_player(observer)
                     .unwrap()
-                    .players
+                    .entities
                     .len(),
                 2
             );
@@ -245,8 +262,7 @@ fn retained_memberships_write_only_for_crossings_across_deterministic_ticks() {
     assert_eq!(stationary.bucket_moves, initial.bucket_moves);
     assert_eq!(stationary.players_inspected - initial.players_inspected, 4);
 
-    zone.apply_command(1, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
+    zone.apply_command(1, 4, run(EAST)).unwrap();
     zone.advance_tick().unwrap();
     assert_matches_exhaustive(&zone);
     let same_cell = zone.interest_maintenance_stats();
@@ -254,12 +270,9 @@ fn retained_memberships_write_only_for_crossings_across_deterministic_ticks() {
     assert_eq!(same_cell.bucket_removes, stationary.bucket_removes);
     assert_eq!(same_cell.bucket_moves, stationary.bucket_moves);
 
-    zone.apply_command(2, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
-    zone.apply_command(3, 4, ZoneCommand::SetMovement { x: -1, z: -1 })
-        .unwrap();
-    zone.apply_command(4, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
-        .unwrap();
+    zone.apply_command(2, 4, run(EAST)).unwrap();
+    zone.apply_command(3, 4, run(SOUTH_WEST)).unwrap();
+    zone.apply_command(4, 4, run(EAST)).unwrap();
     zone.advance_tick().unwrap();
     assert_matches_exhaustive(&zone);
     let crossed = zone.interest_maintenance_stats();

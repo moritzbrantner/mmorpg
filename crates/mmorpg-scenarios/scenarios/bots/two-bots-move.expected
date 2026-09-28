@@ -1,21 +1,21 @@
 scenario two-bots-move zone=1 bots=2 ticks=10 grace=120
 t=0 alice join -> joined player=1 epoch=1
 t=0 bob join -> joined player=2 epoch=1
-t=0 alice move -> applied seq=1 epoch=1 x=1 z=0
-t=1 expect alice sees bob ok bob at [200, 50, 0]
-t=1 expect bob sees alice ok alice at [12, 50, 0]
+t=0 alice move -> applied seq=1 epoch=1 forward=1 strafe=0 facing=0
+t=1 expect alice sees bob ok bob at [200, 90, 0]
+t=1 expect bob sees alice ok alice at [0, 90, 21]
 t=1 expect alice acknowledged ok ack=1
-t=1 alice p1 e1 ack1 (12,50,0) sees[bob] | bob p2 e1 ack0 (200,50,0) sees[alice]
-t=2 alice p1 e1 ack1 (24,50,0) sees[bob] | bob p2 e1 ack0 (200,50,0) sees[alice]
-t=3 alice p1 e1 ack1 (36,50,0) sees[bob] | bob p2 e1 ack0 (200,50,0) sees[alice]
-t=4 alice p1 e1 ack1 (48,50,0) sees[bob] | bob p2 e1 ack0 (200,50,0) sees[alice]
-t=5 alice p1 e1 ack1 (60,50,0) sees[bob] | bob p2 e1 ack0 (200,50,0) sees[alice]
-t=5 bob move -> applied seq=1 epoch=1 x=0 z=1
-t=6 alice p1 e1 ack1 (72,50,0) sees[bob] | bob p2 e1 ack1 (200,50,12) sees[alice]
-t=7 alice p1 e1 ack1 (84,50,0) sees[bob] | bob p2 e1 ack1 (200,50,24) sees[alice]
-t=8 alice p1 e1 ack1 (96,50,0) sees[bob] | bob p2 e1 ack1 (200,50,36) sees[alice]
-t=9 alice p1 e1 ack1 (108,50,0) sees[bob] | bob p2 e1 ack1 (200,50,48) sees[alice]
-t=10 expect bob position alice ok [120, 50, 0]
-t=10 expect alice position bob ok [200, 50, 60]
-t=10 alice p1 e1 ack1 (120,50,0) sees[bob] | bob p2 e1 ack1 (200,50,60) sees[alice]
+t=1 alice p1 e1 ack1 (0,90,21) sees[bob] | bob p2 e1 ack0 (200,90,0) sees[alice]
+t=2 alice p1 e1 ack1 (0,90,42) sees[bob] | bob p2 e1 ack0 (200,90,0) sees[alice]
+t=3 alice p1 e1 ack1 (0,90,63) sees[bob] | bob p2 e1 ack0 (200,90,0) sees[alice]
+t=4 alice p1 e1 ack1 (0,90,84) sees[bob] | bob p2 e1 ack0 (200,90,0) sees[alice]
+t=5 alice p1 e1 ack1 (0,90,105) sees[bob] | bob p2 e1 ack0 (200,90,0) sees[alice]
+t=5 bob move -> applied seq=1 epoch=1 forward=1 strafe=0 facing=16384
+t=6 alice p1 e1 ack1 (0,90,126) sees[bob] | bob p2 e1 ack1 (221,90,0) sees[alice]
+t=7 alice p1 e1 ack1 (0,90,147) sees[bob] | bob p2 e1 ack1 (242,90,0) sees[alice]
+t=8 alice p1 e1 ack1 (0,90,168) sees[bob] | bob p2 e1 ack1 (263,90,0) sees[alice]
+t=9 alice p1 e1 ack1 (0,90,189) sees[bob] | bob p2 e1 ack1 (284,90,0) sees[alice]
+t=10 expect bob position alice ok [0, 90, 210]
+t=10 expect alice position bob ok [305, 90, 0]
+t=10 alice p1 e1 ack1 (0,90,210) sees[bob] | bob p2 e1 ack1 (305,90,0) sees[alice]
 PASS two-bots-move ticks=10 steps=4 expectations=5 failures=0

@@ -12,7 +12,9 @@ use game_server::{
     CommandOutcome, MatchHost, MatchId, MatchRuntime, RECONNECT_TOKEN_BYTES, ReconnectToken,
     RuntimeError, SessionLease,
 };
-use mmorpg_core::{MAX_PLAYERS_PER_ZONE, PlayerId, ZoneCommand, ZoneId, ZoneSnapshot};
+use mmorpg_core::{
+    EntityKind, EntitySnapshot, MAX_PLAYERS_PER_ZONE, PlayerId, ZoneCommand, ZoneId, ZoneSnapshot,
+};
 use mmorpg_game_server::{ZoneGameServerAdapter, build_zone_host, zone_match_id};
 use mmorpg_protocol::{decode_snapshot, encode_command};
 use serde::Deserialize;
@@ -93,8 +95,11 @@ pub struct Step {
     pub tick: u64,
     pub bot: String,
     pub action: Action,
-    pub x: Option<i8>,
-    pub z: Option<i8>,
+    /// Move intent, passed through unchanged; the zone accepts `-1..=1`.
+    pub forward: Option<i8>,
+    pub strafe: Option<i8>,
+    /// Move heading: 65 536 steps per turn, 0 faces +Z, 16 384 faces +X.
+    pub facing: Option<u16>,
     /// Command sequence override; defaults to the bot's next sequence.
     pub seq: Option<u32>,
     /// Connection epoch override; defaults to the bot's current epoch.
@@ -188,9 +193,14 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
         }
         previous_tick = step.tick;
         let is_move = step.action == Action::Move;
-        if is_move != (step.x.is_some() && step.z.is_some()) {
+        let intent = [
+            step.forward.is_some(),
+            step.strafe.is_some(),
+            step.facing.is_some(),
+        ];
+        if intent.iter().any(|&present| present != is_move) {
             return Err(format!(
-                "{at}: x and z are required for move and only for move"
+                "{at}: forward, strafe and facing are required for move and only for move"
             ));
         }
         if !is_move && (step.seq.is_some() || step.connection_epoch.is_some()) {
@@ -467,14 +477,18 @@ impl Runner<'_> {
         let sequence = step.seq.unwrap_or(bot.next_sequence);
         let epoch = step.connection_epoch.unwrap_or(lease.connection_epoch);
         bot.next_sequence = bot.next_sequence.max(sequence.saturating_add(1));
-        let payload = encode_command(ZoneCommand::SetMovement {
-            x: step.x.unwrap_or_default(),
-            z: step.z.unwrap_or_default(),
+        let (forward, strafe, facing) = (
+            step.forward.unwrap_or_default(),
+            step.strafe.unwrap_or_default(),
+            step.facing.unwrap_or_default(),
+        );
+        let payload = encode_command(ZoneCommand::Move {
+            forward,
+            strafe,
+            facing,
         });
         let detail = format!(
-            "seq={sequence} epoch={epoch} x={} z={}",
-            step.x.unwrap_or_default(),
-            step.z.unwrap_or_default()
+            "seq={sequence} epoch={epoch} forward={forward} strafe={strafe} facing={facing}"
         );
         let outcome = self.runtime(|runtime| {
             runtime.submit_command(lease.player_id, epoch, sequence, &payload)
@@ -550,12 +564,17 @@ impl Runner<'_> {
                     decode_snapshot(&snapshot.payload).map_err(|error| error.to_string())
                 })
                 .and_then(|snapshot| {
-                    if snapshot.zone_id != zone || snapshot.tick != tick {
+                    if snapshot.zone_id != zone
+                        || snapshot.tick != tick
+                        || snapshot.viewer_id != lease.player_id
+                    {
                         Err(format!(
-                            "snapshot for zone {} tick {} does not match zone {} tick {tick}",
+                            "snapshot for zone {} tick {} viewer {} does not match zone {} tick {tick} viewer {}",
                             snapshot.zone_id.get(),
                             snapshot.tick,
-                            zone.get()
+                            snapshot.viewer_id,
+                            zone.get(),
+                            lease.player_id
                         ))
                     } else {
                         Ok(snapshot)
@@ -563,7 +582,7 @@ impl Runner<'_> {
                 });
             match decoded {
                 Ok(snapshot) => {
-                    let sees = self.sees(&snapshot, lease.player_id);
+                    let sees = self.sees(&snapshot);
                     let bot = &mut self.bots[index];
                     changed |= sees != bot.previous_sees;
                     bot.previous_sees = sees;
@@ -591,12 +610,13 @@ impl Runner<'_> {
             .map_or_else(|| format!("p{player_id}"), |bot| bot.name.clone())
     }
 
-    fn sees(&self, snapshot: &ZoneSnapshot, own: PlayerId) -> Vec<String> {
+    fn sees(&self, snapshot: &ZoneSnapshot) -> Vec<String> {
         snapshot
-            .players
+            .entities
             .iter()
-            .filter(|player| player.player_id != own)
-            .map(|player| self.player_name(player.player_id))
+            .filter_map(player_of_entity)
+            .filter(|&player_id| player_id != snapshot.viewer_id)
+            .map(|player_id| self.player_name(player_id))
             .collect()
     }
 
@@ -621,11 +641,7 @@ impl Runner<'_> {
                 }));
                 continue;
             };
-            let position = view
-                .players
-                .iter()
-                .find(|player| player.player_id == lease.player_id)
-                .map(|player| player.position);
+            let position = visible_player(view, lease.player_id).map(|entity| entity.position);
             let position_text =
                 position.map_or_else(|| "(absent)".into(), |[x, y, z]| format!("({x},{y},{z})"));
             parts.push(format!(
@@ -715,9 +731,7 @@ impl Runner<'_> {
             .ok_or_else(|| format!("{} received no snapshot", bot.name))?;
         let target_name = expectation.target.as_deref().unwrap_or(&bot.name);
         let target = self.player_of(target_name);
-        let visible = |player: Option<PlayerId>| {
-            player.and_then(|id| view.players.iter().find(|record| record.player_id == id))
-        };
+        let visible = |player: Option<PlayerId>| player.and_then(|id| visible_player(view, id));
         match expectation.kind {
             ExpectKind::Sees => visible(target)
                 .map(|record| format!("{target_name} at {:?}", record.position))
@@ -762,14 +776,29 @@ impl Runner<'_> {
             }
             ExpectKind::VisibleCount => {
                 let expected = expectation.count.unwrap_or_default();
-                if view.players.len() == expected {
+                let count = view.entities.iter().filter_map(player_of_entity).count();
+                if count == expected {
                     Ok(format!("count={expected}"))
                 } else {
-                    Err(format!("got count={}", view.players.len()))
+                    Err(format!("got count={count}"))
                 }
             }
         }
     }
+}
+
+/// The player behind a visible entity. Players are the only kind so far; a new
+/// kind must decide here whether bots can name, count and position it.
+fn player_of_entity(entity: &EntitySnapshot) -> Option<PlayerId> {
+    match entity.kind {
+        EntityKind::Player => Some(entity.id),
+    }
+}
+
+fn visible_player(view: &ZoneSnapshot, player_id: PlayerId) -> Option<&EntitySnapshot> {
+    view.entities
+        .iter()
+        .find(|entity| player_of_entity(entity) == Some(player_id))
 }
 
 fn describe(expectation: &Expectation) -> String {

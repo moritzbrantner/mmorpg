@@ -13,12 +13,20 @@ struct VertexOutput {
     @location(2) translation: vec3<f32>,
     @location(3) size: vec3<f32>,
     @location(4) color: vec3<f32>,
+    @location(5) yaw: f32,
 ) -> VertexOutput {
     var output: VertexOutput;
-    output.clip_position = camera.view_projection * vec4<f32>(position * size + translation, 1.0);
-    output.normal = normal;
+    output.clip_position = camera.view_projection * vec4<f32>(rotate_yaw(position * size, yaw) + translation, 1.0);
+    output.normal = rotate_yaw(normal, yaw);
     output.color = color;
     return output;
+}
+
+// World yaw convention: yaw 0 keeps local +Z on world +Z; increasing yaw turns +Z toward +X.
+fn rotate_yaw(value: vec3<f32>, yaw: f32) -> vec3<f32> {
+    let c = cos(yaw);
+    let s = sin(yaw);
+    return vec3<f32>(value.x * c + value.z * s, value.y, value.z * c - value.x * s);
 }
 
 @fragment fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {

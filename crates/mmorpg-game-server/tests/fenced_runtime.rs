@@ -30,7 +30,11 @@ fn reassignment_stops_old_host_commands_ticks_admission_and_publication() {
         .reassign(zone, lease.epoch, HostId::new("b").unwrap(), &hosts, 1)
         .unwrap();
     let mut new = FencedZoneRuntime::new(replacement, &directory, 1, 120).unwrap();
-    let command = encode_command(ZoneCommand::SetMovement { x: 1, z: 0 });
+    let command = encode_command(ZoneCommand::Move {
+        forward: 1,
+        strafe: 0,
+        facing: 0,
+    });
     assert!(
         old.execute(&directory, 1, |runtime| runtime.submit_command(
             player.player_id,

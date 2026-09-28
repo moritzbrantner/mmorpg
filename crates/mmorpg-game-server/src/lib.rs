@@ -213,6 +213,18 @@ mod tests {
     use mmorpg_core::ZoneCommand;
     use mmorpg_protocol::{decode_canonical_snapshot, decode_snapshot, encode_command};
 
+    /// Forward-movement headings: yaw 0 faces +Z, a quarter turn faces +X.
+    const EAST: u16 = mmorpg_core::trig::YAW_QUARTER_TURN;
+    const SOUTH: u16 = 2 * mmorpg_core::trig::YAW_QUARTER_TURN;
+
+    fn run(facing: u16) -> ZoneCommand {
+        ZoneCommand::Move {
+            forward: 1,
+            strafe: 0,
+            facing,
+        }
+    }
+
     #[test]
     fn zones_map_to_stable_route_safe_match_ids() {
         assert_eq!(zone_match_id(ZoneId::new(42)).unwrap().as_str(), "zone-42");
@@ -224,26 +236,22 @@ mod tests {
         for player_id in 1..=12 {
             adapter.add_player(player_id).unwrap();
         }
-        adapter
-            .zone_mut()
-            .apply_command(1, 9, ZoneCommand::SetMovement { x: 1, z: 0 })
-            .unwrap();
+        adapter.zone_mut().apply_command(1, 9, run(EAST)).unwrap();
 
         let canonical = decode_canonical_snapshot(&adapter.snapshot().unwrap().payload).unwrap();
         let projected = decode_snapshot(&adapter.snapshot_for(1).unwrap().payload).unwrap();
 
         assert_eq!(adapter.snapshot_scope(), SnapshotScope::PlayerScoped);
         assert_eq!(canonical.players.len(), 12);
-        assert_eq!(canonical.players[0].movement_x, 1);
+        assert_eq!(canonical.players[0].forward, 1);
+        assert_eq!(canonical.players[0].facing, EAST);
         assert_eq!(canonical.players[0].last_sequence, 9);
-        assert_eq!(projected.players.len(), 11);
-        assert_eq!(projected.players[0].player_id, 1);
-        assert!(
-            projected
-                .players
-                .iter()
-                .all(|player| player.player_id != 12)
-        );
+        assert_eq!(projected.viewer_id, 1);
+        assert_eq!(projected.acknowledged_sequence, 9);
+        assert_eq!(projected.entities.len(), 11);
+        assert_eq!(projected.entities[0].id, 1);
+        assert_eq!(projected.entities[0].facing, EAST);
+        assert!(projected.entities.iter().all(|entity| entity.id != 12));
     }
 
     #[test]
@@ -253,7 +261,7 @@ mod tests {
         let lease = runtime
             .admit(ReconnectToken([7; RECONNECT_TOKEN_BYTES]))
             .unwrap();
-        let payload = encode_command(ZoneCommand::SetMovement { x: 1, z: 0 });
+        let payload = encode_command(run(EAST));
 
         runtime
             .submit_command(lease.player_id, lease.connection_epoch, 1, &payload)
@@ -261,13 +269,28 @@ mod tests {
         for _ in 0..5 {
             runtime.advance_tick().unwrap();
         }
+        runtime
+            .submit_command(
+                lease.player_id,
+                lease.connection_epoch,
+                2,
+                &encode_command(ZoneCommand::Jump),
+            )
+            .unwrap();
+        assert!(
+            runtime
+                .submit_command(lease.player_id, lease.connection_epoch, 3, &[1, 1, 1, 0])
+                .is_err(),
+            "legacy command wire version is rejected"
+        );
 
         let snapshot =
             decode_snapshot(&runtime.snapshot_for(lease.player_id).unwrap().payload).unwrap();
         assert_eq!(snapshot.zone_id, ZoneId::new(9));
         assert_eq!(snapshot.tick, 5);
-        assert_eq!(snapshot.players.len(), 1);
-        assert!(snapshot.players[0].position[0] > 0);
+        assert_eq!(snapshot.viewer_id, lease.player_id);
+        assert_eq!(snapshot.entities.len(), 1);
+        assert!(snapshot.entities[0].position[0] > 0);
     }
 
     #[test]
@@ -278,7 +301,7 @@ mod tests {
         let mut runtime =
             MatchRuntime::new_with_replay_capture(ZoneGameServerAdapter::new(zone_id), 120);
         let lease = runtime.admit(previous_token).unwrap();
-        let payload = encode_command(ZoneCommand::SetMovement { x: 1, z: 0 });
+        let payload = encode_command(run(EAST));
 
         runtime
             .submit_command(lease.player_id, lease.connection_epoch, 9, &payload)
@@ -339,8 +362,8 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let first_command = encode_command(ZoneCommand::SetMovement { x: 1, z: 0 });
-        let second_command = encode_command(ZoneCommand::SetMovement { x: 0, z: -1 });
+        let first_command = encode_command(run(EAST));
+        let second_command = encode_command(run(SOUTH));
         host.with_runtime_mut(&first_match, |runtime| {
             runtime.submit_command(
                 first_lease.player_id,
@@ -388,9 +411,9 @@ mod tests {
 
         assert_eq!(first_snapshot.zone_id, first_zone);
         assert_eq!(first_snapshot.tick, 3);
-        assert!(first_snapshot.players[0].position[0] > 0);
+        assert!(first_snapshot.entities[0].position[0] > 0);
         assert_eq!(second_snapshot.zone_id, second_zone);
         assert_eq!(second_snapshot.tick, 1);
-        assert!(second_snapshot.players[0].position[2] < 0);
+        assert!(second_snapshot.entities[0].position[2] < 0);
     }
 }

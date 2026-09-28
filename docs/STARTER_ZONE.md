@@ -56,7 +56,7 @@ The road network connects the hub to each subzone. Spawn density targets about 6
 ### Movement
 
 - Command `Move { forward: -1..=1, strafe: -1..=1, facing: u16 }`. The server rotates local intent by `facing` through the integer trig table. Run speed is 21 units/tick (6.3 m/s); a backward component uses 13 units/tick. Facing is intent and has no collision effect.
-- Command `Jump`: accepted only when grounded. A thin overlap query just below the body against fixed geometry decides that. Vertical velocity is set to a constant, and physics integrates gravity.
+- Command `Jump`: takes effect only when grounded. A thin overlap query just below the feet decides that; touching any other body (geometry or another unit) counts, side contact with a wall does not. Vertical velocity is set to a constant, and physics integrates gravity. The next tick consumes the intent either way, so an airborne jump is ignored rather than buffered.
 - Moving interrupts casts. Dead units cannot move.
 
 ### Units and combat

@@ -4,7 +4,7 @@ Core now uses an XZ spatial index to discover candidate players before applying 
 
 Cells are one interest radius wide. Each query visits nine neighboring cells, then checks exact distance and returns players in ascending ID order. Negative coordinates use floor division; cell arithmetic and distance arithmetic cannot overflow at the supported integer coordinate limits. Height does not affect the existing visibility policy. This remains relevance filtering, not line of sight or stealth authorization.
 
-The derived index stores player IDs in occupied cells and a player-to-cell membership map. Admission and removal update it immediately. After a successful physics step, core reads authoritative physics positions and changes bucket memberships only when a player's cell changes, including collision corrections. Recovery reconstructs it from canonical state. Index contents and work counters never enter checkpoints, replay hashes, or the wire format; schema and wire versions remain 2.
+The derived index stores player IDs in occupied cells and a player-to-cell membership map. Admission and removal update it immediately. After a successful physics step, core reads authoritative physics positions and changes bucket memberships only when a player's cell changes, including collision corrections. Recovery reconstructs it from canonical state. Index contents and work counters never enter checkpoints, replay hashes, or the wire format.
 
 ## Reproduce
 
@@ -19,16 +19,16 @@ The baseline is the exhaustive XZ rule from repository revision `835e2be8e648db5
 
 | Workload | Layout | Indexed distance tests | Baseline distance tests | Total snapshot payload bytes | Largest payload bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
-| sparse-travel-512 | Players 6,000 units apart along X | 512 | 262,144 | 29,696 | 58 |
-| dense-hub-512 | 23-column grid at 64-unit spacing; everyone in range | 262,144 | 262,144 | 7,355,392 | 14,366 |
-| outpost-spawn-512 | Shared outpost, default 32-column spawn grid | 190,464 | 262,144 | 2,885,696 | 7,982 |
+| sparse-travel-512 | Players 6,000 units apart along X | 512 | 262,144 | 30,208 | 59 |
+| dense-hub-512 | 23-column grid at 64-unit spacing; everyone in range | 262,144 | 262,144 | 6,571,008 | 12,834 |
+| outpost-spawn-512 | Shared outpost, default 32-column spawn grid | 190,464 | 262,144 | 2,580,208 | 7,134 |
 
 Every workload performs 4,608 query bucket visits per publication sweep. The stationary sparse workload requires 512 player position inspections but zero full index rebuilds, bucket inserts, removes, or moves during the tick. The core regression asserts zero membership writes for same-cell movement and two moves for two crossing players, including negative cell coordinates. Tree lookups, candidate sorting, allocations, encoding and physics have costs not captured by distance-test counts. These measurements prove reduced discovery and maintenance work, not a supported player throughput. Fully dense visibility still requires quadratic output work. Physics throughput needs separate profiling in the owning engine.
 
-Payload bytes above count only the MMO visible snapshot, excluding the shared session frame, QUIC, TLS and UDP overhead. Dense visibility is intentionally complete: the index must never drop nearby players to fit a packet. The current whole-datagram transport still needs bounded large-snapshot replication in `game-server`; these results do not claim 512 networked clients are supported.
+Payload bytes above count only the MMO visible snapshot (wire version 3: a 34-byte header plus 25 bytes per visible entity), excluding the shared session frame, QUIC, TLS and UDP overhead. Wire version 2 used a 30-byte header and 28-byte player records; visibility counts are unchanged. Dense visibility is intentionally complete: the index must never drop nearby players to fit a packet. The current whole-datagram transport still needs bounded large-snapshot replication in `game-server`; these results do not claim 512 networked clients are supported.
 
 ## Regression evidence
 
 The core gate compares indexed and exhaustive results across inclusive radius edges, diagonal edges, vertical separation, negative cells, extreme coordinates, a fixed scattered layout, movement across cells, collision resolution, failed physics steps, admission, removal and checkpoint recovery. The protocol gate runs the shared exhaustive reference and indexed projection through deterministic multi-tick sequences and compares complete snapshots and encoded bytes after each transition. It also asserts exact sparse/dense query work and membership maintenance counts without wall-clock thresholds. Stable ordering, acknowledgements, content revisions and read-only query behavior are checked alongside visibility.
 
-Recorded measurement environment: Rust 1.98.0, `Cargo.lock` SHA-256 `324fe3ee2707eb2b819239838ce0fe95783b8f5cdf2470e7604552d020209d09`, core schema 2, wire version 2, and outpost revision 1. The counts are architecture-independent integer operations and byte lengths. Shared conventions resolved to sourceRevision `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`; this is evidence provenance, not a policy pin. No dependency changes were needed.
+Recorded measurement environment: Rust 1.98.1, `Cargo.lock` SHA-256 `d059735c8395a3e345fde00d21f3f3091a80ae7504a02a04aae9a7ebefb46940`, core schema 3, wire version 3, and outpost revision 1. The counts are architecture-independent integer operations and byte lengths. Shared conventions resolved to sourceRevision `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`; this is evidence provenance, not a policy pin. No dependency changes were needed.

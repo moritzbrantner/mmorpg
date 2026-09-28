@@ -2,6 +2,7 @@
 
 mod content;
 mod interest;
+pub mod trig;
 pub use content::{
     MAX_STATIC_COLLIDERS, StaticCollider, UNITS_PER_METRE, ZoneDefinition, outpost_definition,
 };
@@ -12,24 +13,32 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use physics_engine::{BodyId, RigidBody, Vec3i, World, WorldConfig};
+use physics_engine::{Aabb, BodyId, RigidBody, Vec3i, World, WorldConfig};
+use trig::{YAW_EIGHTH_TURN, YAW_QUARTER_TURN};
 
 pub type PlayerId = u32;
 
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 2;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 3;
 pub const INTEREST_RADIUS_UNITS: i32 = 2_000;
 
 const PLAYER_BODY_BASE: u64 = 1_000_000;
-pub const PLAYER_HALF_EXTENTS_UNITS: [i32; 3] = [30, 50, 30];
+/// Character collision box: 0.6 m × 1.8 m × 0.6 m, shared with clients.
+pub const PLAYER_HALF_EXTENTS_UNITS: [i32; 3] = [30, 90, 30];
 const PLAYER_HALF_EXTENTS: Vec3i = Vec3i::new(
     PLAYER_HALF_EXTENTS_UNITS[0],
     PLAYER_HALF_EXTENTS_UNITS[1],
     PLAYER_HALF_EXTENTS_UNITS[2],
 );
-const PLAYER_SPEED: i32 = 12;
-const PLAYER_DIAGONAL_SPEED: i32 = 8;
+/// Horizontal speed for forward, strafe and forward-diagonal intent (6.3 m/s).
+pub const RUN_SPEED_UNITS_PER_TICK: i32 = 21;
+/// Horizontal speed whenever intent has a backward component.
+pub const BACKPEDAL_SPEED_UNITS_PER_TICK: i32 = 13;
+/// Upward velocity a grounded jump sets before physics applies gravity.
+pub const JUMP_VELOCITY_UNITS_PER_TICK: i32 = 16;
+/// The grounded probe spans this many units directly below the feet.
+const GROUND_PROBE_DEPTH_UNITS: i32 = 2;
 const SPAWN_GRID_WIDTH: u32 = 32;
 const SPAWN_SPACING: i32 = 200;
 
@@ -48,16 +57,37 @@ impl ZoneId {
     }
 }
 
+/// Player intent. The session runtime supplies identity and sequence separately.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ZoneCommand {
-    SetMovement { x: i8, z: i8 },
+    /// Held movement relative to `facing`: `forward` and `strafe` are each in
+    /// `-1..=1`; positive strafe is the character's right.
+    Move {
+        forward: i8,
+        strafe: i8,
+        facing: u16,
+    },
+    /// Edge-triggered jump, honoured on the next tick only when grounded.
+    Jump,
 }
 
+/// Kind of a visible unit. Only players exist so far; creatures and NPCs join
+/// this closed set when the zone gains them.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum EntityKind {
+    Player,
+}
+
+/// One unit in a player-visible projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlayerSnapshot {
-    pub player_id: PlayerId,
+pub struct EntitySnapshot {
+    pub kind: EntityKind,
+    pub id: u32,
     pub position: [i32; 3],
-    pub velocity: [i32; 3],
+    /// Presentation-only velocity, saturated to the `i16` range. Canonical
+    /// state keeps the exact physics velocity.
+    pub velocity: [i16; 3],
+    pub facing: u16,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,20 +95,24 @@ pub struct CanonicalPlayerSnapshot {
     pub player_id: PlayerId,
     pub position: [i32; 3],
     pub velocity: [i32; 3],
-    pub movement_x: i8,
-    pub movement_z: i8,
+    pub facing: u16,
+    pub forward: i8,
+    pub strafe: i8,
+    pub jump_pending: bool,
     pub last_sequence: u32,
     pub spawn_slot: u16,
 }
 
+/// A projection addressed to `viewer_id`. Entities are ordered by `(kind, id)`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZoneSnapshot {
     pub content_revision: u64,
     pub acknowledged_sequence: u32,
+    pub viewer_id: PlayerId,
     pub schema_version: u16,
     pub zone_id: ZoneId,
     pub tick: u64,
-    pub players: Vec<PlayerSnapshot>,
+    pub entities: Vec<EntitySnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,10 +151,42 @@ impl fmt::Display for ZoneError {
 
 impl Error for ZoneError {}
 
+/// One validated movement axis; the wire and canonical form is `-1`, `0` or `1`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Axis {
+    Negative,
+    #[default]
+    Zero,
+    Positive,
+}
+
+impl Axis {
+    fn new(value: i8) -> Result<Self, ZoneError> {
+        match value {
+            -1 => Ok(Self::Negative),
+            0 => Ok(Self::Zero),
+            1 => Ok(Self::Positive),
+            _ => Err(ZoneError::new(
+                "movement components must be between -1 and 1",
+            )),
+        }
+    }
+
+    const fn get(self) -> i8 {
+        match self {
+            Self::Negative => -1,
+            Self::Zero => 0,
+            Self::Positive => 1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PlayerState {
-    movement_x: i8,
-    movement_z: i8,
+    facing: u16,
+    forward: Axis,
+    strafe: Axis,
+    jump_pending: bool,
     last_sequence: u32,
     spawn_slot: u16,
 }
@@ -192,11 +258,8 @@ impl ZoneSimulation {
         let mut zone = Self::with_definition(snapshot.zone_id, snapshot.definition)?;
         zone.tick = snapshot.tick;
         for player in snapshot.players {
-            if !(-1..=1).contains(&player.movement_x) || !(-1..=1).contains(&player.movement_z) {
-                return Err(ZoneError::new(
-                    "movement components must be between -1 and 1",
-                ));
-            }
+            let forward = Axis::new(player.forward)?;
+            let strafe = Axis::new(player.strafe)?;
             if usize::from(player.spawn_slot) >= MAX_PLAYERS_PER_ZONE {
                 return Err(ZoneError::new("player spawn slot is out of range"));
             }
@@ -222,8 +285,10 @@ impl ZoneSimulation {
             zone.players.insert(
                 player.player_id,
                 PlayerState {
-                    movement_x: player.movement_x,
-                    movement_z: player.movement_z,
+                    facing: player.facing,
+                    forward,
+                    strafe,
+                    jump_pending: player.jump_pending,
                     last_sequence: player.last_sequence,
                     spawn_slot: player.spawn_slot,
                 },
@@ -306,16 +371,21 @@ impl ZoneSimulation {
             return Err(ZoneError::new("command sequence is stale"));
         }
 
+        // Validate completely before mutating: a malformed command changes nothing.
         match command {
-            ZoneCommand::SetMovement { x, z } => {
-                if !(-1..=1).contains(&x) || !(-1..=1).contains(&z) {
-                    return Err(ZoneError::new(
-                        "movement components must be between -1 and 1",
-                    ));
-                }
-                player.movement_x = x;
-                player.movement_z = z;
+            ZoneCommand::Move {
+                forward,
+                strafe,
+                facing,
+            } => {
+                let forward = Axis::new(forward)?;
+                let strafe = Axis::new(strafe)?;
+                player.forward = forward;
+                player.strafe = strafe;
+                player.facing = facing;
             }
+            // Resolved during the next tick against the pre-step world.
+            ZoneCommand::Jump => player.jump_pending = true,
         }
         player.last_sequence = sequence;
         Ok(())
@@ -328,13 +398,18 @@ impl ZoneSimulation {
             .ok_or_else(|| ZoneError::new("zone tick overflow"))?;
         for (&player_id, state) in &self.players {
             let body_id = Self::body_id(player_id);
-            let vertical_velocity = self
+            let body = self
                 .world
                 .body(body_id)
-                .ok_or_else(|| ZoneError::new("player physics body is missing"))?
-                .velocity()
-                .y;
-            let mut velocity = Self::movement_velocity(*state);
+                .ok_or_else(|| ZoneError::new("player physics body is missing"))?;
+            // Setting velocities never moves bodies, so every grounded probe in
+            // this pass observes the same pre-step positions regardless of order.
+            let vertical_velocity = if state.jump_pending && is_grounded(&self.world, body)? {
+                JUMP_VELOCITY_UNITS_PER_TICK
+            } else {
+                body.velocity().y
+            };
+            let mut velocity = movement_velocity(*state)?;
             velocity.y = vertical_velocity;
             self.world
                 .set_velocity(body_id, velocity)
@@ -342,6 +417,10 @@ impl ZoneSimulation {
         }
 
         self.world.step(1).map_err(physics_error)?;
+        // A jump intent is consumed by the tick that evaluated it, grounded or not.
+        for state in self.players.values_mut() {
+            state.jump_pending = false;
+        }
         self.update_interest()?;
         self.tick = next_tick;
         Ok(())
@@ -375,9 +454,10 @@ impl ZoneSimulation {
     /// Queries the same authoritative projection as `snapshot_for_player`, with
     /// operation counts for workload analysis. Does not mutate canonical state.
     pub fn project_for_player(&self, player_id: PlayerId) -> Result<PlayerProjection, ZoneError> {
-        if !self.players.contains_key(&player_id) {
-            return Err(ZoneError::new("unknown player"));
-        }
+        let viewer = self
+            .players
+            .get(&player_id)
+            .ok_or_else(|| ZoneError::new("unknown player"))?;
         let center = self
             .world
             .body(Self::body_id(player_id))
@@ -386,19 +466,29 @@ impl ZoneSimulation {
 
         let radius = i128::from(INTEREST_RADIUS_UNITS);
         let radius_squared = radius * radius;
-        let mut players = Vec::new();
+        let mut entities = Vec::new();
+        // Candidates arrive in ascending player ID order, which is `(kind, id)`
+        // order while players are the only visible kind.
         let (candidates, stats) = self.interest.candidates(center.x, center.z);
         for candidate in candidates {
-            let snapshot = self.player_snapshot(candidate)?;
-            let dx = i128::from(snapshot.position[0]) - i128::from(center.x);
-            let dz = i128::from(snapshot.position[2]) - i128::from(center.z);
+            let entity = self.player_entity(candidate)?;
+            let dx = i128::from(entity.position[0]) - i128::from(center.x);
+            let dz = i128::from(entity.position[2]) - i128::from(center.z);
             if (dx * dx) + (dz * dz) <= radius_squared {
-                players.push(snapshot);
+                entities.push(entity);
             }
         }
 
         Ok(PlayerProjection {
-            snapshot: self.make_snapshot(players, self.players[&player_id].last_sequence),
+            snapshot: ZoneSnapshot {
+                content_revision: self.definition.revision(),
+                acknowledged_sequence: viewer.last_sequence,
+                viewer_id: player_id,
+                schema_version: SNAPSHOT_SCHEMA_VERSION,
+                zone_id: self.zone_id,
+                tick: self.tick,
+                entities,
+            },
             stats,
         })
     }
@@ -442,32 +532,23 @@ impl ZoneSimulation {
         Ok(())
     }
 
-    fn make_snapshot(
-        &self,
-        players: Vec<PlayerSnapshot>,
-        acknowledged_sequence: u32,
-    ) -> ZoneSnapshot {
-        ZoneSnapshot {
-            content_revision: self.definition.revision(),
-            acknowledged_sequence,
-            schema_version: SNAPSHOT_SCHEMA_VERSION,
-            zone_id: self.zone_id,
-            tick: self.tick,
-            players,
-        }
-    }
-
-    fn player_snapshot(&self, player_id: PlayerId) -> Result<PlayerSnapshot, ZoneError> {
+    fn player_entity(&self, player_id: PlayerId) -> Result<EntitySnapshot, ZoneError> {
+        let state = self
+            .players
+            .get(&player_id)
+            .ok_or_else(|| ZoneError::new("unknown player"))?;
         let body = self
             .world
             .body(Self::body_id(player_id))
             .ok_or_else(|| ZoneError::new("player physics body is missing"))?;
         let position = body.position();
         let velocity = body.velocity();
-        Ok(PlayerSnapshot {
-            player_id,
+        Ok(EntitySnapshot {
+            kind: EntityKind::Player,
+            id: player_id,
             position: [position.x, position.y, position.z],
-            velocity: [velocity.x, velocity.y, velocity.z],
+            velocity: [velocity.x, velocity.y, velocity.z].map(saturate_i16),
+            facing: state.facing,
         })
     }
 
@@ -486,8 +567,10 @@ impl ZoneSimulation {
             player_id,
             position: [position.x, position.y, position.z],
             velocity: [velocity.x, velocity.y, velocity.z],
-            movement_x: state.movement_x,
-            movement_z: state.movement_z,
+            facing: state.facing,
+            forward: state.forward.get(),
+            strafe: state.strafe.get(),
+            jump_pending: state.jump_pending,
             last_sequence: state.last_sequence,
             spawn_slot: state.spawn_slot,
         })
@@ -513,22 +596,76 @@ impl ZoneSimulation {
             .expect("spawn grid column always fits in i32");
         let row = i32::try_from(spawn_slot / SPAWN_GRID_WIDTH)
             .expect("spawn grid row always fits in i32");
-        Vec3i::new(column * SPAWN_SPACING, 50, row * SPAWN_SPACING)
-    }
-
-    fn movement_velocity(state: PlayerState) -> Vec3i {
-        let moving_diagonally = state.movement_x != 0 && state.movement_z != 0;
-        let speed = if moving_diagonally {
-            PLAYER_DIAGONAL_SPEED
-        } else {
-            PLAYER_SPEED
-        };
+        // Feet rest on y = 0, the top of flat walkable ground.
         Vec3i::new(
-            i32::from(state.movement_x) * speed,
-            0,
-            i32::from(state.movement_z) * speed,
+            column * SPAWN_SPACING,
+            PLAYER_HALF_EXTENTS_UNITS[1],
+            row * SPAWN_SPACING,
         )
     }
+}
+
+/// Horizontal controller velocity: `speed × direction(facing + local offset)`,
+/// where the offset is one of eight multiples of 45°. The character's right is
+/// `direction(facing - 90°)`. Zero intent yields zero horizontal velocity.
+fn movement_velocity(state: PlayerState) -> Result<Vec3i, ZoneError> {
+    const FORWARD: u16 = 0;
+    const LEFT: u16 = YAW_QUARTER_TURN;
+    const BACKWARD: u16 = 2 * YAW_QUARTER_TURN;
+    const RIGHT: u16 = 3 * YAW_QUARTER_TURN;
+    let offset = match (state.forward, state.strafe) {
+        (Axis::Zero, Axis::Zero) => return Ok(Vec3i::ZERO),
+        (Axis::Positive, Axis::Zero) => FORWARD,
+        (Axis::Positive, Axis::Negative) => FORWARD + YAW_EIGHTH_TURN,
+        (Axis::Zero, Axis::Negative) => LEFT,
+        (Axis::Negative, Axis::Negative) => LEFT + YAW_EIGHTH_TURN,
+        (Axis::Negative, Axis::Zero) => BACKWARD,
+        (Axis::Negative, Axis::Positive) => BACKWARD + YAW_EIGHTH_TURN,
+        (Axis::Zero, Axis::Positive) => RIGHT,
+        (Axis::Positive, Axis::Positive) => RIGHT + YAW_EIGHTH_TURN,
+    };
+    let speed = match state.forward {
+        Axis::Negative => BACKPEDAL_SPEED_UNITS_PER_TICK,
+        Axis::Zero | Axis::Positive => RUN_SPEED_UNITS_PER_TICK,
+    };
+    let (x, z) = trig::direction(state.facing.wrapping_add(offset));
+    let component = |unit| {
+        trig::checked_scale(speed, unit).ok_or_else(|| ZoneError::new("movement velocity overflow"))
+    };
+    Ok(Vec3i::new(component(x)?, 0, component(z)?))
+}
+
+/// A thin probe directly under the feet, inset by one unit horizontally so
+/// touching a wall is not ground. The physics query counts touching bodies;
+/// any body other than the player itself supports a jump.
+fn is_grounded(world: &World, body: &RigidBody) -> Result<bool, ZoneError> {
+    let position = body.position();
+    let half_extents = body.half_extents();
+    let probe_half_height = GROUND_PROBE_DEPTH_UNITS / 2;
+    // Beyond the representable range there is no ground: the jump is ignored.
+    let Some(probe_y) = position
+        .y
+        .checked_sub(half_extents.y)
+        .and_then(|feet| feet.checked_sub(probe_half_height))
+    else {
+        return Ok(false);
+    };
+    let probe = Aabb::new(
+        Vec3i::new(position.x, probe_y, position.z),
+        Vec3i::new(
+            (half_extents.x - 1).max(0),
+            probe_half_height,
+            (half_extents.z - 1).max(0),
+        ),
+    );
+    let hits = world
+        .overlap_query(probe)
+        .map_err(|error| ZoneError::new(error.to_string()))?;
+    Ok(hits.into_iter().any(|hit| hit != body.id()))
+}
+
+fn saturate_i16(value: i32) -> i16 {
+    i16::try_from(value).unwrap_or(if value < 0 { i16::MIN } else { i16::MAX })
 }
 
 fn physics_error(error: physics_engine::PhysicsError) -> ZoneError {
@@ -545,8 +682,16 @@ mod tests {
         zone.add_player(1).unwrap();
         let before = zone.snapshot().unwrap().players[0].position;
 
-        zone.apply_command(1, 1, ZoneCommand::SetMovement { x: 1, z: 0 })
-            .unwrap();
+        zone.apply_command(
+            1,
+            1,
+            ZoneCommand::Move {
+                forward: 1,
+                strafe: 0,
+                facing: YAW_QUARTER_TURN,
+            },
+        )
+        .unwrap();
         for _ in 0..10 {
             zone.advance_tick().unwrap();
         }
@@ -586,19 +731,29 @@ mod tests {
         let mut original = ZoneSimulation::new(ZoneId::new(1));
         original.add_player(1).unwrap();
         original
-            .apply_command(1, 7, ZoneCommand::SetMovement { x: 1, z: -1 })
+            .apply_command(
+                1,
+                6,
+                ZoneCommand::Move {
+                    forward: 1,
+                    strafe: -1,
+                    facing: 1_234,
+                },
+            )
             .unwrap();
-        original.advance_tick().unwrap();
+        original.apply_command(1, 7, ZoneCommand::Jump).unwrap();
 
         let snapshot = original.snapshot().unwrap();
-        assert_eq!(snapshot.players[0].movement_x, 1);
-        assert_eq!(snapshot.players[0].movement_z, -1);
+        assert_eq!(snapshot.players[0].facing, 1_234);
+        assert_eq!(snapshot.players[0].forward, 1);
+        assert_eq!(snapshot.players[0].strafe, -1);
+        assert!(snapshot.players[0].jump_pending);
         assert_eq!(snapshot.players[0].last_sequence, 7);
 
         let mut recovered = ZoneSimulation::from_snapshot(snapshot).unwrap();
         assert_eq!(
             recovered
-                .apply_command(1, 7, ZoneCommand::SetMovement { x: 0, z: 0 })
+                .apply_command(1, 7, ZoneCommand::Jump)
                 .unwrap_err()
                 .message(),
             "command sequence is stale"
@@ -632,14 +787,90 @@ mod tests {
     fn stale_commands_fail_closed() {
         let mut zone = ZoneSimulation::new(ZoneId::new(1));
         zone.add_player(1).unwrap();
-        zone.apply_command(1, 5, ZoneCommand::SetMovement { x: 1, z: 0 })
-            .unwrap();
+        let run = ZoneCommand::Move {
+            forward: 1,
+            strafe: 0,
+            facing: 0,
+        };
+        zone.apply_command(1, 5, run).unwrap();
 
-        let error = zone
-            .apply_command(1, 5, ZoneCommand::SetMovement { x: -1, z: 0 })
-            .unwrap_err();
+        for (sequence, command) in [
+            (5, run),
+            (4, ZoneCommand::Jump),
+            (5, ZoneCommand::Jump),
+            (0, ZoneCommand::Jump),
+        ] {
+            let error = zone.apply_command(1, sequence, command).unwrap_err();
+            assert_eq!(error.message(), "command sequence is stale");
+        }
+        let player = &zone.snapshot().unwrap().players[0];
+        assert!(!player.jump_pending, "rejected commands change nothing");
+        assert_eq!(player.last_sequence, 5);
+    }
 
-        assert_eq!(error.message(), "command sequence is stale");
+    #[test]
+    fn malformed_movement_fails_without_consuming_the_sequence() {
+        let mut zone = ZoneSimulation::new(ZoneId::new(1));
+        zone.add_player(1).unwrap();
+        for (forward, strafe) in [(2, 0), (0, -2), (i8::MIN, 1), (1, i8::MAX)] {
+            let error = zone
+                .apply_command(
+                    1,
+                    3,
+                    ZoneCommand::Move {
+                        forward,
+                        strafe,
+                        facing: 9,
+                    },
+                )
+                .unwrap_err();
+            assert_eq!(
+                error.message(),
+                "movement components must be between -1 and 1"
+            );
+        }
+        let player = &zone.snapshot().unwrap().players[0];
+        assert_eq!(
+            (
+                player.facing,
+                player.forward,
+                player.strafe,
+                player.last_sequence
+            ),
+            (0, 0, 0, 0)
+        );
+        zone.apply_command(
+            1,
+            3,
+            ZoneCommand::Move {
+                forward: -1,
+                strafe: 1,
+                facing: 9,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn recovery_rejects_out_of_range_movement_intent() {
+        let mut zone = ZoneSimulation::new(ZoneId::new(1));
+        zone.add_player(1).unwrap();
+        let valid = zone.snapshot().unwrap();
+        for (forward, strafe) in [(2, 0), (0, -2)] {
+            let mut invalid = valid.clone();
+            invalid.players[0].forward = forward;
+            invalid.players[0].strafe = strafe;
+            assert_eq!(
+                ZoneSimulation::from_snapshot(invalid)
+                    .err()
+                    .unwrap()
+                    .message(),
+                "movement components must be between -1 and 1"
+            );
+        }
+        let mut invalid_slot = valid;
+        invalid_slot.players[0].spawn_slot = u16::try_from(MAX_PLAYERS_PER_ZONE).unwrap();
+        assert!(ZoneSimulation::from_snapshot(invalid_slot).is_err());
     }
 
     #[test]
@@ -653,8 +884,47 @@ mod tests {
         let visible = zone.snapshot_for_player(1).unwrap();
 
         assert_eq!(canonical.players.len(), 12);
-        assert_eq!(visible.players.len(), 11);
-        assert_eq!(visible.players[0].player_id, 1);
-        assert!(visible.players.iter().all(|player| player.player_id != 12));
+        assert_eq!(visible.viewer_id, 1);
+        assert_eq!(visible.entities.len(), 11);
+        assert_eq!(visible.entities[0].id, 1);
+        assert!(
+            visible
+                .entities
+                .iter()
+                .all(|entity| entity.kind == EntityKind::Player && entity.id != 12)
+        );
+    }
+
+    #[test]
+    fn projection_carries_facing_and_saturates_presentation_velocity() {
+        let mut zone = ZoneSimulation::new(ZoneId::new(1));
+        zone.add_player(1).unwrap();
+        zone.add_player(2).unwrap();
+        zone.apply_command(
+            2,
+            1,
+            ZoneCommand::Move {
+                forward: 0,
+                strafe: 0,
+                facing: 40_000,
+            },
+        )
+        .unwrap();
+        let mut canonical = zone.snapshot().unwrap();
+        canonical.players[0].velocity = [70_000, -70_000, 32_767];
+        let zone = ZoneSimulation::from_snapshot(canonical).unwrap();
+
+        let visible = zone.snapshot_for_player(2).unwrap();
+
+        assert_eq!(visible.viewer_id, 2);
+        assert_eq!(visible.acknowledged_sequence, 1);
+        assert_eq!(visible.entities[0].velocity, [i16::MAX, i16::MIN, i16::MAX]);
+        assert_eq!(visible.entities[0].facing, 0);
+        assert_eq!(visible.entities[1].facing, 40_000);
+        assert_eq!(
+            zone.snapshot().unwrap().players[0].velocity,
+            [70_000, -70_000, 32_767],
+            "canonical state keeps exact velocity"
+        );
     }
 }
