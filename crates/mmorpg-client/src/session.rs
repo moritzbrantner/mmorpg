@@ -197,3 +197,183 @@ fn publish(
         snapshot: Arc::new(snapshot),
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TICK: Duration = FACING_INTERVAL;
+    const EAST: u16 = 16_384;
+
+    fn held(forward: i8, strafe: i8, facing: u16, jumps: u32) -> MovementInput {
+        MovementInput {
+            forward,
+            strafe,
+            facing,
+            jumps,
+        }
+    }
+
+    fn only_move(forward: i8, strafe: i8, facing: u16) -> Outgoing {
+        Outgoing {
+            jump: false,
+            movement: Some((forward, strafe, facing)),
+        }
+    }
+
+    /// An outbox that has already sent `input` at `now`.
+    fn sent(input: MovementInput, now: Instant) -> Outbox {
+        let mut outbox = Outbox::new(input, now);
+        assert_eq!(
+            outbox.changes(input, now),
+            only_move(input.forward, input.strafe, input.facing),
+            "the first observation sends the current intent without a jump"
+        );
+        outbox
+    }
+
+    #[test]
+    fn each_advance_of_the_press_counter_sends_exactly_one_jump() {
+        let now = Instant::now();
+        let mut outbox = sent(MovementInput::default(), now);
+        let pressed = held(0, 0, 0, 1);
+        assert_eq!(
+            outbox.changes(pressed, now),
+            Outgoing {
+                jump: true,
+                movement: None,
+            }
+        );
+        assert_eq!(
+            outbox.changes(pressed, now),
+            Outgoing::default(),
+            "observing the same counter again never repeats the jump"
+        );
+        let merged = held(0, 0, 0, 4);
+        assert_eq!(
+            outbox.changes(merged, now),
+            Outgoing {
+                jump: true,
+                movement: None,
+            },
+            "coalesced presses merge into one jump"
+        );
+        let running = held(1, 0, 0, 5);
+        assert_eq!(
+            outbox.changes(running, now),
+            Outgoing {
+                jump: true,
+                movement: Some((1, 0, 0)),
+            },
+            "a press with an intent change sends the jump, then the move"
+        );
+    }
+
+    #[test]
+    fn the_heartbeat_resends_intent_but_never_a_pending_jump() {
+        let now = Instant::now();
+        let mut outbox = sent(held(1, 0, 0, 0), now);
+        // The heartbeat peeks at input the change branch has not handled yet.
+        let pressed = held(1, 0, 0, 1);
+        assert_eq!(outbox.heartbeat(pressed, now + TICK), only_move(1, 0, 0));
+        assert_eq!(
+            outbox.heartbeat(pressed, now + 2 * TICK),
+            only_move(1, 0, 0)
+        );
+        assert_eq!(
+            outbox.changes(pressed, now + 2 * TICK),
+            Outgoing {
+                jump: true,
+                movement: None,
+            },
+            "the change branch still sends the pending jump exactly once"
+        );
+        assert_eq!(
+            outbox.heartbeat(pressed, now + 3 * TICK),
+            only_move(1, 0, 0)
+        );
+    }
+
+    #[test]
+    fn presses_made_during_an_outage_are_dropped_on_resume() {
+        let now = Instant::now();
+        let mut outbox = sent(held(1, 0, 0, 2), now);
+        // The connection drops; the player presses Space three times and
+        // turns before the session resumes.
+        outbox.resume(held(1, 0, EAST, 5));
+        assert_eq!(
+            outbox.changes(held(1, 0, EAST, 5), now),
+            only_move(1, 0, EAST),
+            "resume resends only the current intent"
+        );
+        assert_eq!(
+            outbox.changes(held(1, 0, EAST, 6), now),
+            Outgoing {
+                jump: true,
+                movement: None,
+            },
+            "a press after resume is sent"
+        );
+    }
+
+    #[test]
+    fn intent_changes_are_sent_immediately() {
+        let now = Instant::now();
+        let mut outbox = sent(MovementInput::default(), now);
+        assert_eq!(outbox.changes(held(1, 0, 0, 0), now), only_move(1, 0, 0));
+        assert_eq!(outbox.changes(held(1, -1, 0, 0), now), only_move(1, -1, 0));
+        assert_eq!(
+            outbox.changes(held(0, -1, EAST, 0), now),
+            only_move(0, -1, EAST),
+            "an intent change carries the latest facing without waiting"
+        );
+        assert_eq!(
+            outbox.changes(held(0, 0, EAST, 0), now),
+            only_move(0, 0, EAST),
+            "a key release is never throttled"
+        );
+    }
+
+    #[test]
+    fn facing_only_changes_are_sent_at_most_once_per_tick() {
+        let start = Instant::now();
+        let mut outbox = sent(held(1, 0, 0, 0), start);
+        let half_tick = TICK / 2;
+        assert_eq!(
+            outbox.changes(held(1, 0, 100, 0), start + half_tick),
+            Outgoing::default()
+        );
+        assert_eq!(
+            outbox.changes(held(1, 0, 200, 0), start + TICK - Duration::from_nanos(1)),
+            Outgoing::default()
+        );
+        assert_eq!(
+            outbox.changes(held(1, 0, 300, 0), start + TICK),
+            only_move(1, 0, 300),
+            "a facing change is sent once a tick has passed since the last move"
+        );
+        assert_eq!(
+            outbox.changes(held(1, 0, 400, 0), start + TICK + half_tick),
+            Outgoing::default(),
+            "the window restarts at the last sent move"
+        );
+        assert_eq!(
+            outbox.changes(held(1, 0, 300, 0), start + 3 * TICK),
+            Outgoing::default(),
+            "facing back at the last sent value is not a change"
+        );
+        // A heartbeat move also restarts the window.
+        assert_eq!(
+            outbox.heartbeat(held(1, 0, 500, 0), start + 4 * TICK),
+            only_move(1, 0, 500)
+        );
+        assert_eq!(
+            outbox.changes(held(1, 0, 600, 0), start + 4 * TICK + half_tick),
+            Outgoing::default()
+        );
+        assert_eq!(
+            outbox.changes(held(1, 0, 600, 0), start + 5 * TICK),
+            only_move(1, 0, 600)
+        );
+    }
+}
