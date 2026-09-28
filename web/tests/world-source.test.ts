@@ -3,7 +3,7 @@ import { encodeCommand } from "../src/command-wire";
 import { MAX_CATCH_UP_TICKS } from "../src/demo-clock";
 import { LocalZoneSource, type LocalZoneHandle } from "../src/world/local-zone-source";
 import { FACING_INTERVAL_MS, MovementOutbox, RESEND_INTERVAL_MS, type MovementInput } from "../src/world/movement-outbox";
-import { MAX_DISTANCE_METRES, MIN_DISTANCE_METRES, ORBIT_RADIANS_PER_PIXEL, OrbitCamera, heldIntent } from "../src/world/orbit-camera";
+import { MAX_DISTANCE_METRES, MIN_DISTANCE_METRES, ORBIT_RADIANS_PER_PIXEL, OrbitCamera, heldIntent, movementInput } from "../src/world/orbit-camera";
 import { FakeWorldSource } from "./support/fake-world-source";
 import { encodeTestSnapshot } from "./support/snapshot-encoder";
 import { worldSourceContract } from "./support/world-source-contract";
@@ -177,6 +177,40 @@ describe("camera-relative input", () => {
     expect(heldIntent(new Set(["KeyS", "KeyA"]))).toEqual({ forward: -1, strafe: -1, steering: true });
     expect(heldIntent(new Set(["KeyW", "KeyS"]))).toEqual({ forward: 0, strafe: 0, steering: true });
     expect(heldIntent(new Set(["Space", "KeyX"]))).toEqual({ forward: 0, strafe: 0, steering: false });
+  });
+
+  test("while a movement key is held the character adopts the camera heading", () => {
+    const camera = new OrbitCamera();
+    camera.orbit(Math.PI / 2 / ORBIT_RADIANS_PER_PIXEL, 0);
+    const heading = camera.facing();
+    expect(heading).not.toBe(0);
+    expect(movementInput(new Set(["KeyW"]), heading, 0, 2)).toEqual({ forward: 1, strafe: 0, facing: heading, jumps: 2 });
+    expect(movementInput(new Set(["KeyA"]), heading, 0, 0)).toEqual({ forward: 0, strafe: -1, facing: heading, jumps: 0 });
+    // Opposite keys cancel the run but still steer.
+    expect(movementInput(new Set(["KeyW", "KeyS"]), heading, 0, 0).facing).toBe(heading);
+  });
+
+  test("while idle the character keeps its last facing, whatever the camera does", () => {
+    expect(movementInput(new Set(), 49_152, 16_384, 0)).toEqual({ forward: 0, strafe: 0, facing: 16_384, jumps: 0 });
+    // Jumping and other keys do not steer.
+    expect(movementInput(new Set(["Space", "KeyX"]), 49_152, 16_384, 1).facing).toBe(16_384);
+  });
+
+  test("orbiting while idle sends no new facing; the next step runs along the new view", () => {
+    const camera = new OrbitCamera();
+    const outbox = new MovementOutbox(movementInput(new Set(), camera.facing(), 0, 0));
+    expect(outbox.update(movementInput(new Set(), camera.facing(), 0, 0), 0)).toEqual([
+      { kind: "move", forward: 0, strafe: 0, facing: 0 },
+    ]);
+    camera.orbit(-Math.PI / 2 / ORBIT_RADIANS_PER_PIXEL, 0);
+    const heading = camera.facing();
+    expect(outbox.update(movementInput(new Set(), heading, 0, 0), RESEND_INTERVAL_MS)).toEqual([
+      { kind: "move", forward: 0, strafe: 0, facing: 0 },
+    ]);
+    const running = movementInput(new Set(["KeyW"]), heading, 0, 0);
+    expect(outbox.update(running, RESEND_INTERVAL_MS + 1)).toEqual([{ kind: "move", forward: 1, strafe: 0, facing: heading }]);
+    // Stopping keeps the heading the character last ran along.
+    expect(movementInput(new Set(), 0, running.facing, 0).facing).toBe(heading);
   });
 
   test("the default orbit view looks over the shoulder toward +Z", () => {

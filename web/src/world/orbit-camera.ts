@@ -1,4 +1,5 @@
 import type { Axis } from "../command-wire";
+import type { MovementInput } from "./movement-outbox";
 import { yawFromRadians } from "../replication";
 
 /**
@@ -88,4 +89,19 @@ export function heldIntent(keys: ReadonlySet<string>): HeldIntent {
     strafe: axis(right, left),
     steering: forward || backward || left || right,
   };
+}
+
+/**
+ * Movement intent from the held keys under the orbit camera. While any
+ * movement key is held the character faces the camera's heading; otherwise
+ * it keeps `lastFacing`, so orbiting while idle never turns it.
+ */
+export function movementInput(
+  keys: ReadonlySet<string>,
+  cameraFacing: number,
+  lastFacing: number,
+  jumps: number,
+): MovementInput {
+  const held = heldIntent(keys);
+  return { forward: held.forward, strafe: held.strafe, facing: held.steering ? cameraFacing : lastFacing, jumps };
 }

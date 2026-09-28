@@ -41,7 +41,7 @@ import {
 import { characterVisualProfile, type CharacterVisualProfile } from "./character-visuals";
 import type { LocalWorld } from "./world/local-world";
 import { MovementOutbox, type MovementInput } from "./world/movement-outbox";
-import { OrbitCamera, PIXELS_PER_WHEEL_LINE, heldIntent } from "./world/orbit-camera";
+import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput } from "./world/orbit-camera";
 import { buildSceneryNodes } from "./world/scenery-nodes";
 import { placeUnit, unitNodes, type UnitLook } from "./world/unit-nodes";
 import { loadLocalWorld } from "./world/wasm-runtime";
@@ -705,12 +705,9 @@ function renderSelection() {
 }
 
 function currentMovementInput(): MovementInput {
-  const held = heldIntent(keys);
-  // While moving, the character faces the camera's heading; otherwise it keeps its facing.
-  if (held.steering) {
-    movementFacing = orbit.facing();
-  }
-  return { forward: held.forward, strafe: held.strafe, facing: movementFacing, jumps };
+  const input = movementInput(keys, orbit.facing(), movementFacing, jumps);
+  movementFacing = input.facing;
+  return input;
 }
 
 function localLook(): UnitLook {
