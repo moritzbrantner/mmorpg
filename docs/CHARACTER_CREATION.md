@@ -1,6 +1,6 @@
 # Character creation MVP
 
-The browser demo supports a local character roster for testing the character-selection and save/load flow without pretending that the browser owns authoritative MMO accounts.
+The browser demo supports a local character roster for testing the character-selection and world-entry flow without pretending that the browser owns authoritative MMO accounts.
 
 ## Creation flow
 
@@ -12,23 +12,16 @@ From **Choose your character**, select **Create character** and provide:
 
 The 3D preview updates before creation and remains rotatable. Class changes update the starter equipment and main-hand presentation: Warden uses a sword, Ranger a bow, and Arcanist a staff. Sex changes the presentation frame only; it does not change gameplay statistics.
 
-Created characters start at level 1 in Greyhaven Outpost. The original Aelric Stormward preview remains a built-in level-18 character.
+Created characters start at level 1 in Greyhaven Outpost. The original Aelric Stormward preview remains a built-in level-18 character. Level, class and sex are presentation for now: **Enter World** spawns a new unit in the local WASM zone host, whose rules do not read them yet.
 
 ## Local identity and persistence
 
 Created characters receive stable local IDs such as `local-1`. The browser stores only the created roster in the versioned `mmorpg.offline-roster.v1` record; the built-in character is not duplicated into storage.
 
-Each character ID owns its own:
-
-- paused in-memory demo session;
-- appearance-only save key;
-- full game checkpoint key;
-- import/export identity check.
-
-Switching characters stores the current paused session in memory, activates the selected character's own session, and refreshes save/load controls for that identity. A checkpoint for one character cannot be loaded into another.
+Each character ID owns its own appearance-only save key and its unsaved in-memory appearance edits. Switching characters keeps the previous character's edits for this page session. World progress is not saved; see [save/load](SAVE_LOAD.md). A character ID that still has an appearance save or a legacy offline checkpoint is never reissued to a new character.
 
 Roster parsing fails closed for unsupported schemas, malformed records, duplicate IDs, duplicate names (including the built-in character), invalid class/sex values, excessive slots, and oversized data. If roster storage is unavailable or corrupt, the existing bytes are not silently replaced; newly created characters remain session-only.
 
 ## Authority boundary
 
-This is local browser-demo state. It does not add account creation, durable multiplayer character records, class combat mechanics, inventory authority, or server-side character persistence. Those remain future server-owned boundaries. The feature does not change `mmorpg-core`, `physics-engine`, `game-server`, or control-plane authority.
+This is local browser-demo state. It does not add account creation, durable multiplayer character records, class combat mechanics, inventory authority, or server-side character persistence. Those remain future server-owned boundaries (the durable character record is issue #30). The feature does not change `mmorpg-core`, `physics-engine`, `game-server`, or control-plane authority.

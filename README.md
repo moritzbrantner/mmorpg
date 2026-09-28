@@ -2,7 +2,7 @@
 
 Server-authoritative MMORPG foundation that scales by distributing **zone ownership**, with deterministic physics and a separate client presentation layer.
 
-The native Rust client now connects to the standalone zone host and renders server-authoritative multiplayer movement through wgpu. The browser remains an offline demo. The in-memory control plane and fenced runtime establish tested contracts; they are not yet a production distributed fleet. See the [architecture capability map](docs/ARCHITECTURE.md#scope-and-current-state) for implemented behavior and deployment prerequisites.
+The native Rust client now connects to the standalone zone host and renders server-authoritative multiplayer movement through wgpu. The GitHub Pages demo runs the same Rust zone simulation in the page as a local single-player WASM host. The in-memory control plane and fenced runtime establish tested contracts; they are not yet a production distributed fleet. See the [architecture capability map](docs/ARCHITECTURE.md#scope-and-current-state) for implemented behavior and deployment prerequisites.
 
 ## Authority map
 
@@ -16,6 +16,7 @@ The native Rust client now connects to the standalone zone host and renders serv
 | Adapter from a zone simulation into `game-server` | `mmorpg-game-server` |
 | Native graphics | `mmorpg-client`: wgpu/winit adapter over pinned `3d-lab` mesh/camera models |
 | Browser graphics | pinned `3d-lab` browser renderer |
+| Browser zone host (single-player demo) | `mmorpg-wasm`: thin wasm-bindgen adapter over `mmorpg-core` and `mmorpg-protocol` |
 | Runtime input semantics | `input-bindings` (future client slice) |
 | User-facing settings | `settings` (future client slice) |
 | Asset normalization/provenance | `asset-tooling` (future content slice) |
@@ -68,10 +69,10 @@ The workspace provides:
 - idempotent prepare/accept/commit handoff metadata that survives lease renewal and reserves one transfer per entity;
 - a fenced runtime interface that rejects expired/stale owners before commands, admission, ticks, or publication in the reference model;
 - a runnable multi-zone host with one WebTransport routing surface and separate operational status;
-- a deliberately single-player GitHub Pages tech demo for a tiny explorable zone, consuming the pinned `3d-lab` renderer without introducing browser-side MMO authority;
-- local browser-demo character creation with Warden, Ranger, and Arcanist starter classes, male/female presentation variants, stable per-character local identities, and isolated save slots;
+- a deliberately single-player GitHub Pages tech demo that runs the shared zone simulation as a local WASM zone host and renders its player-scoped projections with the pinned `3d-lab` renderer;
+- local browser-demo character creation with Warden, Ranger, and Arcanist starter classes, male/female presentation variants, stable per-character local identities, and per-character appearance saves;
 - facing-relative movement (run, strafe, backpedal) and grounded jumps driven by a const-generated integer trigonometry table;
-- strict Rust/browser snapshot v3 compatibility tests (entity kinds, facing, viewer identity) and bounded client interpolation;
+- strict Rust/browser snapshot v3 and command v2 compatibility tests (entity kinds, facing, viewer identity, golden command bytes) and bounded client interpolation;
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
 - [headless deterministic scenario runners](docs/SCENARIOS.md) for scripted bots against the real zone host path and for control-plane lease/handoff sequences with invariant checks after every step;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
@@ -98,13 +99,17 @@ Start the complete local native development environment with:
 
 ## Browser tech demo
 
-`web/` is a small, intentionally non-authoritative GitHub Pages client. It provides a tiny world slice with local movement, a follow camera, and an interactable waystone so browser/client work can advance before online session integration. It does **not** simulate distributed ownership, persistence, handoffs, or authoritative multiplayer state. Those remain in the Rust/server boundaries above.
+`web/` is the GitHub Pages client. It runs the shared Rust zone simulation in the page as a **local single-player zone host** ([ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md)): the `mmorpg-wasm` crate compiles `mmorpg-core` and `mmorpg-protocol` to WebAssembly and builds the same `ZoneSimulation` and content revision as `mmorpg-zone-host` (zone 1, the shared outpost). There is one implementation of the movement rules; the browser owns none.
 
-**Planned:** the Greyhaven Vale starter zone replaces this illustrative scene with the shared Rust simulation running in-browser as a local WASM zone host. See [the starter-zone design](docs/STARTER_ZONE.md) and [ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md). Until those steps land, the statements below describe the current demo.
+- **Enter World** joins the local zone and spawns the selected character; **Characters** (or Escape) leaves it and removes the unit. The next entry is a new player at the spawn.
+- W/S run and backpedal, A/D (or Q/E) strafe relative to the orbit camera, Space jumps; drag the world to orbit and use the wheel to zoom. The page encodes command wire v2 with strictly increasing sequences and resends the current intent like the native client.
+- A `WorldSource` seam (`web/src/world/`) advances fixed 30 Hz ticks from a bounded accumulator and hands presentation only encoded player-scoped projections, decoded by the same `web/src/replication.ts` an online source would use. Canonical state never reaches rendering. An online WebTransport source (#29) plugs into the same seam.
+- The world is drawn from a versioned `scenery()` export of the WASM module. `mmorpg-scenery` does not exist yet, so the export is a **blockout of the hosted zone's core colliders** (coloured boxes on a flat terrain grid), not the Greyhaven Vale art; the HUD names the current core area.
+- It has no fencing, leases, handoff, shared world or persistence authority. World position and progress are **not saved**: a durable character record is issue #30. Character roster and appearance stay in browser storage.
 
-The renderer is consumed from an exact `3d-lab` commit. The demo advances local movement at 30 Hz and renders interpolated snapshots. `web/src/replication.ts` decodes the Rust player-visible protocol and provides bounded presentation history for a future online source. Local interaction remains demo-only; replacing the source must preserve server gameplay authority.
+Building the page requires the Rust toolchain from `rust-toolchain.toml` (with the `wasm32-unknown-unknown` target) and the `wasm-bindgen` CLI at the crate's exact version: `cargo install wasm-bindgen-cli --version =0.2.129 --locked`. `bun test` and `bun run build` compile the module first; the generated bindings are ignored build output.
 
-The standalone host and native client share the Rust outpost definition. The browser prototype still has its own illustrative scene. Snapshot schema/wire version 3 carries entity kinds, facing and the viewer's identity, and command wire version 2 carries `Move`/`Jump`; v2 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
+Snapshot schema/wire version 3 carries entity kinds, facing and the viewer's identity, and command wire version 2 carries `Move`/`Jump`; v2 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
 
 ## Scaling model
 
@@ -139,7 +144,13 @@ cargo test --workspace --all-features --locked
 cargo build --workspace --all-features --locked
 ```
 
-For the browser client, from `web/` using Bun 1.4.2:
+`mmorpg-core`, `mmorpg-protocol` and `mmorpg-wasm` must keep compiling for WebAssembly:
+
+```sh
+cargo build -p mmorpg-core -p mmorpg-protocol -p mmorpg-wasm --target wasm32-unknown-unknown --locked
+```
+
+For the browser client, from `web/` using Bun 1.4.2 (needs the pinned `wasm-bindgen` CLI above):
 
 ```sh
 bun install --frozen-lockfile
@@ -147,7 +158,7 @@ bun test
 bun run build
 ```
 
-Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v3.hex`.
+Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v3.hex` and `fixtures/protocol/commands-v2.hex`.
 
 ## Run a standalone zone host
 
