@@ -18,7 +18,8 @@ Rust workspace + native wgpu client + non-authoritative browser demo (`web/`).
 | `mmorpg-control-plane` | Placement, leases, fencing, handoff metadata (in-memory reference model) |
 | `mmorpg-client` | Native wgpu/winit client |
 | `mmorpg-scenarios` | Headless deterministic bot and control-plane scenario runners (tooling; owns no rules) |
-| `web/` | GitHub Pages single-player tech demo; no MMO authority |
+| `mmorpg-wasm` | wasm-bindgen adapter: the shared zone simulation as a local single-player host for `web/` (owns no rules) |
+| `web/` | GitHub Pages single-player tech demo over the WASM local host; no MMO authority |
 
 ## Commands
 
@@ -27,13 +28,17 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo build --workspace --all-features --locked
-(cd web && bun test && bun run build)
+cargo build -p mmorpg-core -p mmorpg-protocol -p mmorpg-wasm --target wasm32-unknown-unknown --locked
+(cd web && bun install --frozen-lockfile && bun test && bun run build)
 cargo run -p mmorpg-scenarios --locked -- bots crates/mmorpg-scenarios/scenarios/bots/*.toml                    # headless multiplayer bots, no GPU
 cargo run -p mmorpg-scenarios --locked -- control-plane crates/mmorpg-scenarios/scenarios/control-plane/*.toml  # lease/handoff invariants
 MMORPG_SCENARIOS_UPDATE=1 cargo test -p mmorpg-scenarios --test scenarios --locked                              # regenerate expected scenario outputs
 python3 scripts/smoke-native.py      # offscreen end-to-end: host + client + GPU frame
 ./scripts/dev-native.sh              # full local native dev environment
+python3 scripts/smoke-browser.py     # real Chromium against the built web/dist (needs Playwright)
 ```
+
+`bun test` and `bun run build` first compile `mmorpg-wasm` for `wasm32-unknown-unknown` (listed in `rust-toolchain.toml`) and run the `wasm-bindgen` CLI, whose version must equal the crate's exact `wasm-bindgen` pin: `cargo install wasm-bindgen-cli --version =0.2.129 --locked`. Generated bindings land in the ignored `web/src/generated/`.
 
 ## Authority
 
@@ -83,4 +88,5 @@ General engineering rules (git and merging, commits, testing, ADRs, docs, depend
 - Format, Clippy, tests and build pass for the complete workspace (and `web/` if touched).
 - Changes to server multiplayer, session or control-plane behavior add or update a scenario in `crates/mmorpg-scenarios/scenarios/` (see `docs/SCENARIOS.md`).
 - Changes to client/server interaction pass `scripts/smoke-native.py`.
-- Protocol changes keep the Rust/browser snapshot compatibility tests passing and update `docs/PROTOCOL.md`.
+- Protocol changes keep the Rust/browser snapshot and command compatibility tests passing and update `docs/PROTOCOL.md`.
+- `mmorpg-core` and `mmorpg-protocol` keep compiling for `wasm32-unknown-unknown`: no threads, filesystem or wall clock in core paths.
