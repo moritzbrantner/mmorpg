@@ -73,6 +73,7 @@ The workspace provides:
 - a deliberately single-player GitHub Pages tech demo that runs the shared zone simulation as a local WASM zone host and renders its player-scoped projections with the pinned `3d-lab` renderer;
 - local browser-demo character creation with Warden, Ranger, and Arcanist starter classes, male/female presentation variants, stable per-character local identities, and per-character appearance saves;
 - facing-relative movement (run, strafe, backpedal) and grounded jumps driven by a const-generated integer trigonometry table;
+- the Greyhaven Vale starter-zone content revision (hub, woods, farm, lake and hollow colliders, a validated spawn plaza, open road corridors and named areas), hosted by the zone host and the browser's WASM local host, and rendered by the native client from presentation-only `mmorpg-scenery` (props, relief terrain, water);
 - strict Rust/browser snapshot v4 and command v2 compatibility tests (compact priority-ordered records, facing, viewer identity, golden command bytes) and bounded client interpolation;
 - player projections capped by deterministic relevance priority and a measured single-datagram byte budget;
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
