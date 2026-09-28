@@ -18,28 +18,21 @@ The helper builds locked sources, creates a disposable certificate/key, starts a
 
 ## Interactive play
 
-Create a development certificate valid for no more than 14 days. These files are disposable local credentials under ignored build output:
+Start a local host and connect one native client with one command:
 
 ```sh
-mkdir -p target/dev-tls
-umask 077
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-  -keyout target/dev-tls/key.pem -out target/dev-tls/cert.pem \
-  -sha256 -days 10 -nodes -subj /CN=localhost \
-  -addext subjectAltName=DNS:localhost,IP:127.0.0.1
-cargo build --workspace --locked
+./scripts/dev-native.sh
 ```
 
-In one terminal, start the host:
+The launcher builds the native packages, reuses a valid disposable certificate under `target/dev-tls/` (or creates one valid for 10 days), starts zone `1` at `https://localhost:4433`, waits for `/readyz`, and opens the client. Closing the window or pressing Ctrl-C stops the host. It owns that host process, so do not use it while another local zone host is bound to ports `4433` or `8080`.
+
+To exercise the exact launcher without leaving a window open:
 
 ```sh
-MMORPG_ZONE_IDS=1 \
-MMORPG_CERT_PEM=target/dev-tls/cert.pem \
-MMORPG_KEY_PEM=target/dev-tls/key.pem \
-cargo run --locked -p mmorpg-game-server --bin mmorpg-zone-host
+./scripts/dev-native.sh --smoke
 ```
 
-In another terminal, start a client. Run the same command again for a second player:
+Run this command in another terminal for a second player after the launcher is ready:
 
 ```sh
 cargo run --locked -p mmorpg-client -- --certificate target/dev-tls/cert.pem

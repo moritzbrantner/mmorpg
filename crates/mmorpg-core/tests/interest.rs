@@ -45,10 +45,19 @@ fn assert_matches_exhaustive(zone: &ZoneSimulation) {
             })
             .collect();
         let actual = zone.snapshot_for_player(observer.player_id).unwrap();
-        assert_eq!(actual.players, expected, "observer {}", observer.player_id);
-        assert_eq!(actual.acknowledged_sequence, observer.last_sequence);
-        assert_eq!(actual.tick, canonical.tick);
-        assert_eq!(actual.content_revision, canonical.definition.revision());
+        assert_eq!(
+            actual,
+            mmorpg_core::ZoneSnapshot {
+                content_revision: canonical.definition.revision(),
+                acknowledged_sequence: observer.last_sequence,
+                schema_version: canonical.schema_version,
+                zone_id: canonical.zone_id,
+                tick: canonical.tick,
+                players: expected,
+            },
+            "observer {}",
+            observer.player_id
+        );
     }
     assert_eq!(zone.snapshot().unwrap(), canonical, "queries are read-only");
 }
@@ -170,8 +179,10 @@ fn projection_tracks_collision_resolution_and_failed_physics_steps() {
         .unwrap();
     edge.advance_tick().unwrap();
     edge.advance_tick().unwrap();
+    let before_failure = edge.interest_maintenance_stats();
     assert!(edge.advance_tick().is_err());
     assert_eq!(edge.current_tick(), 101);
+    assert_eq!(edge.interest_maintenance_stats(), before_failure);
     assert_matches_exhaustive(&edge);
 }
 
@@ -212,4 +223,74 @@ fn crossing_into_a_previously_unqueried_cell_becomes_visible_on_the_next_tick() 
         }
         assert_matches_exhaustive(simulation);
     }
+}
+
+#[test]
+fn retained_memberships_write_only_for_crossings_across_deterministic_ticks() {
+    let mut zone = zone_at(&[
+        [1990, 50, 0],
+        [-1999, 50, -1999],
+        [6000, 50, 6000],
+        [12_000, 50, 0],
+    ]);
+    let recovered = ZoneSimulation::from_snapshot(zone.snapshot().unwrap()).unwrap();
+    assert_eq!(recovered.interest_maintenance_stats().full_rebuilds, 1);
+    let initial = zone.interest_maintenance_stats();
+    zone.advance_tick().unwrap();
+    assert_matches_exhaustive(&zone);
+    let stationary = zone.interest_maintenance_stats();
+    assert_eq!(stationary.full_rebuilds, initial.full_rebuilds);
+    assert_eq!(stationary.bucket_inserts, initial.bucket_inserts);
+    assert_eq!(stationary.bucket_removes, initial.bucket_removes);
+    assert_eq!(stationary.bucket_moves, initial.bucket_moves);
+    assert_eq!(stationary.players_inspected - initial.players_inspected, 4);
+
+    zone.apply_command(1, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
+        .unwrap();
+    zone.advance_tick().unwrap();
+    assert_matches_exhaustive(&zone);
+    let same_cell = zone.interest_maintenance_stats();
+    assert_eq!(same_cell.bucket_inserts, stationary.bucket_inserts);
+    assert_eq!(same_cell.bucket_removes, stationary.bucket_removes);
+    assert_eq!(same_cell.bucket_moves, stationary.bucket_moves);
+
+    zone.apply_command(2, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
+        .unwrap();
+    zone.apply_command(3, 4, ZoneCommand::SetMovement { x: -1, z: -1 })
+        .unwrap();
+    zone.apply_command(4, 4, ZoneCommand::SetMovement { x: 1, z: 0 })
+        .unwrap();
+    zone.advance_tick().unwrap();
+    assert_matches_exhaustive(&zone);
+    let crossed = zone.interest_maintenance_stats();
+    assert_eq!(crossed.full_rebuilds, 1);
+    assert_eq!(crossed.bucket_moves - same_cell.bucket_moves, 2);
+    assert_eq!(crossed.bucket_inserts - same_cell.bucket_inserts, 2);
+    assert_eq!(crossed.bucket_removes - same_cell.bucket_removes, 2);
+    assert_eq!(crossed.players_inspected - same_cell.players_inspected, 4);
+
+    let checkpoint = zone.snapshot().unwrap();
+    let mut recovered = ZoneSimulation::from_snapshot(checkpoint.clone()).unwrap();
+    assert_eq!(recovered.snapshot().unwrap(), checkpoint);
+    assert_matches_exhaustive(&recovered);
+    for _ in 0..10 {
+        zone.advance_tick().unwrap();
+        recovered.advance_tick().unwrap();
+        assert_eq!(zone.snapshot().unwrap(), recovered.snapshot().unwrap());
+        assert_matches_exhaustive(&zone);
+        assert_matches_exhaustive(&recovered);
+    }
+    let before_removal = zone.interest_maintenance_stats();
+    assert!(zone.remove_player(3));
+    zone.add_player(3).unwrap();
+    let after_admission = zone.interest_maintenance_stats();
+    assert_eq!(
+        after_admission.bucket_removes - before_removal.bucket_removes,
+        1
+    );
+    assert_eq!(
+        after_admission.bucket_inserts - before_removal.bucket_inserts,
+        1
+    );
+    assert_matches_exhaustive(&zone);
 }

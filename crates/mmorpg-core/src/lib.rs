@@ -6,7 +6,7 @@ pub use content::{
     MAX_STATIC_COLLIDERS, StaticCollider, UNITS_PER_METRE, ZoneDefinition, outpost_definition,
 };
 use interest::InterestIndex;
-pub use interest::{InterestQueryStats, PlayerProjection};
+pub use interest::{InterestMaintenanceStats, InterestQueryStats, PlayerProjection};
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -132,6 +132,7 @@ pub struct ZoneSimulation {
     definition: ZoneDefinition,
     players: BTreeMap<PlayerId, PlayerState>,
     interest: InterestIndex,
+    interest_work: InterestMaintenanceStats,
 }
 
 impl ZoneSimulation {
@@ -171,6 +172,7 @@ impl ZoneSimulation {
             definition,
             players: BTreeMap::new(),
             interest: InterestIndex::default(),
+            interest_work: InterestMaintenanceStats::default(),
         })
     }
 
@@ -269,6 +271,7 @@ impl ZoneSimulation {
 
         let position = Self::spawn_position(spawn_slot);
         self.interest.insert(player_id, position.x, position.z);
+        self.interest_work.bucket_inserts += 1;
         self.players.insert(
             player_id,
             PlayerState {
@@ -283,10 +286,9 @@ impl ZoneSimulation {
         if self.players.remove(&player_id).is_none() {
             return false;
         }
-        if let Some(body) = self.world.remove_body(Self::body_id(player_id)) {
-            let position = body.position();
-            self.interest.remove(player_id, position.x, position.z);
-        }
+        self.world.remove_body(Self::body_id(player_id));
+        self.interest.remove(player_id);
+        self.interest_work.bucket_removes += 1;
         true
     }
 
@@ -340,7 +342,7 @@ impl ZoneSimulation {
         }
 
         self.world.step(1).map_err(physics_error)?;
-        self.rebuild_interest()?;
+        self.update_interest()?;
         self.tick = next_tick;
         Ok(())
     }
@@ -362,6 +364,12 @@ impl ZoneSimulation {
 
     pub fn snapshot_for_player(&self, player_id: PlayerId) -> Result<ZoneSnapshot, ZoneError> {
         Ok(self.project_for_player(player_id)?.snapshot)
+    }
+
+    /// Cumulative work since creation or recovery; subtract readings around a workload.
+    #[must_use]
+    pub const fn interest_maintenance_stats(&self) -> InterestMaintenanceStats {
+        self.interest_work
     }
 
     /// Queries the same authoritative projection as `snapshot_for_player`, with
@@ -395,8 +403,7 @@ impl ZoneSimulation {
         })
     }
 
-    // Rebuild once after each successful physics step, never per recipient. This
-    // derived state is reconstructed on recovery rather than entering the wire format.
+    // Derived state is reconstructed on recovery, never serialized.
     fn rebuild_interest(&mut self) -> Result<(), ZoneError> {
         let mut interest = InterestIndex::default();
         for player_id in self.players.keys().copied() {
@@ -408,6 +415,30 @@ impl ZoneSimulation {
             interest.insert(player_id, position.x, position.z);
         }
         self.interest = interest;
+        self.interest_work.full_rebuilds += 1;
+        self.interest_work.bucket_inserts += self.players.len();
+        self.interest_work.players_inspected += self.players.len();
+        Ok(())
+    }
+
+    fn update_interest(&mut self) -> Result<(), ZoneError> {
+        // The pre-step velocity pass has already checked every player body.
+        for &player_id in self.players.keys() {
+            let position = self
+                .world
+                .body(Self::body_id(player_id))
+                .ok_or_else(|| ZoneError::new("player physics body is missing"))?
+                .position();
+            self.interest_work.players_inspected += 1;
+            if self
+                .interest
+                .move_if_needed(player_id, position.x, position.z)
+            {
+                self.interest_work.bucket_moves += 1;
+                self.interest_work.bucket_removes += 1;
+                self.interest_work.bucket_inserts += 1;
+            }
+        }
         Ok(())
     }
 
