@@ -3,10 +3,12 @@ use std::error::Error;
 
 use mmorpg_core::{
     CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE,
-    PlayerSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneDefinition, ZoneId, ZoneSimulation, ZoneSnapshot,
-    outpost_definition,
+    SNAPSHOT_SCHEMA_VERSION, ZoneDefinition, ZoneId, ZoneSimulation, outpost_definition,
 };
 use mmorpg_protocol::{SNAPSHOT_WIRE_VERSION, encode_canonical_snapshot, encode_snapshot};
+#[path = "../tests/support/visibility_oracle.rs"]
+mod visibility_oracle;
+use visibility_oracle::exhaustive_projection;
 
 fn main() -> Result<(), Box<dyn Error>> {
     for name in ["sparse-travel-512", "dense-hub-512", "outpost-spawn-512"] {
@@ -45,8 +47,19 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
         canonical.definition = outpost_definition();
     }
     let mut zone = ZoneSimulation::from_snapshot(canonical)?;
-    // Includes a real shared-engine step and the ensuing index rebuild.
+    // Exclude checkpoint construction from the measured tick maintenance.
+    let before = zone.interest_maintenance_stats();
     zone.advance_tick()?;
+    let after = zone.interest_maintenance_stats();
+    let rebuilds = after.full_rebuilds - before.full_rebuilds;
+    let inserts = after.bucket_inserts - before.bucket_inserts;
+    let removes = after.bucket_removes - before.bucket_removes;
+    let moves = after.bucket_moves - before.bucket_moves;
+    let inspected = after.players_inspected - before.players_inspected;
+    if name == "sparse-travel-512" && (rebuilds != 0 || inserts != 0 || removes != 0 || moves != 0)
+    {
+        return Err("stationary workload rewrote bucket memberships".into());
+    }
     let canonical = zone.snapshot()?;
     let canonical_bytes = encode_canonical_snapshot(&canonical)?.len();
     let mut candidates = 0;
@@ -71,35 +84,7 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
     let baseline_tests = players * players;
     let revision = canonical.definition.revision();
     println!(
-        "{{\"schema\":\"mmorpg.interest-workload/v1\",\"workload\":\"{name}\",\"core_schema\":{SNAPSHOT_SCHEMA_VERSION},\"wire_version\":{SNAPSHOT_WIRE_VERSION},\"content_revision\":{revision},\"radius_units\":{INTEREST_RADIUS_UNITS},\"players\":{players},\"index_entries_rebuilt\":{players},\"baseline_distance_tests\":{baseline_tests},\"indexed_distance_tests\":{candidates},\"cells_visited\":{cells},\"visible_records\":{visible},\"snapshot_payload_bytes\":{bytes},\"largest_snapshot_payload_bytes\":{max_bytes},\"canonical_payload_bytes\":{canonical_bytes},\"wire_parity\":true}}"
+        "{{\"schema\":\"mmorpg.interest-workload/v2\",\"workload\":\"{name}\",\"core_schema\":{SNAPSHOT_SCHEMA_VERSION},\"wire_version\":{SNAPSHOT_WIRE_VERSION},\"content_revision\":{revision},\"radius_units\":{INTEREST_RADIUS_UNITS},\"players\":{players},\"full_index_rebuilds\":{rebuilds},\"bucket_inserts\":{inserts},\"bucket_removes\":{removes},\"bucket_moves\":{moves},\"players_inspected_for_maintenance\":{inspected},\"baseline_distance_tests\":{baseline_tests},\"exact_distance_tests\":{candidates},\"query_bucket_visits\":{cells},\"visible_records\":{visible},\"snapshot_payload_bytes\":{bytes},\"largest_snapshot_payload_bytes\":{max_bytes},\"canonical_payload_bytes\":{canonical_bytes},\"wire_parity\":true}}"
     );
     Ok(())
-}
-
-// The pre-index rule is deliberately exhaustive and independent of bucket logic.
-fn exhaustive_projection(
-    canonical: &CanonicalZoneSnapshot,
-    observer: &CanonicalPlayerSnapshot,
-) -> ZoneSnapshot {
-    ZoneSnapshot {
-        content_revision: canonical.definition.revision(),
-        acknowledged_sequence: observer.last_sequence,
-        schema_version: canonical.schema_version,
-        zone_id: canonical.zone_id,
-        tick: canonical.tick,
-        players: canonical
-            .players
-            .iter()
-            .filter(|candidate| {
-                let dx = i128::from(candidate.position[0]) - i128::from(observer.position[0]);
-                let dz = i128::from(candidate.position[2]) - i128::from(observer.position[2]);
-                dx * dx + dz * dz <= i128::from(INTEREST_RADIUS_UNITS).pow(2)
-            })
-            .map(|candidate| PlayerSnapshot {
-                player_id: candidate.player_id,
-                position: candidate.position,
-                velocity: candidate.velocity,
-            })
-            .collect(),
-    }
 }
