@@ -1115,6 +1115,7 @@ dependencies = [
  "mmorpg-core",
  "mmorpg-game-server",
  "mmorpg-protocol",
+ "mmorpg-scenery",
  "tempfile",
  "three-d-camera",
  "three-d-core",

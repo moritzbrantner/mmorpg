@@ -1,9 +1,11 @@
 //! Snapshot-only presentation. Local input never changes authoritative positions.
+//! Units stand on the shared presentation relief: a rendered position is the
+//! physics position plus `Scenery::height_at` at its XZ, never fed back.
 use crate::ClientError;
 use mmorpg_core::{
-    EntityKind, EntitySnapshot, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, UNITS_PER_METRE,
-    ZoneDefinition, ZoneSnapshot,
+    EntityKind, EntitySnapshot, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, UNITS_PER_METRE, ZoneSnapshot,
 };
+use mmorpg_scenery::Scenery;
 use std::{
     collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},
@@ -26,6 +28,7 @@ pub struct SceneBox {
 /// Interpolated presentation pose of one player, in metres and radians.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerPose {
+    /// Physics position lifted by the relief height at its XZ.
     pub position: [f32; 3],
     /// World yaw convention (0 faces +Z, increasing toward +X), within one turn.
     pub yaw: f32,
@@ -33,20 +36,26 @@ pub struct PlayerPose {
 
 pub struct Presentation {
     player_id: u32,
-    definition: ZoneDefinition,
+    scenery: Scenery,
     history: VecDeque<ZoneSnapshot>,
     latest_received: Instant,
 }
 
 impl Presentation {
+    /// Presents snapshots of the content revision the scenery was built from.
     #[must_use]
-    pub fn new(player_id: u32, definition: ZoneDefinition, now: Instant) -> Self {
+    pub fn new(player_id: u32, scenery: Scenery, now: Instant) -> Self {
         Self {
             player_id,
-            definition,
+            scenery,
             history: VecDeque::new(),
             latest_received: now,
         }
+    }
+
+    #[must_use]
+    pub fn scenery(&self) -> &Scenery {
+        &self.scenery
     }
 
     /// Start a new connection epoch without blending with obsolete samples.
@@ -56,7 +65,7 @@ impl Presentation {
     }
 
     pub fn push(&mut self, snapshot: ZoneSnapshot, now: Instant) -> Result<bool, ClientError> {
-        if snapshot.content_revision != self.definition.revision() {
+        if snapshot.content_revision != self.scenery.content_revision {
             return Err("snapshot content revision mismatch".into());
         }
         if snapshot.viewer_id != self.player_id {
@@ -111,10 +120,10 @@ impl Presentation {
                     ((before_age - delay) / (before_age - after_age)).clamp(0.0, 1.0) as f32;
                 return visible_players(before)
                     .map(|player| {
-                        let pose = pose(player);
+                        let pose = self.pose(player);
                         let next = visible_players(after).find(|next| next.id == player.id);
                         let pose = next.map_or(pose, |next| {
-                            let target = metres(next.position);
+                            let target = self.rendered(next.position);
                             // Wrapping u16 difference, read as signed, is the shorter arc.
                             let arc = f32::from(next.facing.wrapping_sub(player.facing) as i16);
                             PlayerPose {
@@ -132,28 +141,15 @@ impl Presentation {
             before = after;
         }
         visible_players(before)
-            .map(|player| (player.id, pose(player)))
+            .map(|player| (player.id, self.pose(player)))
             .collect()
     }
 
+    /// Per-frame unit boxes: a body and a facing marker per visible player.
+    /// Static scenery is uploaded once (`world::WorldScene`).
     #[must_use]
     pub fn scene(&self, now: Instant) -> Vec<SceneBox> {
-        let mut boxes: Vec<_> = self
-            .definition
-            .colliders()
-            .iter()
-            .map(|collider| SceneBox {
-                position: metres(collider.position),
-                size: metres(collider.half_extents).map(|value| value * 2.0),
-                color: match collider.id {
-                    1 => [0.24, 0.37, 0.25],
-                    2 | 3 => [0.51, 0.32, 0.20],
-                    5 => [0.2, 0.7, 0.65],
-                    _ => [0.5, 0.49, 0.43],
-                },
-                yaw: 0.0,
-            })
-            .collect();
+        let mut boxes = Vec::new();
         let body = metres(PLAYER_HALF_EXTENTS_UNITS).map(|value| value * 2.0);
         for (id, pose) in self.players(now) {
             let color = if id == self.player_id {
@@ -194,6 +190,20 @@ impl Presentation {
     pub fn is_stalled(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.latest_received) > Duration::from_secs(1)
     }
+
+    fn pose(&self, player: &EntitySnapshot) -> PlayerPose {
+        PlayerPose {
+            position: self.rendered(player.position),
+            yaw: yaw_radians(f32::from(player.facing)),
+        }
+    }
+
+    /// Metres, lifted by the presentation relief under the unit.
+    fn rendered(&self, position: [i32; 3]) -> [f32; 3] {
+        let relief = self.scenery.height_at(position[0], position[2]);
+        let [x, y, z] = metres(position);
+        [x, y + relief as f32 / UNITS_PER_METRE as f32, z]
+    }
 }
 
 fn visible_players(snapshot: &ZoneSnapshot) -> impl Iterator<Item = &EntitySnapshot> {
@@ -210,13 +220,6 @@ pub fn yaw_from_radians(radians: f32) -> u16 {
     let turns = (radians / std::f32::consts::TAU).rem_euclid(1.0);
     // A full turn rounds to 65 536, which wraps to yaw 0.
     ((turns * 65_536.0).round() as u32 % 65_536) as u16
-}
-
-fn pose(player: &EntitySnapshot) -> PlayerPose {
-    PlayerPose {
-        position: metres(player.position),
-        yaw: yaw_radians(f32::from(player.facing)),
-    }
 }
 
 /// Converts yaw steps (possibly fractional or outside one turn) to radians within one turn.

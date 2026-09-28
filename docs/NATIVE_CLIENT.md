@@ -1,6 +1,6 @@
 # Run the native multiplayer slice
 
-The native client is a Rust executable using wgpu and winit. It connects to the existing zone host over TLS/WebTransport. It renders the shared outpost's physical geometry and interpolated player snapshots. Position and collision outcomes come from the server.
+The native client is a Rust executable using wgpu and winit. It connects to the existing zone host over TLS/WebTransport. It renders Greyhaven Vale from `mmorpg-scenery` (a relief terrain mesh with biome colours, the lake surface and prop blockouts whose structure boxes are the server's exact colliders) and interpolated player snapshots. Position and collision outcomes come from the server; units are drawn at their physics position plus the shared presentation relief under them.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ The smoke helper additionally needs Python 3 and OpenSSL. Rust integration tests
 python3 scripts/smoke-native.py --window
 ```
 
-The helper builds locked sources, creates a disposable certificate/key, starts a real host on OS-selected ports, waits for readiness, connects the client, resumes the same player on a new connection epoch, and reads back a rendered GPU frame. With `--window`, it then opens a native game window for 120 frames. It stops its processes and removes temporary credentials on success or failure.
+The helper builds locked sources, creates a disposable certificate/key, starts a real host on OS-selected ports, waits for readiness, connects the client, resumes the same player on a new connection epoch, and reads back a rendered GPU frame of the vale, which must contain several colours with no single colour (such as the sky) covering three quarters of it. With `--window`, it then opens a native game window for 120 frames. It stops its processes and removes temporary credentials on success or failure.
 
 ## Interactive play
 
@@ -73,9 +73,9 @@ A rejected, expired, incompatible, or incomplete resume ends the session with an
 
 - This is a connected gameplay/graphics slice, not a production account system. Sessions are anonymous; account/character binding, persistent resume across application launches, and live zone handoff are pending.
 - The host remains standalone; do not run competing hosts for one zone without the planned distributed lease integration.
-- Geometry is shared collision-box content, not final art. Combat, inventory and NPC gameplay are not implemented.
+- Scenery is a coloured blockout (boxes for trunks and canopies, walls and roof slabs), not final art; full presentation parity is issue #28. Combat, inventory and NPC gameplay are not implemented.
 - The existing shared transport sends complete snapshots in datagrams. Dense projections above the negotiated packet size fail closed. Transport-level bounded replication/chunking is required before crowded-zone use.
-- The built-in outpost changes the standalone host's initial simulation state. Recovery bundles captured with the former empty world cannot be silently reused; arrange an explicit migration or fresh development state.
+- The built-in Greyhaven Vale (content revision 2) and snapshot v4 change the standalone host's initial simulation state. Recovery bundles captured with the former outpost cannot be silently reused; arrange an explicit migration or fresh development state.
 - Linux is the exercised desktop platform in this change. Windows/macOS builds and installers remain unverified.
 
 ## Validation

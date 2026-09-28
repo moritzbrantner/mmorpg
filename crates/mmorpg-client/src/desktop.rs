@@ -1,8 +1,9 @@
 use mmorpg_client::session::{MovementInput, NetworkUpdate};
 use mmorpg_client::{
     ClientError, camera::OrbitCamera, graphics::WindowRenderer, presentation::Presentation,
+    world::WorldScene,
 };
-use mmorpg_core::ZoneDefinition;
+use mmorpg_scenery::Scenery;
 use std::{
     collections::HashSet,
     sync::Arc,
@@ -21,7 +22,8 @@ use winit::{
 pub fn run(
     runtime: Arc<tokio::runtime::Runtime>,
     player_id: u32,
-    definition: ZoneDefinition,
+    scenery: Scenery,
+    world: WorldScene,
     input: watch::Sender<MovementInput>,
     updates: watch::Receiver<NetworkUpdate>,
     frames: Option<u32>,
@@ -31,7 +33,8 @@ pub fn run(
         runtime,
         window: None,
         renderer: None,
-        presentation: Presentation::new(player_id, definition, Instant::now()),
+        world,
+        presentation: Presentation::new(player_id, scenery, Instant::now()),
         connection_epoch: None,
         input,
         updates,
@@ -55,6 +58,8 @@ struct App {
     runtime: Arc<tokio::runtime::Runtime>,
     window: Option<Arc<Window>>,
     renderer: Option<WindowRenderer>,
+    /// Static geometry uploaded when the window's renderer is created.
+    world: WorldScene,
     presentation: Presentation,
     connection_epoch: Option<u32>,
     input: watch::Sender<MovementInput>,
@@ -140,7 +145,7 @@ impl ApplicationHandler for App {
         };
         match self
             .runtime
-            .block_on(WindowRenderer::new(Arc::clone(&window)))
+            .block_on(WindowRenderer::new(Arc::clone(&window), &self.world))
         {
             Ok(renderer) => {
                 self.renderer = Some(renderer);

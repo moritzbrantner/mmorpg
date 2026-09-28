@@ -9,8 +9,10 @@ use mmorpg_client::{
     network::ClientSession,
     presentation::Presentation,
     session::{MovementInput, NetworkUpdate, run_session},
+    world::WorldScene,
 };
-use mmorpg_core::{ZoneId, greyhaven_vale_definition};
+use mmorpg_core::ZoneId;
+use mmorpg_scenery::greyhaven_vale_scenery;
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -73,12 +75,14 @@ fn main() -> Result<(), ClientError> {
         return Ok(());
     };
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
-    let definition = greyhaven_vale_definition();
+    // Scenery derives from the shared core content revision the host runs.
+    let scenery = greyhaven_vale_scenery();
+    let world = WorldScene::new(&scenery);
     let mut session = runtime.block_on(ClientSession::connect(
         &options.url,
         options.certificate.as_deref(),
         options.zone_id,
-        definition.revision(),
+        scenery.content_revision,
     ))?;
     let player_id = session.player_id();
     if options.smoke {
@@ -88,11 +92,11 @@ fn main() -> Result<(), ClientError> {
             let snapshot = session.reconnect().await?;
             let connection_epoch = session.connection_epoch();
             let tick = snapshot.tick;
-            let mut presentation = Presentation::new(player_id, definition, Instant::now());
+            let mut presentation = Presentation::new(player_id, scenery, Instant::now());
             presentation.push(snapshot, Instant::now())?;
             let now = Instant::now();
             let view = OrbitCamera::default().view(presentation.camera_target(now));
-            let colors = render_offscreen(&presentation.scene(now), view).await?;
+            let colors = render_offscreen(&world, &presentation.scene(now), view).await?;
             println!("{{\"event\":\"client_smoke_passed\",\"player_id\":{player_id},\"tick\":{tick},\"connection_epoch\":{connection_epoch},\"rendered_colors\":{colors}}}");
             Ok(())
         });
@@ -111,7 +115,8 @@ fn main() -> Result<(), ClientError> {
     let result = desktop::run(
         Arc::clone(&runtime),
         player_id,
-        definition,
+        scenery,
+        world,
         input_sender,
         update_receiver,
         options.frames,
