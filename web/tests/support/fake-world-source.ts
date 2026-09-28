@@ -5,6 +5,8 @@ import type { WorldSource } from "../../src/world/world-source";
 /** An in-memory world that honours the `WorldSource` contract without any rules. */
 export class FakeWorldSource implements WorldSource {
   readonly sent: { player: number; command: WorldCommand }[] = [];
+  /** While set, joins are refused and change nothing. */
+  refuseJoins = false;
   #nextPlayer = 1;
   #player: number | null = null;
   #tick = 0n;
@@ -12,6 +14,7 @@ export class FakeWorldSource implements WorldSource {
 
   join(): number {
     if (this.#player !== null) throw new Error("already joined");
+    if (this.refuseJoins) throw new Error("join refused");
     this.#player = this.#nextPlayer;
     this.#nextPlayer += 1;
     this.#publish();

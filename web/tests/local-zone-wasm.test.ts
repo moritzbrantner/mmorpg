@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { encodeCommand } from "../src/command-wire";
 import { decodeSnapshot, type EntityState } from "../src/replication";
 import { createLocalWorld } from "../src/world/local-world";
-import { LocalZoneSource } from "../src/world/local-zone-source";
+import { LocalZoneSource, type LocalZoneHandle } from "../src/world/local-zone-source";
 import { buildSceneryNodes } from "../src/world/scenery-nodes";
 import { localZoneModule } from "./support/local-zone-module";
 import { worldSourceContract } from "./support/world-source-contract";
@@ -109,4 +109,18 @@ describe("WASM local zone host", () => {
   });
 });
 
-worldSourceContract("LocalZoneSource over the WASM zone", () => createLocalWorld(wasm).source);
+/** The real WASM zone, but its projections lose their first byte until repaired. */
+function refusingWasmSource() {
+  const zone = new wasm.LocalZone();
+  let corrupt = true;
+  const handle: LocalZoneHandle = {
+    join: () => zone.join(),
+    leave: (player) => zone.leave(player),
+    submit: (player, sequence, command) => zone.submit(player, sequence, command),
+    tick: () => zone.tick(),
+    projection: (player) => (corrupt ? zone.projection(player).subarray(1) : zone.projection(player)),
+  };
+  return { source: new LocalZoneSource(handle), repair: () => { corrupt = false; } };
+}
+
+worldSourceContract("LocalZoneSource over the WASM zone", () => createLocalWorld(wasm).source, refusingWasmSource);

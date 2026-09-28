@@ -9,7 +9,10 @@ import type { EntityState, ZoneSnapshot } from "../replication";
  * implements the same contract, so presentation cannot tell them apart.
  */
 export type WorldSource = {
-  /** Enters the world as a new player and returns its ID. Throws while joined. */
+  /**
+   * Enters the world as a new player and returns its ID. Throws while joined.
+   * A join that throws leaves the source unjoined, so entry can be retried.
+   */
   join(): number;
   /** Leaves the world; the player's unit is removed. Does nothing when not joined. */
   leave(): void;

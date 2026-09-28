@@ -14,6 +14,8 @@ class RecordingZone implements LocalZoneHandle {
   readonly left: number[] = [];
   ticks = 0;
   viewerOverride: number | null = null;
+  /** While set, projections are truncated bytes the strict decoder rejects. */
+  corruptProjections = false;
   #nextPlayer = 1;
   #players = new Set<number>();
 
@@ -41,6 +43,7 @@ class RecordingZone implements LocalZoneHandle {
 
   projection(player: number): Uint8Array {
     if (!this.#players.has(player)) throw new Error("unknown player");
+    if (this.corruptProjections) return new Uint8Array([3]);
     const viewer = this.viewerOverride ?? player;
     return encodeTestSnapshot({
       zoneId: 1, tick: BigInt(this.ticks), contentRevision: 1n, acknowledgedSequence: 0, viewerId: viewer,
@@ -49,8 +52,16 @@ class RecordingZone implements LocalZoneHandle {
   }
 }
 
-worldSourceContract("FakeWorldSource", () => new FakeWorldSource());
-worldSourceContract("LocalZoneSource over a recording zone", () => new LocalZoneSource(new RecordingZone()));
+worldSourceContract("FakeWorldSource", () => new FakeWorldSource(), () => {
+  const source = new FakeWorldSource();
+  source.refuseJoins = true;
+  return { source, repair: () => { source.refuseJoins = false; } };
+});
+worldSourceContract("LocalZoneSource over a recording zone", () => new LocalZoneSource(new RecordingZone()), () => {
+  const zone = new RecordingZone();
+  zone.corruptProjections = true;
+  return { source: new LocalZoneSource(zone), repair: () => { zone.corruptProjections = false; } };
+});
 
 describe("LocalZoneSource", () => {
   test("sends encoded commands with strictly increasing sequences per player", () => {
@@ -100,6 +111,22 @@ describe("LocalZoneSource", () => {
     const zone = new RecordingZone();
     zone.viewerOverride = 99;
     expect(() => new LocalZoneSource(zone).join()).toThrow("another player");
+  });
+
+  test("a rejected first projection removes the unit it just added from the zone", () => {
+    for (const [fault, message] of [["corrupt", "Truncated snapshot"], ["misaddressed", "another player"]] as const) {
+      const zone = new RecordingZone();
+      if (fault === "corrupt") zone.corruptProjections = true;
+      else zone.viewerOverride = 99;
+      const source = new LocalZoneSource(zone);
+      expect(() => source.join()).toThrow(message);
+      expect(zone.left).toEqual([1]);
+      zone.corruptProjections = false;
+      zone.viewerOverride = null;
+      expect(source.join()).toBe(2);
+      source.sendCommand({ kind: "jump" });
+      expect(zone.submitted).toEqual([{ player: 2, sequence: 1, bytes: "0202" }]);
+    }
   });
 });
 

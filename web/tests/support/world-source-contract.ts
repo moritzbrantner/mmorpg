@@ -6,8 +6,15 @@ import type { WorldSource } from "../../src/world/world-source";
 const ownUnit = (entities: readonly EntityState[], player: number) =>
   entities.find((entity) => entity.kind === "player" && entity.entityId === player);
 
+/** A source whose joins are refused until `repair()`, e.g. because its first projection is rejected. */
+export type RefusingSource = { source: WorldSource; repair(): void };
+
 /** Behaviour every `WorldSource` owes the presentation layer, local or online. */
-export function worldSourceContract(name: string, create: () => WorldSource): void {
+export function worldSourceContract(
+  name: string,
+  create: () => WorldSource,
+  createRefusing: () => RefusingSource,
+): void {
   test(`${name}: a joined player receives projections addressed to it that contain it`, () => {
     const source = create();
     expect(source.latestProjection()).toBeNull();
@@ -46,6 +53,24 @@ export function worldSourceContract(name: string, create: () => WorldSource): vo
     for (let index = 1; index < ticks.length; index += 1) {
       expect(ticks[index]! >= ticks[index - 1]!).toBe(true);
     }
+  });
+
+  test(`${name}: a refused join leaves the source unjoined so entry can be retried`, () => {
+    const { source, repair } = createRefusing();
+    expect(() => source.join()).toThrow();
+    expect(source.latestProjection()).toBeNull();
+    expect(source.sample()).toEqual([]);
+    expect(() => source.sendCommand({ kind: "jump" })).toThrow();
+    source.advance(0.1);
+    expect(source.latestProjection()).toBeNull();
+    source.leave();
+    repair();
+    const player = source.join();
+    const projection = source.latestProjection();
+    expect(projection?.viewerId).toBe(player);
+    // The refused entry left no unit behind in the world.
+    expect(projection?.entities.map((entity) => entity.entityId)).toEqual([player]);
+    source.sendCommand({ kind: "jump" });
   });
 
   test(`${name}: leaving clears presentation and the next join is a new player`, () => {

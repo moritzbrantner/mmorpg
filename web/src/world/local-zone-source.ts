@@ -37,12 +37,18 @@ export class LocalZoneSource implements WorldSource {
       throw new Error("Already in the world; leave before joining again.");
     }
     const player = this.#zone.join();
-    this.#player = player;
-    this.#sequence = 0;
     this.#clock.reset();
     this.#history.reset();
     this.#latest = null;
-    this.#publish(player);
+    try {
+      this.#publish(player);
+    } catch (error) {
+      // Entry is all or nothing: a rejected first projection removes the unit again.
+      this.#zone.leave(player);
+      throw error;
+    }
+    this.#player = player;
+    this.#sequence = 0;
     return player;
   }
 
