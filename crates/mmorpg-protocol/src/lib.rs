@@ -488,6 +488,72 @@ mod tests {
         }
     }
 
+    /// The shared Rust/browser command fixture: one command per line as
+    /// `<hex> move <forward> <strafe> <facing>` or `<hex> jump`.
+    fn command_fixture() -> String {
+        let commands = [
+            ZoneCommand::Move {
+                forward: 1,
+                strafe: 0,
+                facing: 0,
+            },
+            ZoneCommand::Move {
+                forward: 1,
+                strafe: 1,
+                facing: 16_384,
+            },
+            ZoneCommand::Move {
+                forward: -1,
+                strafe: -1,
+                facing: 32_768,
+            },
+            ZoneCommand::Move {
+                forward: 0,
+                strafe: 1,
+                facing: 0xabcd,
+            },
+            ZoneCommand::Move {
+                forward: 0,
+                strafe: 0,
+                facing: u16::MAX,
+            },
+            ZoneCommand::Jump,
+        ];
+        let mut fixture = String::from(
+            "# Command wire v2 golden fixture, verified by mmorpg-protocol and web tests.\n",
+        );
+        for command in commands {
+            let hex = encode_command(command)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let fields = match command {
+                ZoneCommand::Move {
+                    forward,
+                    strafe,
+                    facing,
+                } => format!("move {forward} {strafe} {facing}"),
+                ZoneCommand::Jump => "jump".to_owned(),
+            };
+            fixture.push_str(&format!("{hex} {fields}\n"));
+        }
+        fixture
+    }
+
+    #[test]
+    fn commands_match_the_shared_golden_fixture() {
+        let checked_in = include_str!("../../../fixtures/protocol/commands-v2.hex");
+        assert_eq!(checked_in, command_fixture());
+        for line in checked_in.lines().filter(|line| !line.starts_with('#')) {
+            let hex = line.split_whitespace().next().unwrap();
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|offset| u8::from_str_radix(&hex[offset..offset + 2], 16).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(encode_command(decode_command(&bytes).unwrap()), bytes);
+        }
+    }
+
     #[test]
     fn command_decoding_is_strict() {
         let movement = encode_command(ZoneCommand::Move {
