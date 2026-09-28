@@ -1,5 +1,6 @@
 use game_server::{
-    BrowserRoutePrefix, MatchHostWebTransportConfig, serve_match_host_with_shutdown,
+    BrowserRoutePrefix, MatchHost, MatchHostWebTransportConfig, MatchRuntime,
+    serve_match_host_with_shutdown,
 };
 use mmorpg_client::{
     ClientError,
@@ -7,9 +8,20 @@ use mmorpg_client::{
     session::{MovementInput, NetworkUpdate},
 };
 use mmorpg_core::{
-    EntitySnapshot, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, ZoneId, ZoneSnapshot, outpost_definition,
+    EntitySnapshot, MAX_VISIBLE_ENTITIES, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, ZoneId, ZoneSnapshot,
+    greyhaven_vale_definition,
 };
-use std::{net::UdpSocket, sync::Arc, time::Duration};
+use mmorpg_game_server::{ZoneGameServerAdapter, zone_match_id};
+use mmorpg_protocol::{
+    DATAGRAM_SAFETY_MARGIN_BYTES, ENTITY_RECORD_BYTES, MAX_PLAYER_PROJECTION_BYTES,
+    MEASURED_MIN_DATAGRAM_BYTES, PLAYER_SNAPSHOT_HEADER_BYTES, SESSION_SNAPSHOT_HEADER_BYTES,
+};
+use std::{
+    net::UdpSocket,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::watch;
 
 /// Forward-movement headings: yaw 0 faces +Z, a quarter turn faces +X and
@@ -18,54 +30,98 @@ const NORTH: u16 = 0;
 const EAST: u16 = 16_384;
 const SOUTH: u16 = 32_768;
 
+/// A real WebTransport zone host on an OS-assigned port with disposable TLS.
+struct LocalHost {
+    temporary: tempfile::TempDir,
+    certificate: PathBuf,
+    url: String,
+    shutdown: tokio::sync::mpsc::Sender<()>,
+    task: tokio::task::JoinHandle<Result<(), game_server::MatchHostTransportError>>,
+}
+
+impl LocalHost {
+    fn start(host: MatchHost<ZoneGameServerAdapter>, zone_id: ZoneId) -> Self {
+        let temporary = tempfile::tempdir().unwrap();
+        let certificate = temporary.path().join("cert.pem");
+        let key = temporary.path().join("key.pem");
+        let identity = wtransport::Identity::self_signed(["localhost", "127.0.0.1"]).unwrap();
+        std::fs::write(
+            &certificate,
+            identity.certificate_chain().as_slice()[0].to_pem(),
+        )
+        .unwrap();
+        let mut key_options = std::fs::OpenOptions::new();
+        key_options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            key_options.mode(0o600);
+        }
+        use std::io::Write;
+        key_options
+            .open(&key)
+            .unwrap()
+            .write_all(identity.private_key().to_secret_pem().as_bytes())
+            .unwrap();
+        // The shared host accepts a port rather than a pre-bound endpoint. Select an
+        // OS-assigned disposable port, releasing it immediately before host startup.
+        let reservation = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = reservation.local_addr().unwrap().port();
+        let (shutdown, receiver) = tokio::sync::mpsc::channel(1);
+        drop(reservation);
+        let task = tokio::spawn(serve_match_host_with_shutdown(
+            host,
+            MatchHostWebTransportConfig {
+                port,
+                certificate_pem: certificate.clone(),
+                private_key_pem: key,
+                route_prefix: BrowserRoutePrefix::new("/game").unwrap(),
+                drain_grace: Duration::from_millis(10),
+            },
+            receiver,
+        ));
+        Self {
+            temporary,
+            certificate,
+            url: format!(
+                "https://localhost:{port}/game/matches/zone-{}",
+                zone_id.get()
+            ),
+            shutdown,
+            task,
+        }
+    }
+
+    fn scratch(&self) -> &Path {
+        self.temporary.path()
+    }
+
+    async fn stop(self) {
+        self.shutdown.send(()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), self.task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
-    let temporary = tempfile::tempdir().unwrap();
-    let certificate = temporary.path().join("cert.pem");
-    let key = temporary.path().join("key.pem");
-    let identity = wtransport::Identity::self_signed(["localhost", "127.0.0.1"]).unwrap();
-    std::fs::write(
-        &certificate,
-        identity.certificate_chain().as_slice()[0].to_pem(),
-    )
-    .unwrap();
-    let mut key_options = std::fs::OpenOptions::new();
-    key_options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        key_options.mode(0o600);
-    }
-    use std::io::Write;
-    key_options
-        .open(&key)
-        .unwrap()
-        .write_all(identity.private_key().to_secret_pem().as_bytes())
-        .unwrap();
-    // The shared host accepts a port rather than a pre-bound endpoint. Select an
-    // OS-assigned disposable port, releasing it immediately before host startup.
-    let reservation = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let port = reservation.local_addr().unwrap().port();
     let zone_id = ZoneId::new(1);
     let host = mmorpg_game_server::build_zone_host([zone_id], 120).unwrap();
-    let (shutdown, receiver) = tokio::sync::mpsc::channel(1);
-    drop(reservation);
-    let task = tokio::spawn(serve_match_host_with_shutdown(
-        host,
-        MatchHostWebTransportConfig {
-            port,
-            certificate_pem: certificate.clone(),
-            private_key_pem: key,
-            route_prefix: BrowserRoutePrefix::new("/game").unwrap(),
-            drain_grace: Duration::from_millis(10),
-        },
-        receiver,
-    ));
+    let local = LocalHost::start(host, zone_id);
+    let (url, certificate) = (local.url.clone(), local.certificate.clone());
     let result = tokio::time::timeout(Duration::from_secs(20), async {
-        let url = format!("https://localhost:{port}/game/matches/zone-1");
-        let revision = outpost_definition().revision();
+        let revision = greyhaven_vale_definition().revision();
         let mut first = ClientSession::connect(&url, Some(&certificate), zone_id, revision).await?;
         let second = ClientSession::connect(&url, Some(&certificate), zone_id, revision).await?;
+        // Path MTU discovery only grows this above the measured floor.
+        let negotiated = second.max_datagram_size().ok_or("datagrams are required")?;
+        eprintln!(
+            "{{\"event\":\"negotiated_max_datagram_size\",\"bytes\":{negotiated},\"budget_floor\":{MEASURED_MIN_DATAGRAM_BYTES}}}"
+        );
+        assert!(negotiated >= MEASURED_MIN_DATAGRAM_BYTES);
         assert_ne!(first.player_id(), second.player_id());
         let initial = first.receive_snapshot().await?;
         assert_eq!(initial.viewer_id, first.player_id());
@@ -187,7 +243,7 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
             "session resume is unavailable after an incomplete attempt"
         );
         let unrelated_identity = wtransport::Identity::self_signed(["localhost"]).unwrap();
-        let wrong_certificate = temporary.path().join("wrong-cert.pem");
+        let wrong_certificate = local.scratch().join("wrong-cert.pem");
         std::fs::write(
             &wrong_certificate,
             unrelated_identity.certificate_chain().as_slice()[0].to_pem(),
@@ -205,12 +261,121 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
         Ok::<(), ClientError>(())
     })
     .await;
-    shutdown.send(()).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(3), task)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
+    local.stop().await;
+    result.unwrap().unwrap();
+}
+
+/// The byte budget starts from the smallest datagram the pinned stack
+/// negotiates: QUIC's initial MTU before path MTU discovery. Disabling
+/// discovery on both peers pins that floor, so an upgrade that shrinks it
+/// fails here rather than closing sessions in the field.
+#[tokio::test]
+async fn datagram_budget_floor_matches_the_pinned_transport() {
+    use wtransport::{ClientConfig, Endpoint, Identity, ServerConfig, config::QuicTransportConfig};
+    fn without_discovery() -> Arc<QuicTransportConfig> {
+        let mut transport = QuicTransportConfig::default();
+        transport.mtu_discovery_config(None);
+        Arc::new(transport)
+    }
+    assert_eq!(
+        SESSION_SNAPSHOT_HEADER_BYTES,
+        game_server::SNAPSHOT_HEADER_BYTES
+    );
+    assert_eq!(
+        MAX_PLAYER_PROJECTION_BYTES,
+        MEASURED_MIN_DATAGRAM_BYTES - SESSION_SNAPSHOT_HEADER_BYTES - DATAGRAM_SAFETY_MARGIN_BYTES
+    );
+    let identity = Identity::self_signed(["localhost"]).unwrap();
+    let hash = identity.certificate_chain().as_slice()[0].hash();
+    let mut server_config = ServerConfig::builder()
+        .with_bind_default(0)
+        .with_identity(identity)
+        .build();
+    server_config
+        .quic_config_mut()
+        .transport_config(without_discovery());
+    let mut client_config = ClientConfig::builder()
+        .with_bind_default()
+        .with_server_certificate_hashes([hash])
+        .build();
+    client_config
+        .quic_config_mut()
+        .transport_config(without_discovery());
+    let server = Endpoint::server(server_config).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let floors = tokio::time::timeout(Duration::from_secs(10), async move {
+        // The host keeps its endpoint and connection open until both peers measured.
+        let accepted = tokio::spawn(async move {
+            let request = server.accept().await.await.unwrap();
+            let connection = request.accept().await.unwrap();
+            let size = connection.max_datagram_size();
+            (server, connection, size)
+        });
+        let client = Endpoint::client(client_config).unwrap();
+        let connection = client
+            .connect(format!("https://localhost:{port}/"))
+            .await
+            .unwrap();
+        let (_server, _host_connection, host_size) = accepted.await.unwrap();
+        (connection.max_datagram_size(), host_size)
+    })
+    .await
+    .unwrap();
+    eprintln!(
+        "{{\"event\":\"datagram_floor\",\"client\":{:?},\"host\":{:?}}}",
+        floors.0, floors.1
+    );
+    assert_eq!(
+        floors,
+        (
+            Some(MEASURED_MIN_DATAGRAM_BYTES),
+            Some(MEASURED_MIN_DATAGRAM_BYTES)
+        )
+    );
+}
+
+/// A projection at the relevance cap, the largest the zone publishes, is
+/// delivered through the real host as one datagram, snapshot after snapshot.
+#[tokio::test]
+async fn a_projection_at_the_relevance_cap_reaches_a_client() {
+    let zone_id = ZoneId::new(1);
+    let definition = greyhaven_vale_definition();
+    let revision = definition.revision();
+    let mut adapter = ZoneGameServerAdapter::with_definition(zone_id, definition).unwrap();
+    // Resting players without sessions crowd the spawn area beyond the cap.
+    for index in 0..MAX_VISIBLE_ENTITIES + 16 {
+        let player_id = 100_000 + u32::try_from(index).unwrap();
+        adapter.zone_mut().add_player(player_id).unwrap();
+    }
+    let mut host = MatchHost::new(1).unwrap();
+    host.insert(
+        zone_match_id(zone_id).unwrap(),
+        MatchRuntime::new(adapter, 120),
+    )
+    .map_err(|failure| failure.into_parts().0)
+    .unwrap();
+    let local = LocalHost::start(host, zone_id);
+    let result = tokio::time::timeout(Duration::from_secs(20), async {
+        let session =
+            ClientSession::connect(&local.url, Some(&local.certificate), zone_id, revision).await?;
+        let largest = PLAYER_SNAPSHOT_HEADER_BYTES + MAX_VISIBLE_ENTITIES * ENTITY_RECORD_BYTES;
+        assert!(largest <= MAX_PLAYER_PROJECTION_BYTES);
+        let mut previous_tick = None;
+        for _ in 0..10 {
+            let snapshot = session.receive_snapshot().await?;
+            assert_eq!(snapshot.entities.len(), MAX_VISIBLE_ENTITIES);
+            assert_eq!(snapshot.entities[0].id, session.player_id());
+            assert_eq!(mmorpg_protocol::encode_snapshot(&snapshot)?.len(), largest);
+            assert!(
+                previous_tick < Some(snapshot.tick),
+                "the session stays open"
+            );
+            previous_tick = Some(snapshot.tick);
+        }
+        Ok::<(), ClientError>(())
+    })
+    .await;
+    local.stop().await;
     result.unwrap().unwrap();
 }
 

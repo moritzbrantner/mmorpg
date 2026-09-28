@@ -24,9 +24,9 @@ The shared command fixture is `fixtures/protocol/commands-v2.hex`: one encoded c
 
 | Offset | Width | Field |
 | --- | --- | --- |
-| 0 | 1 | Wire version: 3 |
+| 0 | 1 | Wire version: 4 |
 | 1 | 1 | Scope: 1 canonical, 2 player-visible |
-| 2 | 2 | Core schema version: 3 |
+| 2 | 2 | Core schema version: 4 |
 | 4 | 4 | Zone ID |
 | 8 | 8 | Simulation tick |
 
@@ -37,26 +37,45 @@ The shared command fixture is `fixtures/protocol/commands-v2.hex`: one encoded c
 | 16 | 8 | Content revision |
 | 24 | 4 | Acknowledged command sequence of the addressed player |
 | 28 | 4 | Viewer player ID: the entity that is "self" |
-| 32 | 2 | Entity count, at most 512 |
-| 34 | 25 × count | Entity records |
+| 32 | 2 | Entity count |
+| 34 | 16 × count | Entity records |
 
-Each entity record is 25 bytes:
+Each entity record is 16 bytes:
 
 | Offset | Width | Field |
 | --- | --- | --- |
 | 0 | 1 | Entity kind: 1 player. 2 (creature) and 3 (NPC) are reserved and currently rejected. |
 | 1 | 4 | Entity ID, unique per kind |
-| 5 | 12 | Position (`3 × i32`) |
-| 17 | 6 | Velocity (`3 × i16`) |
-| 23 | 2 | Facing (`u16` yaw) |
+| 5 | 6 | Position (`3 × i16`, absolute units) |
+| 11 | 3 | Velocity (`3 × i8`, units per tick) |
+| 14 | 2 | Facing (`u16` yaw) |
 
-Total size is `34 + 25 × count`. Records are ordered by `(kind, id)`. Velocity is presentation data: core saturates each component to the `i16` range when projecting, while canonical state keeps the exact physics velocity. The interest policy is unchanged: players within the inclusive 2,000-unit XZ radius, including the viewer.
+Total size is `34 + 16 × count`. Records are in relevance-priority order: the viewer first, then ascending `(squared XZ distance, kind, id)`. The interest policy keeps players within the inclusive 4,500-unit (45 m) XZ radius, including the viewer, and caps the projection at the 64 (`MAX_VISIBLE_ENTITIES`) highest-priority entities.
+
+Positions are absolute `i16` units. Zone content keeps every collider bound and every spawned body within ±32,000 units (`MAX_CONTENT_COORDINATE_UNITS`). The simulation closes that cube with six fixed world-limit bodies that are not content, so no player admitted at a spawn slot can leave it, whatever the content's walls or gravity; content boundary walls, such as Greyhaven Vale's, are the gameplay boundary inside it. Recovery restores captured positions unchanged. The encoder still fails closed rather than clamping a position outside the `i16` range. Canonical state keeps full `i32` positions. Velocity is presentation data: core saturates each component to the `i8` range when projecting, while canonical state keeps the exact physics velocity (run speed is 21 and jump velocity 16 units/tick, well inside that range).
+
+### Datagram byte budget
+
+The pinned `game-server` sends each projection as **one** WebTransport datagram and closes the session when a snapshot exceeds the `max_datagram_size` it captured when the connection started. Snapshot fragmentation (issue #18) is not pinned yet. The budget therefore derives from the smallest negotiated size:
+
+| Term | Bytes | Source |
+| --- | ---: | --- |
+| Measured floor (`MEASURED_MIN_DATAGRAM_BYTES`) | 1,161 | QUIC's 1,200-byte initial MTU before path MTU discovery, observed by both peers over the pinned wtransport/quinn stack |
+| `game-server` snapshot frame header | − 20 | `game_server::SNAPSHOT_HEADER_BYTES` |
+| Safety margin | − 64 | Headroom for unmeasured transport overhead |
+| **`MAX_PLAYER_PROJECTION_BYTES`** | **1,077** | Largest player projection payload |
+
+On loopback, path MTU discovery raises the host's value to 1,287 bytes before admission and the client's to 1,350–1,413 bytes, but on a real path the host can capture its limit before discovery completes, so the budget uses the floor. `mmorpg-client`'s `connected_world` tests log the negotiated size, pin the floor with discovery disabled on both peers, and deliver a projection at the relevance cap through a real host.
+
+The largest projection is `34 + 64 × 16 = 1,058` bytes, 19 bytes under the budget; at most `(1,077 − 34) / 16 = 65` records fit. A compile-time assertion and a test with extreme field values (maximum IDs, tick and revision; `i16`/`i8` extremes) prove the cap fits.
+
+Encoding is budget-driven: `pack_snapshot` writes the header, then entities in priority order until the next record would exceed the budget, and reports how many it packed. The viewer leads every projection and always fits; later steps write higher-priority sections (self state, the viewer's current target) before the remaining entities. `encode_snapshot`, which hosts use, fails closed instead of omitting any entity, so an overflow is an error rather than silent truncation. The budget rises once `game-server` fragmentation is pinned (#18).
 
 Player IDs are zone/session-local. These snapshots have no authority epoch field; the future online session/routing envelope must bind the stream to a grant and reset presentation on grant changes. An acknowledgement supports future prediction reconciliation, not permission to mutate authoritative state.
 
-Decoders reject a wrong wire version, scope or schema, counts above capacity or not matching the payload length, unknown or reserved entity kinds, truncation and trailing bytes. The browser decoder additionally rejects duplicate `(kind, id)` identities. The native client rejects duplicates, a projection addressed to another viewer, and a projection without its own player.
+Decoders reject payloads above the byte budget, a wrong wire version, scope or schema, counts not matching the payload length, unknown or reserved entity kinds, a first record that is not the viewer, truncation and trailing bytes. The browser decoder additionally rejects duplicate `(kind, id)` identities. The native client rejects duplicates, a projection addressed to another viewer, and a projection without its own player.
 
-The shared fixture is `fixtures/protocol/player-snapshot-v3.hex`. Rust encoding and browser decoding both verify these exact bytes.
+The shared fixture is `fixtures/protocol/player-snapshot-v4.hex`. Rust encoding and browser decoding both verify these exact bytes.
 
 ## Canonical scope
 
@@ -65,9 +84,10 @@ After the common prefix:
 1. player count (`u16`, at most 512);
 2. content revision (`u64`);
 3. gravity (`3 × i32`);
-4. static collider count (`u16`, at most 1024);
-5. collider records: ID (`u32`), position (`3 × i32`), half extents (`3 × i32`), 28 bytes each;
-6. player records, 39 bytes each:
+4. spawn grid: slot-0 feet origin X and Z (`2 × i32`), columns (`u16`), spacing (`i32`), 14 bytes;
+5. static collider count (`u16`, at most 1024);
+6. collider records: ID (`u32`), position (`3 × i32`), half extents (`3 × i32`), 28 bytes each;
+7. player records, 39 bytes each:
 
 | Offset | Width | Field |
 | --- | --- | --- |
@@ -81,15 +101,15 @@ After the common prefix:
 | 33 | 4 | Last command sequence |
 | 37 | 2 | Spawn slot |
 
-The content constructor validates and orders colliders. The decoder rejects a jump flag other than 0 or 1. Core validates player uniqueness, spawn slots and the forward/strafe range during recovery. Default engine configuration and pinned physics behavior are part of the continuation contract: recovering mid-run, mid-jump or with a pending jump reproduces the continuation exactly.
+The content constructor validates and orders colliders, keeps every collider bound and spawned body within ±32,000 units, and proves all 512 spawn slots are clear of colliders. World-limit bodies are derived from that range during construction and recovery; they are not serialized. The decoder rejects a jump flag other than 0 or 1. Core validates player uniqueness, spawn slots and the forward/strafe range during recovery. Default engine configuration and pinned physics behavior are part of the continuation contract: recovering mid-run, mid-jump or with a pending jump reproduces the continuation exactly.
 
 Canonical data is for trusted replay/recovery and server-side verification. It must never be passed to the browser renderer or substituted for a player projection.
 
 ## Versions and migration
 
-Snapshot wire and core schema version 3 replace version 2 for both scopes, and command wire version 2 replaces version 1. Old bytes are never reinterpreted and there is no bundled migration:
+Snapshot wire and core schema version 4 replace version 3 for both scopes: player records became compact (`i16` positions, `i8` velocity) and priority-ordered, and canonical content carries the spawn grid. Command wire version 2 is unchanged. Old bytes are never reinterpreted and there is no bundled migration:
 
-- version 2 snapshots, canonical checkpoints and recovery bundles are rejected;
-- `game-server` recovery bundles and replays captured before this change contain version 1 command payloads, which fail to decode, so a standalone host restarted with an old `MMORPG_RECOVERY_DIR` fails closed. Start from fresh development state or arrange an explicit migration.
+- version 3 snapshots, canonical checkpoints and recovery bundles are rejected;
+- a standalone host restarted with an old `MMORPG_RECOVERY_DIR` fails closed. Start from fresh development state or arrange an explicit migration.
 
 Protocol changes require updating version handling, this specification, the shared fixture and both language contract tests together.

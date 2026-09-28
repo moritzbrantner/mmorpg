@@ -1,7 +1,8 @@
 use mmorpg_client::presentation::Presentation;
 use mmorpg_core::{
-    EntityKind, EntitySnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneId, ZoneSnapshot, outpost_definition,
+    EntityKind, EntitySnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneId, ZoneSnapshot, greyhaven_vale,
 };
+use mmorpg_scenery::greyhaven_vale_scenery;
 use std::{
     f32::consts::{FRAC_PI_2, TAU},
     time::{Duration, Instant},
@@ -16,7 +17,7 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
         schema_version: SNAPSHOT_SCHEMA_VERSION,
         zone_id: ZoneId::new(1),
         tick,
-        content_revision: outpost_definition().revision(),
+        content_revision: greyhaven_vale::REVISION,
         acknowledged_sequence: 1,
         viewer_id: 1,
         entities: vec![EntitySnapshot {
@@ -29,59 +30,62 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
     }
 }
 
+fn presentation(now: Instant) -> Presentation {
+    Presentation::new(1, greyhaven_vale_scenery(), now)
+}
+
+// Samples below move along the Hollow Road (x = 0), where relief is flat.
+
 #[test]
 fn interpolation_preserves_large_ticks_holds_on_loss_and_ignores_old_packets() {
     let now = Instant::now();
-    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    let mut presentation = presentation(now);
     presentation
         .push(snapshot(u64::MAX - 4, [0, 50, 0]), now)
         .unwrap();
     presentation
-        .push(snapshot(u64::MAX, [400, 50, 0]), now)
+        .push(snapshot(u64::MAX, [0, 50, 400]), now)
         .unwrap();
-    assert_eq!(presentation.camera_target(now), [2.0, 0.5, 0.0]);
+    assert_eq!(presentation.camera_target(now), [0.0, 0.5, 2.0]);
     assert_eq!(
         presentation.camera_target(now + Duration::from_secs(1)),
-        [4.0, 0.5, 0.0]
+        [0.0, 0.5, 4.0]
     );
     assert!(
         !presentation
-            .push(snapshot(u64::MAX - 1, [-100, 0, 0]), now)
+            .push(snapshot(u64::MAX - 1, [0, 0, -100]), now)
             .unwrap()
     );
-    assert_eq!(presentation.camera_target(now), [2.0, 0.5, 0.0]);
+    assert_eq!(presentation.camera_target(now), [0.0, 0.5, 2.0]);
 }
 
 #[test]
-fn rendering_uses_the_servers_collision_geometry_and_entity_dimensions() {
+fn units_render_on_the_shared_relief_with_entity_dimensions() {
     let now = Instant::now();
-    let definition = outpost_definition();
-    let mut presentation = Presentation::new(1, definition.clone(), now);
+    let mut presentation = presentation(now);
+    // A meadow south of the outpost, off every road and structure.
+    let scenery = greyhaven_vale_scenery();
+    let (x, z, relief) = (2_000..11_000)
+        .step_by(100)
+        .map(|x| (x, 9_000, scenery.height_at(x, 9_000)))
+        .find(|(_, _, relief)| *relief != 0)
+        .expect("meadows roll");
     presentation
-        .push(facing_snapshot(1, [100, 90, -200], 16_384), now)
+        .push(facing_snapshot(1, [x, 90, z], 16_384), now)
         .unwrap();
     let scene = presentation.scene(now);
-    // Each player renders a body and a facing marker.
-    assert_eq!(scene.len(), definition.colliders().len() + 2);
-    for (rendered, collider) in scene.iter().zip(definition.colliders()) {
-        assert_eq!(rendered.yaw, 0.0);
-        assert_eq!(
-            rendered.position,
-            collider.position.map(|value| value as f32 / 100.0)
-        );
-        assert_eq!(
-            rendered.size,
-            collider.half_extents.map(|value| value as f32 / 50.0)
-        );
-    }
-    let body = scene[definition.colliders().len()];
-    assert_eq!(body.position, [1.0, 0.9, -2.0]);
+    // Each player renders a body and a facing marker; scenery is static.
+    let [body, nose] = scene[..] else {
+        panic!("one body and one nose: {scene:?}");
+    };
+    let lifted = 0.9 + relief as f32 / 100.0;
+    assert_eq!(body.position, [x as f32 / 100.0, lifted, z as f32 / 100.0]);
+    assert_eq!(presentation.camera_target(now), body.position);
     assert_eq!(body.size, [0.6, 1.8, 0.6]);
     assert!(
         (body.yaw - FRAC_PI_2).abs() < 1e-6,
         "a quarter turn faces +X"
     );
-    let nose = scene[definition.colliders().len() + 1];
     assert_eq!(nose.yaw, body.yaw);
     assert!(nose.position[0] > body.position[0] + body.size[0] / 2.0);
     assert!((nose.position[2] - body.position[2]).abs() < 1e-5);
@@ -91,7 +95,7 @@ fn rendering_uses_the_servers_collision_geometry_and_entity_dimensions() {
 #[test]
 fn facing_interpolates_along_the_shorter_arc() {
     let now = Instant::now();
-    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    let mut presentation = presentation(now);
     presentation
         .push(facing_snapshot(10, [0, 90, 0], 65_000), now)
         .unwrap();
@@ -109,7 +113,7 @@ fn facing_interpolates_along_the_shorter_arc() {
 #[test]
 fn incompatible_content_zones_and_duplicate_entities_fail_closed() {
     let now = Instant::now();
-    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    let mut presentation = presentation(now);
     presentation.push(snapshot(1, [0; 3]), now).unwrap();
     let mut wrong_content = snapshot(2, [0; 3]);
     wrong_content.content_revision += 1;
@@ -128,11 +132,11 @@ fn incompatible_content_zones_and_duplicate_entities_fail_closed() {
 #[test]
 fn a_resumed_connection_discards_old_interpolation_even_when_ticks_regress() {
     let now = Instant::now();
-    let mut presentation = Presentation::new(1, outpost_definition(), now);
+    let mut presentation = presentation(now);
     presentation.push(snapshot(100, [0, 50, 0]), now).unwrap();
-    presentation.push(snapshot(104, [400, 50, 0]), now).unwrap();
+    presentation.push(snapshot(104, [0, 50, 400]), now).unwrap();
     presentation.reset(now);
     assert!(presentation.players(now).is_empty());
-    assert!(presentation.push(snapshot(2, [900, 50, 0]), now).unwrap());
-    assert_eq!(presentation.camera_target(now), [9.0, 0.5, 0.0]);
+    assert!(presentation.push(snapshot(2, [0, 50, 900]), now).unwrap());
+    assert_eq!(presentation.camera_target(now), [0.0, 0.5, 9.0]);
 }

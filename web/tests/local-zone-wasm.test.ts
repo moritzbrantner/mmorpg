@@ -30,10 +30,10 @@ describe("WASM local zone host", () => {
   test("loads under Bun and hosts zone 1 with the shared content revision", () => {
     const zone = new wasm.LocalZone() as InstanceType<typeof wasm.LocalZone> & { zoneId(): number };
     expect(zone.zoneId()).toBe(1);
-    expect(zone.contentRevision()).toBe(1n);
+    expect(zone.contentRevision()).toBe(2n);
     const player = zone.join();
     const projection = decodeSnapshot(zone.projection(player));
-    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 1n, viewerId: player });
+    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 2n, viewerId: player });
     expect(() => zone.submit(player, 1, Uint8Array.of(1, 1, 0, 0, 0, 0))).toThrow();
     expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(true);
     expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(false);
@@ -95,17 +95,28 @@ describe("WASM local zone host", () => {
 
   test("scenery and areas come from the same content as the zone", () => {
     const { source, scenery } = createLocalWorld(wasm);
-    expect(scenery.scenery.contentRevision).toBe(1n);
-    expect(scenery.scenery.source).toBe("core-collider-blockout");
+    expect(scenery.scenery.contentRevision).toBe(2n);
+    expect(scenery.scenery.source).toBe("mmorpg-scenery");
     expect(scenery.scenery.playerHalfExtents).toEqual([30, 90, 30]);
     source.join();
     const [x, , z] = self(source).position;
     expect(scenery.areaAt(x, z)?.name).toBe("Greyhaven Outpost");
+    expect(scenery.areaAt(-5_500, 0)?.name).toBe("Wolfrun Woods");
     expect(scenery.areaAt(-50_000, -50_000)).toBeNull();
+    // Spawn slots are flat; the mountains beyond the walls are not.
     expect(scenery.reliefAt(x, z)).toBe(0);
+    expect(scenery.reliefAt(0, -19_000)).toBeGreaterThan(1_000);
+    // The keep's block is its collider, and the lake is walkable water.
+    expect(scenery.scenery.props.some((prop) => prop.colliderId === 100)).toBe(true);
+    expect(scenery.scenery.water).toEqual([{ centerXz: [5_500, -5_500], radiiXz: [2_200, 1_600], surfaceY: 15 }]);
+    // One terrain mesh per biome present, one prop mesh per colour: the node
+    // count stays small however many props the scenery carries.
     const nodes = buildSceneryNodes(scenery.scenery);
-    expect(nodes.filter((node) => node.id.startsWith("terrain-")).length).toBe(scenery.scenery.biomes.length);
-    expect(nodes.length).toBeLessThan(12);
+    const biomes = new Set(scenery.scenery.terrain.biomes).size;
+    const colours = new Set(scenery.scenery.props.map((prop) => prop.color)).size;
+    expect(nodes.filter((node) => node.id.startsWith("terrain-")).length).toBe(biomes);
+    expect(nodes.length).toBe(biomes + colours + scenery.scenery.water.length);
+    expect(scenery.scenery.props.length).toBeGreaterThan(nodes.length * 10);
   });
 });
 

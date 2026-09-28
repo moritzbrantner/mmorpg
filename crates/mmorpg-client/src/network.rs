@@ -161,6 +161,16 @@ impl ClientSession {
         self.welcome.connection_epoch
     }
 
+    /// The largest datagram this connection currently negotiates, or `None`
+    /// when the peer does not support datagrams. Both peers run the pinned
+    /// WebTransport stack with default transport configuration, so this is
+    /// the client-side observation of the budget the host checks snapshots
+    /// against when a connection starts.
+    #[must_use]
+    pub fn max_datagram_size(&self) -> Option<usize> {
+        self.connection.max_datagram_size()
+    }
+
     /// Interrupt transport while retaining the in-memory resume identity.
     pub fn disconnect(&self) {
         self.connection

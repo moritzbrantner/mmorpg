@@ -1115,6 +1115,7 @@ dependencies = [
  "mmorpg-core",
  "mmorpg-game-server",
  "mmorpg-protocol",
+ "mmorpg-scenery",
  "tempfile",
  "three-d-camera",
  "three-d-core",
@@ -1172,6 +1173,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mmorpg-scenery"
+version = "0.1.0"
+dependencies = [
+ "mmorpg-core",
+]
+
+[[package]]
 name = "mmorpg-wasm"
 version = "0.1.0"
 dependencies = [
@@ -1179,6 +1187,7 @@ dependencies = [
  "mmorpg-core",
  "mmorpg-game-server",
  "mmorpg-protocol",
+ "mmorpg-scenery",
  "serde",
  "serde_json",
  "wasm-bindgen",

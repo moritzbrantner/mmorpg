@@ -139,7 +139,7 @@ position = [999, 90, 0]
     assert!(!report.passed());
     assert_eq!(report.failures(), 2, "{text}");
     assert!(text.contains("FAIL expected applied"), "{text}");
-    assert!(text.contains("got [0, 90, 0]"), "{text}");
+    assert!(text.contains("got [-1550, 90, 1250]"), "{text}");
     assert!(text.ends_with("failures=2\n"), "{text}");
 }
 

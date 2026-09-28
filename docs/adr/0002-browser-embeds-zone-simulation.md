@@ -6,7 +6,7 @@ Implementation notes (step 6):
 
 - `mmorpg-wasm` hosts zone 1 with the same content as `mmorpg-zone-host` and plays the session role that `game-server`'s `MatchRuntime` plays for network hosts: never-reused player IDs from 1, sequence 0 rejected, stale sequences ignored. Its host-target tests check the same content and session outcomes against `MatchRuntime`, and byte-identical projections every tick while joined for a run-and-jump sequence and for the `browser-local-session` scenario's steps. Leaving removes the unit at once instead of after reconnect grace, so the away ticks are not compared.
 - The workspace `unsafe_code = "forbid"` lint applies unchanged; the code `wasm-bindgen` 0.2.129 generates compiles under it.
-- `mmorpg-scenery` has not landed, so the scenery export is a blockout of the hosted core colliders behind the same versioned format. Named areas are core content (`ZoneAreas`).
+- Step 6 landed first, with a scenery export that was a blockout of the hosted core colliders. Step 5 (#20) replaced it behind the same versioned format with a mapping of `mmorpg-scenery`'s Greyhaven Vale; the browser render loop did not change. Named areas are core content (`ZoneAreas`, `greyhaven_vale::areas()`).
 - Local demo saves of world state are removed until the durable character record (#30) exists; roster and appearance saves remain.
 
 ## Context

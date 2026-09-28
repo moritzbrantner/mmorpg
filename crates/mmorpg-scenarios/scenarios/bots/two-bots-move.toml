@@ -1,5 +1,6 @@
-# Two bots join the outpost, see each other at spawn and run on paths that
-# never touch: alice faces +Z (facing 0), bob faces +X (facing 16384).
+# Two bots join the Greyhaven Outpost plaza, see each other at spawn and run
+# on paths that never touch: alice faces +Z (facing 0), bob faces +X (facing
+# 16384). Spawn slots 0 and 1 stand at (-1550, 1250) and (-1450, 1250).
 # Positions come from the real physics step and are checked exactly.
 name = "two-bots-move"
 zone = 1
@@ -60,11 +61,11 @@ kind = "position"
 bot = "bob"
 target = "alice"
 tick = 10
-position = [0, 90, 210]
+position = [-1550, 90, 1460]
 
 [[expect]]
 kind = "position"
 bot = "alice"
 target = "bob"
 tick = 10
-position = [305, 90, 0]
+position = [-1345, 90, 1250]

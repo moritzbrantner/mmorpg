@@ -51,6 +51,8 @@ The browser demo runs the same `ZoneSimulation` through a WASM build as a local,
 
 The road network connects the hub to each subzone. Spawn density targets about 60 creatures zone-wide, with 5–15 relevant to a player at any time.
 
+Map north is −Z (the Redbrand cliffs); yaw 0 faces +Z. Content revision 2 (`mmorpg_core::greyhaven_vale`) implements this layout: new characters spawn on a 32 × 16 grid, 1 m apart, on the collider-free hub plaza; roads are open corridors with no collider within 2 m of a centre line; the five subzones are named areas with disjoint bounds. `mmorpg-scenery` derives the visuals from those colliders.
+
 ## Systems
 
 ### Movement
@@ -101,7 +103,7 @@ There is a 1.5 s global cooldown. Casts have a cast time, and moving or being st
 ### Player-scoped projection
 
 - Header, then a **self** section: exact health/resource/xp/level/target/cast/GCD/cooldowns/auras.
-- **Entities**: nearest relevant units within the interest radius (45 m), capped by count in `(distance, kind, id)` priority, and always including the player's current target. Each record carries kind, id, template/appearance, position, velocity, facing, level, health percent, flags (dead, in combat, hostile, tapped by other, quest marker, casting), target and cast progress.
+- **Entities**: nearest relevant units within the interest radius (45 m), capped by count in `(distance, kind, id)` priority, and always including the player's current target. The cap is 64 entities with 16-byte records while projections must fit one datagram (a 1,077-byte budget); see [PROTOCOL.md](PROTOCOL.md#datagram-byte-budget). The budget rises once `game-server` fragmentation (#18) is pinned. Each record carries kind, id, template/appearance, position, velocity, facing, level, health percent, flags (dead, in combat, hostile, tapped by other, quest marker, casting), target and cast progress.
 - **Events**: bounded feedback such as damage/heal/miss, XP, loot, quest updates, level-up and errors ("Out of range", "Not enough mana"). They are cosmetic and may be lost.
 - **Sheet**: money, inventory, equipment and quest log. It is included when changed and periodically every 10 ticks, so loss self-heals within about 330 ms.
 - **Names**: player display names are sent in a periodic section. Creature and NPC names come from content by template ID.
@@ -114,12 +116,12 @@ Each step is one issue and one PR, validated by the full gate from `AGENTS.md`. 
 2. **Design contract**: this document, ADR 0002, roadmap section and tracking issues.
 3. **Snapshot fragmentation in game-server** (#18): oversized player snapshots are split into bounded datagram fragments and reassembled by clients. This removes the connection-closing cliff before projections grow. Bump the pin here.
 4. **Movement v3** (#19): facing, camera-relative movement, backpedal, jump, run speed, integer trig; command wire v2, snapshot v3 with entity kinds and facing. Native and browser decoders updated.
-5. **Greyhaven Vale content** (#20): larger zone definition, colliders, spawn and NPC placement tables, the `mmorpg-scenery` crate (props, relief, subzones), interest radius, projection cap and byte-budget test. Native client renders scenery.
-6. **Browser runs the shared simulation** (#21): `mmorpg-wasm` local host, build pipeline and Pages workflow. The web demo sends commands and renders decoded projections plus Rust scenery, and its duplicated illustrative rules are removed. *Landed before step 5:* the `scenery()` export is a blockout of the hosted outpost's core colliders in the same versioned format, and core `ZoneAreas` names only the outpost hub. Step 5 maps `mmorpg-scenery` and the vale's areas into that export without touching the browser render loop. World progress saves were removed until step 15.
-7. **Units, combat and creature AI** (#22): creatures, targeting, auto-attack, death/respawn, regen, threat/leash/assist, zone RNG, events; browser target frame, nameplates, combat text.
+5. **Greyhaven Vale content** (#20): larger zone definition (content revision 2) with colliders, the player spawn grid, road corridors and named subzones; the `mmorpg-scenery` crate (props, relief, water); interest radius, projection cap and byte-budget test. Native client renders scenery, and the browser's WASM `scenery()` export maps it. Creature spawn tables move to step 7 and NPC placement tables to steps 9 (vendor) and 10 (quest givers); each is a new content revision.
+6. **Browser runs the shared simulation** (#21): `mmorpg-wasm` local host, build pipeline and Pages workflow. The web demo sends commands and renders decoded projections plus Rust scenery, and its duplicated illustrative rules are removed. *Landed before step 5* with a `scenery()` export that was a blockout of the hosted outpost's core colliders; step 5 mapped `mmorpg-scenery` and the vale's areas into the same versioned export without touching the browser render loop. World progress saves were removed until step 15.
+7. **Units, combat and creature AI** (#22): creature spawn tables, creatures, targeting, auto-attack, death/respawn, regen, threat/leash/assist, zone RNG, events; browser target frame, nameplates, combat text.
 8. **Classes and abilities** (#23): resources, GCD, cooldowns, casts, auras, the ability kit above; action bar and cast bars.
-9. **Progression, loot, inventory, equipment, vendor** (#24): XP/levels, loot windows, bags, character pane, vendor window.
-10. **Quests** (#25): definitions, NPC dialog, log, tracker, markers, chain and boss.
+9. **Progression, loot, inventory, equipment, vendor** (#24): XP/levels, loot windows, bags, character pane, vendor NPC placement and window.
+10. **Quests** (#25): quest-giver NPC placement, definitions, NPC dialog, log, tracker, markers, chain and boss.
 11. **Starter-zone workload evidence** (#26): deterministic multi-player combat workload with work counters and a snapshot-byte ratchet (BENCH-016).
 12. **World presentation** (#27): terrain relief, instanced vegetation, water, sky, fog and day/night (3d-lab renderer extensions), procedural animated character and creature models, spell effects, selection circles, minimap.
 13. **Native client parity** (#28): units, health bars, targeting, abilities, orbit camera and HUD over the same projections.

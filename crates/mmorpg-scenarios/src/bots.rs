@@ -14,7 +14,7 @@ use game_server::{
 };
 use mmorpg_core::{
     Area, EntityKind, EntitySnapshot, MAX_PLAYERS_PER_ZONE, PlayerId, ZoneCommand, ZoneId,
-    ZoneSnapshot, outpost_areas,
+    ZoneSnapshot, greyhaven_vale,
 };
 use mmorpg_game_server::{ZoneGameServerAdapter, build_zone_host, zone_match_id};
 use mmorpg_protocol::{decode_snapshot, encode_command};
@@ -808,8 +808,8 @@ impl Runner<'_> {
                 let [x, _, z] = visible(target)
                     .ok_or_else(|| format!("{target_name} not visible"))?
                     .position;
-                // The areas of the outpost content that `build_zone_host` installs.
-                match outpost_areas().area_at(x, z).map(Area::name) {
+                // The areas of the vale content that `build_zone_host` installs.
+                match greyhaven_vale::area_at(x, z).map(Area::name) {
                     Some(name) if name == expected => Ok(format!("{target_name} in {name}")),
                     Some(name) => Err(format!("{target_name} in {name}")),
                     None => Err(format!("{target_name} in no named area")),

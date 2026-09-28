@@ -1,5 +1,12 @@
-//! Native GPU adapter for shared 3d-lab geometry/camera models.
-use crate::{ClientError, camera::CameraView, presentation::SceneBox};
+//! Native GPU adapter for shared 3d-lab geometry/camera models. Two pipelines
+//! share one camera binding: indexed vertex-coloured meshes (terrain, water)
+//! and lit instanced boxes (static props uploaded once, units every frame).
+use crate::{
+    ClientError,
+    camera::CameraView,
+    presentation::SceneBox,
+    world::{Mesh as WorldMesh, WorldScene},
+};
 use bytemuck::{Pod, Zeroable};
 use std::{mem, sync::Arc, time::Duration};
 use three_d_camera::PerspectiveCamera;
@@ -7,10 +14,17 @@ use three_d_core::{Mesh, Vec3};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-/// Static colliders plus a body and a facing marker per player.
-const MAX_INSTANCES: usize =
-    mmorpg_core::MAX_STATIC_COLLIDERS + 2 * mmorpg_core::MAX_PLAYERS_PER_ZONE;
+/// A body and a facing marker per player each frame.
+const MAX_DYNAMIC_INSTANCES: usize = 2 * mmorpg_core::MAX_PLAYERS_PER_ZONE;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// Sees across the 240 m vale to the mountains 200 m out.
+const FAR_PLANE_METRES: f32 = 600.0;
+const SKY: wgpu::Color = wgpu::Color {
+    r: 0.46,
+    g: 0.62,
+    b: 0.82,
+    a: 1.0,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -26,14 +40,76 @@ struct Instance {
     color: [f32; 3],
     yaw: f32,
 }
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ColoredVertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+    color: [f32; 3],
+}
+
+impl From<&SceneBox> for Instance {
+    fn from(item: &SceneBox) -> Self {
+        Self {
+            position: item.position,
+            size: item.size,
+            color: item.color,
+            yaw: item.yaw,
+        }
+    }
+}
+
+struct GpuMesh {
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    index_count: u32,
+}
+
+impl GpuMesh {
+    fn upload(
+        device: &wgpu::Device,
+        label: &str,
+        mesh: &WorldMesh,
+    ) -> Result<Option<Self>, ClientError> {
+        if mesh.indices.is_empty() {
+            return Ok(None);
+        }
+        let vertices: Vec<_> = mesh
+            .vertices
+            .iter()
+            .map(|vertex| ColoredVertex {
+                position: vertex.position,
+                normal: vertex.normal,
+                color: vertex.color,
+            })
+            .collect();
+        Ok(Some(Self {
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            index_count: u32::try_from(mesh.indices.len())?,
+        }))
+    }
+}
 
 pub struct SceneRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    pipeline: wgpu::RenderPipeline,
-    vertices: wgpu::Buffer,
-    vertex_count: u32,
-    instances: wgpu::Buffer,
+    box_pipeline: wgpu::RenderPipeline,
+    mesh_pipeline: wgpu::RenderPipeline,
+    cube: wgpu::Buffer,
+    cube_vertex_count: u32,
+    static_instances: wgpu::Buffer,
+    static_count: u32,
+    dynamic_instances: wgpu::Buffer,
+    meshes: Vec<GpuMesh>,
     camera: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     depth: wgpu::TextureView,
@@ -47,6 +123,7 @@ impl SceneRenderer {
         format: wgpu::TextureFormat,
         width: u32,
         height: u32,
+        world: &WorldScene,
     ) -> Result<Self, ClientError> {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -68,27 +145,67 @@ impl SceneRenderer {
                 });
             }
         }
-        let vertex_count = u32::try_from(vertices.len())?;
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let cube_vertex_count = u32::try_from(vertices.len())?;
+        let cube = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("shared cube mesh"),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let instances = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("bounded scene instances"),
-            size: (MAX_INSTANCES * mem::size_of::<Instance>()) as u64,
+        // Zero-sized buffers are invalid: an empty world keeps one unused slot.
+        let mut static_boxes: Vec<Instance> = world.props.iter().map(Instance::from).collect();
+        let static_count = u32::try_from(static_boxes.len())?;
+        if static_boxes.is_empty() {
+            static_boxes.push(Instance::zeroed());
+        }
+        let static_instances = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("static prop instances"),
+            contents: bytemuck::cast_slice(&static_boxes),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let dynamic_instances = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bounded unit instances"),
+            size: (MAX_DYNAMIC_INSTANCES * mem::size_of::<Instance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let mut meshes = Vec::new();
+        for (label, mesh) in [
+            ("terrain mesh", &world.terrain),
+            ("water mesh", &world.water),
+        ] {
+            meshes.extend(GpuMesh::upload(&device, label, mesh)?);
+        }
         let camera = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera"),
             size: 64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("outpost shader"),
+        let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("camera layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene layout"),
+            bind_group_layouts: &[Some(&camera_layout)],
+            immediate_size: 0,
+        });
+        let box_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("box shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
+        });
+        let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("mesh.wgsl").into()),
         });
         const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
             wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
@@ -98,54 +215,78 @@ impl SceneRenderer {
             4 => Float32x3,
             5 => Float32
         ];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("outpost pipeline"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &VERTEX_ATTRIBUTES,
-                    }),
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: mem::size_of::<Instance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &INSTANCE_ATTRIBUTES,
-                    }),
-                ],
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        const COLORED_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
+        let pipeline = |label: &str,
+                        shader: &wgpu::ShaderModule,
+                        buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+                        cull_mode: Option<wgpu::Face>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers,
+                },
+                primitive: wgpu::PrimitiveState {
+                    cull_mode,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let box_pipeline = pipeline(
+            "box pipeline",
+            &box_shader,
+            &[
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &VERTEX_ATTRIBUTES,
+                }),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<Instance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &INSTANCE_ATTRIBUTES,
+                }),
+            ],
+            Some(wgpu::Face::Back),
+        );
+        // Terrain is only seen from above, but culling is off so winding never hides it.
+        let mesh_pipeline = pipeline(
+            "mesh pipeline",
+            &mesh_shader,
+            &[Some(wgpu::VertexBufferLayout {
+                array_stride: mem::size_of::<ColoredVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &COLORED_ATTRIBUTES,
+            })],
+            None,
+        );
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera binding"),
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &camera_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera.as_entire_binding(),
@@ -155,10 +296,14 @@ impl SceneRenderer {
         Ok(Self {
             device,
             queue,
-            pipeline,
-            vertices: vertex_buffer,
-            vertex_count,
-            instances,
+            box_pipeline,
+            mesh_pipeline,
+            cube,
+            cube_vertex_count,
+            static_instances,
+            static_count,
+            dynamic_instances,
+            meshes,
             camera,
             camera_bind_group,
             depth,
@@ -173,18 +318,10 @@ impl SceneRenderer {
         scene: &[SceneBox],
         view: CameraView,
     ) -> Result<(), ClientError> {
-        if scene.len() > MAX_INSTANCES {
+        if scene.len() > MAX_DYNAMIC_INSTANCES {
             return Err("scene exceeds instance capacity".into());
         }
-        let instances: Vec<_> = scene
-            .iter()
-            .map(|item| Instance {
-                position: item.position,
-                size: item.size,
-                color: item.color,
-                yaw: item.yaw,
-            })
-            .collect();
+        let instances: Vec<_> = scene.iter().map(Instance::from).collect();
         let camera = PerspectiveCamera::new(
             Vec3::new(view.eye[0], view.eye[1], view.eye[2]),
             Vec3::new(view.target[0], view.target[1], view.target[2]),
@@ -192,15 +329,17 @@ impl SceneRenderer {
             50_f32.to_radians(),
             self.width as f32 / self.height as f32,
             0.1,
-            250.0,
+            FAR_PLANE_METRES,
         )?;
         self.queue.write_buffer(
             &self.camera,
             0,
             bytemuck::cast_slice(&camera.view_projection_matrix().elements),
         );
-        self.queue
-            .write_buffer(&self.instances, 0, bytemuck::cast_slice(&instances));
+        if !instances.is_empty() {
+            self.queue
+                .write_buffer(&self.dynamic_instances, 0, bytemuck::cast_slice(&instances));
+        }
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -214,12 +353,7 @@ impl SceneRenderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.16,
-                            g: 0.22,
-                            b: 0.28,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(SKY),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -235,11 +369,19 @@ impl SceneRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vertices.slice(..));
-            pass.set_vertex_buffer(1, self.instances.slice(..));
-            pass.draw(0..self.vertex_count, 0..u32::try_from(scene.len())?);
+            pass.set_pipeline(&self.mesh_pipeline);
+            for mesh in &self.meshes {
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+            pass.set_pipeline(&self.box_pipeline);
+            pass.set_vertex_buffer(0, self.cube.slice(..));
+            pass.set_vertex_buffer(1, self.static_instances.slice(..));
+            pass.draw(0..self.cube_vertex_count, 0..self.static_count);
+            pass.set_vertex_buffer(1, self.dynamic_instances.slice(..));
+            pass.draw(0..self.cube_vertex_count, 0..u32::try_from(scene.len())?);
         }
         self.queue.submit([encoder.finish()]);
         Ok(())
@@ -273,7 +415,7 @@ pub struct WindowRenderer {
 }
 
 impl WindowRenderer {
-    pub async fn new(window: Arc<Window>) -> Result<Self, ClientError> {
+    pub async fn new(window: Arc<Window>, world: &WorldScene) -> Result<Self, ClientError> {
         let size = window.inner_size();
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window)?;
@@ -288,7 +430,7 @@ impl WindowRenderer {
             .ok_or("surface has no compatible format")?;
         config.present_mode = wgpu::PresentMode::AutoVsync;
         let renderer =
-            SceneRenderer::new(&adapter, config.format, config.width, config.height).await?;
+            SceneRenderer::new(&adapter, config.format, config.width, config.height, world).await?;
         surface.configure(&renderer.device, &config);
         Ok(Self {
             surface,
@@ -343,13 +485,23 @@ impl WindowRenderer {
 
 /// Explicit GPU smoke check. Readback proves a frame was rendered, rather than
 /// accepting successful command submission as graphics evidence.
-pub async fn render_offscreen(scene: &[SceneBox], view: CameraView) -> Result<usize, ClientError> {
+pub async fn render_offscreen(
+    world: &WorldScene,
+    scene: &[SceneBox],
+    view: CameraView,
+) -> Result<usize, ClientError> {
     const WIDTH: u32 = 640;
     const HEIGHT: u32 = 360;
     let instance = wgpu::Instance::default();
     let adapter = instance.request_adapter(&Default::default()).await?;
-    let renderer =
-        SceneRenderer::new(&adapter, wgpu::TextureFormat::Rgba8UnormSrgb, WIDTH, HEIGHT).await?;
+    let renderer = SceneRenderer::new(
+        &adapter,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        WIDTH,
+        HEIGHT,
+        world,
+    )
+    .await?;
     let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("smoke target"),
         size: wgpu::Extent3d {
@@ -401,16 +553,18 @@ pub async fn render_offscreen(scene: &[SceneBox], view: CameraView) -> Result<us
     })?;
     receiver.recv_timeout(Duration::from_secs(10))??;
     let bytes = buffer.slice(..).get_mapped_range()?;
-    let colors = bytes
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|pixel| [pixel[0], pixel[1], pixel[2]])
-        .collect::<std::collections::BTreeSet<_>>();
-    let count = colors.len();
+    let mut colors = std::collections::BTreeMap::<[u8; 3], usize>::new();
+    for pixel in bytes.as_chunks::<4>().0 {
+        *colors.entry([pixel[0], pixel[1], pixel[2]]).or_default() += 1;
+    }
     drop(bytes);
     buffer.unmap();
-    if count < 3 {
+    let count = colors.len();
+    // Terrain and props must cover the frame: no single colour, such as the
+    // sky's clear colour, may fill three quarters of it.
+    let dominant = colors.values().copied().max().unwrap_or(0);
+    let pixels = usize::try_from(WIDTH * HEIGHT)?;
+    if count < 3 || dominant * 4 > pixels * 3 {
         return Err("GPU frame did not contain visible scene geometry".into());
     }
     Ok(count)

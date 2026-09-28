@@ -1,8 +1,11 @@
 use mmorpg_core::{
     CanonicalPlayerSnapshot, CanonicalZoneSnapshot, EntityKind, EntitySnapshot,
-    INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE, SNAPSHOT_SCHEMA_VERSION, ZoneCommand,
-    ZoneDefinition, ZoneId, ZoneSimulation,
+    INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE, MAX_VISIBLE_ENTITIES, SNAPSHOT_SCHEMA_VERSION,
+    ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation,
 };
+
+/// Interest radius; cell width equals it, so layouts below scale with it.
+const R: i32 = INTEREST_RADIUS_UNITS;
 
 /// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
 const NORTH_EAST: u16 = 8_192;
@@ -45,24 +48,38 @@ fn zone_at(positions: &[[i32; 3]]) -> ZoneSimulation {
     .unwrap()
 }
 
+/// Exhaustive reference: every player within the inclusive XZ radius, sorted
+/// viewer first and then by `(squared distance, kind, id)`, capped.
 fn assert_matches_exhaustive(zone: &ZoneSimulation) {
     let canonical = zone.snapshot().unwrap();
     for observer in &canonical.players {
-        let expected: Vec<_> = canonical
+        let distance_squared = |candidate: &CanonicalPlayerSnapshot| {
+            let dx = i128::from(candidate.position[0]) - i128::from(observer.position[0]);
+            let dz = i128::from(candidate.position[2]) - i128::from(observer.position[2]);
+            dx * dx + dz * dz
+        };
+        let mut relevant: Vec<_> = canonical
             .players
             .iter()
-            .filter(|candidate| {
-                let dx = i128::from(candidate.position[0]) - i128::from(observer.position[0]);
-                let dz = i128::from(candidate.position[2]) - i128::from(observer.position[2]);
-                dx * dx + dz * dz <= i128::from(INTEREST_RADIUS_UNITS).pow(2)
-            })
+            .filter(|candidate| distance_squared(candidate) <= i128::from(R).pow(2))
+            .collect();
+        relevant.sort_by_key(|candidate| {
+            (
+                candidate.player_id != observer.player_id,
+                distance_squared(candidate),
+                candidate.player_id,
+            )
+        });
+        let expected: Vec<_> = relevant
+            .into_iter()
+            .take(MAX_VISIBLE_ENTITIES)
             .map(|candidate| EntitySnapshot {
                 kind: EntityKind::Player,
                 id: candidate.player_id,
                 position: candidate.position,
                 velocity: candidate
                     .velocity
-                    .map(|component| component.clamp(-32_768, 32_767) as i16),
+                    .map(|component| component.clamp(-128, 127) as i8),
                 facing: candidate.facing,
             })
             .collect();
@@ -87,20 +104,21 @@ fn assert_matches_exhaustive(zone: &ZoneSimulation) {
 
 #[test]
 fn visibility_preserves_inclusive_radius_height_independence_and_extreme_coordinates() {
+    // 3-4-5 triangles put (3R/5, 4R/5) exactly on the inclusive edge.
     let zone = zone_at(&[
         [0, 50, 0],
-        [2000, 50, 0],
-        [2001, 50, 0],
-        [-2000, 50, 0],
-        [-2001, 50, 0],
-        [1200, 50, 1600],
-        [1201, 50, 1600],
+        [R, 50, 0],
+        [R + 1, 50, 0],
+        [-R, 50, 0],
+        [-R - 1, 50, 0],
+        [3 * R / 5, 50, 4 * R / 5],
+        [3 * R / 5 + 1, 50, 4 * R / 5],
         [-1, 50, -1],
         [0, 500_000, 0],
         [i32::MIN + 100, 50, i32::MIN + 100],
-        [i32::MIN + 2100, 50, i32::MIN + 100],
+        [i32::MIN + 100 + R, 50, i32::MIN + 100],
         [i32::MAX - 100, 50, i32::MAX - 100],
-        [i32::MAX - 2100, 50, i32::MAX - 100],
+        [i32::MAX - 100 - R, 50, i32::MAX - 100],
     ]);
     assert_matches_exhaustive(&zone);
     assert!(zone.snapshot_for_player(999).is_err());
@@ -108,7 +126,11 @@ fn visibility_preserves_inclusive_radius_height_independence_and_extreme_coordin
 
 #[test]
 fn visibility_tracks_movement_admission_removal_and_recovery() {
-    let mut zone = zone_at(&[[1990, 50, -2010], [3995, 50, -2010], [-1990, 50, 1990]]);
+    let mut zone = zone_at(&[
+        [R - 10, 50, -R - 10],
+        [2 * R - 5, 50, -R - 10],
+        [-R + 10, 50, R - 10],
+    ]);
     zone.apply_command(3, 4, run(NORTH_EAST)).unwrap();
     zone.apply_command(1, 4, run(SOUTH_WEST)).unwrap();
     let mut restored = ZoneSimulation::from_snapshot(zone.snapshot().unwrap()).unwrap();
@@ -146,9 +168,10 @@ fn full_capacity_projection_matches_exhaustive_for_reproducible_scattered_layout
 }
 
 #[test]
-fn sparse_work_is_bounded_and_dense_visibility_is_never_truncated() {
+fn sparse_work_is_bounded_and_dense_visibility_is_capped_by_priority() {
+    // Three cell widths apart: no player shares or neighbours another's cell.
     let sparse_positions: Vec<_> = (0..MAX_PLAYERS_PER_ZONE)
-        .map(|index| [i32::try_from(index).unwrap() * 6000, 50, 0])
+        .map(|index| [i32::try_from(index).unwrap() * 3 * R, 50, 0])
         .collect();
     let mut sparse = zone_at(&sparse_positions);
     assert!(sparse.add_player(9999).is_err());
@@ -163,7 +186,8 @@ fn sparse_work_is_bounded_and_dense_visibility_is_never_truncated() {
     assert_eq!(sparse_candidates, MAX_PLAYERS_PER_ZONE);
 
     // 23 columns with non-overlapping 60-unit-wide bodies. Even the farthest
-    // pair fits inside the radius; everyone must remain visible to everyone.
+    // pair fits inside the radius: everyone is relevant to everyone, and the
+    // priority cap keeps each viewer's nearest units.
     let dense_positions: Vec<_> = (0..MAX_PLAYERS_PER_ZONE)
         .map(|index| {
             let index = i32::try_from(index).unwrap();
@@ -175,7 +199,9 @@ fn sparse_work_is_bounded_and_dense_visibility_is_never_truncated() {
     for player in dense.snapshot().unwrap().players {
         let projection = dense.project_for_player(player.player_id).unwrap();
         assert_eq!(projection.stats.cells_visited, 9);
-        assert_eq!(projection.snapshot.entities.len(), MAX_PLAYERS_PER_ZONE);
+        assert_eq!(projection.stats.relevant, MAX_PLAYERS_PER_ZONE);
+        assert_eq!(projection.snapshot.entities.len(), MAX_VISIBLE_ENTITIES);
+        assert_eq!(projection.snapshot.entities[0].id, player.player_id);
         dense_candidates += projection.stats.candidates_tested;
     }
     assert_eq!(dense_candidates, MAX_PLAYERS_PER_ZONE.pow(2));
@@ -185,7 +211,8 @@ fn sparse_work_is_bounded_and_dense_visibility_is_never_truncated() {
 #[test]
 fn projection_tracks_collision_resolution_and_failed_physics_steps() {
     let mut zone =
-        ZoneSimulation::with_definition(ZoneId::new(7), mmorpg_core::outpost_definition()).unwrap();
+        ZoneSimulation::with_definition(ZoneId::new(7), mmorpg_core::greyhaven_vale_definition())
+            .unwrap();
     zone.add_player(1).unwrap();
     zone.add_player(2).unwrap();
     zone.apply_command(1, 1, run(SOUTH)).unwrap();
@@ -208,10 +235,10 @@ fn projection_tracks_collision_resolution_and_failed_physics_steps() {
 #[test]
 fn crossing_into_a_previously_unqueried_cell_becomes_visible_on_the_next_tick() {
     let mut zone = zone_at(&[
-        [1999, 50, 0],
-        [4001, 50, 0],
-        [-1999, 50, 5000],
-        [-4001, 50, 5000],
+        [R - 1, 50, 0],
+        [2 * R + 1, 50, 0],
+        [-R + 1, 50, 3 * R],
+        [-2 * R - 1, 50, 3 * R],
     ]);
     zone.apply_command(3, 4, run(WEST)).unwrap();
     zone.apply_command(1, 4, run(EAST)).unwrap();
@@ -245,10 +272,10 @@ fn crossing_into_a_previously_unqueried_cell_becomes_visible_on_the_next_tick() 
 #[test]
 fn retained_memberships_write_only_for_crossings_across_deterministic_ticks() {
     let mut zone = zone_at(&[
-        [1990, 50, 0],
-        [-1999, 50, -1999],
-        [6000, 50, 6000],
-        [12_000, 50, 0],
+        [R - 10, 50, 0],
+        [-R + 1, 50, -R + 1],
+        [3 * R, 50, 3 * R],
+        [6 * R, 50, 0],
     ]);
     let recovered = ZoneSimulation::from_snapshot(zone.snapshot().unwrap()).unwrap();
     assert_eq!(recovered.interest_maintenance_stats().full_rebuilds, 1);

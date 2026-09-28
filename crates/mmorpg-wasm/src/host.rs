@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use mmorpg_core::{
-    PlayerId, ZoneDefinition, ZoneError, ZoneId, ZoneSimulation, outpost_definition,
+    PlayerId, ZoneDefinition, ZoneError, ZoneId, ZoneSimulation, greyhaven_vale_definition,
 };
 use mmorpg_protocol::{ProtocolError, decode_command, encode_snapshot};
 
@@ -23,7 +23,7 @@ pub const LOCAL_ZONE_ID: ZoneId = ZoneId::new(1);
 /// `build_zone_matches` installs the same definition (checked by tests).
 #[must_use]
 pub fn hosted_definition() -> ZoneDefinition {
-    outpost_definition()
+    greyhaven_vale_definition()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

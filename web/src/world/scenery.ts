@@ -1,8 +1,9 @@
 /**
  * Presentation scenery from the WASM `scenery()` export (format
- * `mmorpg.scenery` v1). The render loop consumes only the decoded `Scenery`;
- * when `mmorpg-scenery` replaces the collider blockout behind the same export,
- * nothing here or in the render loop changes. Relief and area lookups call
+ * `mmorpg.scenery` v1), which maps the Rust `mmorpg-scenery` value the native
+ * client draws. The render loop consumes only the decoded `Scenery`; the
+ * earlier collider blockout used the same format, so replacing it changed
+ * nothing here or in the render loop. Relief and area lookups call
  * back into Rust so both clients share one owner for them.
  */
 export type Color = `#${string}`;

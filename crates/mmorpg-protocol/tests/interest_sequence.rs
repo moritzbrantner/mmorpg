@@ -2,11 +2,15 @@
 mod visibility_oracle;
 
 use mmorpg_core::{
-    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, SNAPSHOT_SCHEMA_VERSION, ZoneCommand,
-    ZoneDefinition, ZoneId, ZoneSimulation, outpost_definition,
+    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS,
+    MAX_CONTENT_COORDINATE_UNITS, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneDefinition, ZoneId,
+    ZoneSimulation, greyhaven_vale_definition,
 };
 use mmorpg_protocol::encode_snapshot;
 use visibility_oracle::exhaustive_projection;
+
+/// Interest radius; cell width equals it, so layouts below scale with it.
+const R: i32 = INTEREST_RADIUS_UNITS;
 
 /// World-axis headings for forward movement: yaw 0 faces +Z, 90° faces +X.
 const EAST: u16 = 16_384;
@@ -27,9 +31,10 @@ fn assert_wire_parity(zone: &ZoneSimulation) {
         let expected = exhaustive_projection(&canonical, observer);
         let actual = zone.snapshot_for_player(observer.player_id).unwrap();
         assert_eq!(actual, expected, "observer {}", observer.player_id);
+        // Positions beyond the compact wire range fail closed identically.
         assert_eq!(
-            encode_snapshot(&actual).unwrap(),
-            encode_snapshot(&expected).unwrap(),
+            encode_snapshot(&actual),
+            encode_snapshot(&expected),
             "observer {} at tick {}",
             observer.player_id,
             canonical.tick
@@ -66,11 +71,11 @@ fn zone_at(positions: &[[i32; 3]], definition: ZoneDefinition) -> ZoneSimulation
 fn multi_tick_membership_transitions_match_exhaustive_wire_output() {
     let mut zone = zone_at(
         &[
-            [1990, 50, 0],
-            [-1999, 50, -1999],
-            [6000, 50, 6000],
-            [0, 50, 2000],
-            [1200, 50, 1600],
+            [R - 10, 50, 0],
+            [-R + 1, 50, -R + 1],
+            [3 * R, 50, 3 * R],
+            [0, 50, R],
+            [3 * R / 5, 50, 4 * R / 5],
         ],
         ZoneDefinition::default(),
     );
@@ -102,13 +107,17 @@ fn multi_tick_membership_transitions_match_exhaustive_wire_output() {
 
 #[test]
 fn collision_corrections_and_failed_step_preserve_reference_parity() {
-    let mut colliding = zone_at(&[[0, 90, 0], [2000, 90, 0]], outpost_definition());
+    // Player 2 runs from the hub plaza into the keep's south face at z = 700.
+    let mut colliding = zone_at(
+        &[[-1_550, 90, 1_250], [450, 90, 1_250]],
+        greyhaven_vale_definition(),
+    );
     colliding.apply_command(2, 4, run(SOUTH)).unwrap();
     for _ in 0..120 {
         colliding.advance_tick().unwrap();
         assert_wire_parity(&colliding);
     }
-    assert!(
+    assert_eq!(
         colliding
             .snapshot()
             .unwrap()
@@ -116,8 +125,8 @@ fn collision_corrections_and_failed_step_preserve_reference_parity() {
             .iter()
             .find(|player| player.player_id == 2)
             .unwrap()
-            .position[2]
-            > -1440,
+            .position,
+        [-1_550, 90, 730],
         "the shared physics collider must correct the nominal movement"
     );
 
@@ -132,4 +141,42 @@ fn collision_corrections_and_failed_step_preserve_reference_parity() {
     assert!(edge.advance_tick().is_err());
     assert_eq!(edge.interest_maintenance_stats(), work);
     assert_wire_parity(&edge);
+    assert_eq!(
+        encode_snapshot(&edge.snapshot_for_player(1).unwrap())
+            .unwrap_err()
+            .to_string(),
+        "entity position is outside the compact wire range",
+        "unrepresentable positions never reach the wire"
+    );
+}
+
+#[test]
+fn players_running_on_unenclosed_content_stay_encodable() {
+    // Default content has no walls, no ground and no gravity. Two players who
+    // see each other run east for longer than an `i16` position lasts at 21
+    // units per tick (about 1,561 ticks); the world limits stop them first.
+    let mut zone = ZoneSimulation::new(ZoneId::new(9));
+    for player_id in [1, 2] {
+        zone.add_player(player_id).unwrap();
+        zone.apply_command(player_id, 1, run(EAST)).unwrap();
+    }
+    for _ in 0..1_600 {
+        zone.advance_tick().unwrap();
+        for viewer in [1, 2] {
+            let projection = zone.snapshot_for_player(viewer).unwrap();
+            assert_eq!(projection.entities.len(), 2);
+            encode_snapshot(&projection).unwrap();
+        }
+    }
+    let positions: Vec<_> = zone
+        .snapshot()
+        .unwrap()
+        .players
+        .iter()
+        .map(|player| player.position)
+        .collect();
+    // Player 2 spawned 2 m ahead and rests against the limit; player 1 rests against it.
+    let front = MAX_CONTENT_COORDINATE_UNITS - 30;
+    assert_eq!(positions, [[front - 60, 90, 0], [front, 90, 0]]);
+    assert_wire_parity(&zone);
 }

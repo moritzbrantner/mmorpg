@@ -10,6 +10,7 @@ publish.workspace = true
 game-server.workspace = true
 mmorpg-core.workspace = true
 mmorpg-protocol.workspace = true
+mmorpg-scenery.workspace = true
 tokio.workspace = true
 url = "=2.5.8"
 wtransport = { version = "=0.7.2", default-features = false, features = ["ring"] }
@@ -22,7 +23,7 @@ three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "
 [dev-dependencies]
 tempfile = "=3.27.0"
 mmorpg-game-server = { path = "../mmorpg-game-server" }
-wtransport = { version = "=0.7.2", default-features = false, features = ["ring", "self-signed"] }
+wtransport = { version = "=0.7.2", default-features = false, features = ["ring", "self-signed", "quinn"] }
 
 [lints]
 workspace = true

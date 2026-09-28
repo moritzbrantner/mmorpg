@@ -1,4 +1,4 @@
-/** Player-visible protocol v3 only. Canonical recovery state never enters rendering. */
+/** Player-visible protocol v4 only. Canonical recovery state never enters rendering. */
 export type Vector3 = readonly [number, number, number];
 /** Wire kind 1. Creature (2) and NPC (3) codes are reserved and rejected until they exist. */
 export type EntityKind = "player";
@@ -6,7 +6,7 @@ export type EntityState = {
   kind: EntityKind;
   entityId: number;
   position: Vector3;
-  /** Presentation velocity in units per tick, saturated to the i16 wire range. */
+  /** Presentation velocity in units per tick, saturated to the i8 wire range. */
   velocity: Vector3;
   /** u16 yaw: 65 536 steps per turn, 0 faces +Z, increasing turns toward +X. */
   facing: number;
@@ -24,24 +24,26 @@ export type ZoneSnapshot = {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 3;
-const SCHEMA_VERSION = 3;
+const WIRE_VERSION = 4;
+const SCHEMA_VERSION = 4;
 const PLAYER_SCOPE = 2;
 const PLAYER_KIND_CODE = 1;
-const MAX_ENTITIES = 512;
+/** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
+const MAX_PROJECTION_BYTES = 1_077;
 const HEADER_BYTES = 34;
-const ENTITY_BYTES = 25;
+const ENTITY_BYTES = 16;
 const BUFFER_CAPACITY = 32;
 
 export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  if (view.byteLength > MAX_PROJECTION_BYTES) throw new Error("Snapshot exceeds the projection byte budget");
   if (view.byteLength < HEADER_BYTES) throw new Error("Truncated snapshot");
   if (view.getUint8(0) !== WIRE_VERSION || view.getUint16(2) !== SCHEMA_VERSION) {
     throw new Error("Unsupported snapshot version");
   }
   if (view.getUint8(1) !== PLAYER_SCOPE) throw new Error("Expected player-visible snapshot");
   const count = view.getUint16(32);
-  if (count > MAX_ENTITIES || view.byteLength !== HEADER_BYTES + count * ENTITY_BYTES) {
+  if (view.byteLength !== HEADER_BYTES + count * ENTITY_BYTES) {
     throw new Error("Invalid snapshot length or entity count");
   }
   const entities: EntityState[] = [];
@@ -56,17 +58,20 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
     entities.push({
       kind,
       entityId,
-      position: [view.getInt32(offset + 5), view.getInt32(offset + 9), view.getInt32(offset + 13)],
-      velocity: [view.getInt16(offset + 17), view.getInt16(offset + 19), view.getInt16(offset + 21)],
-      facing: view.getUint16(offset + 23),
+      position: [view.getInt16(offset + 5), view.getInt16(offset + 7), view.getInt16(offset + 9)],
+      velocity: [view.getInt8(offset + 11), view.getInt8(offset + 12), view.getInt8(offset + 13)],
+      facing: view.getUint16(offset + 14),
     });
   }
+  const viewerId = view.getUint32(28);
+  // Records arrive in relevance-priority order, and the viewer always leads.
+  if (entities[0]?.entityId !== viewerId) throw new Error("Projection must start with the viewer");
   return {
     zoneId: view.getUint32(4),
     tick: view.getBigUint64(8),
     contentRevision: view.getBigUint64(16),
     acknowledgedSequence: view.getUint32(24),
-    viewerId: view.getUint32(28),
+    viewerId,
     entities,
   };
 }

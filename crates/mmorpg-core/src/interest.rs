@@ -9,6 +9,8 @@ use crate::{INTEREST_RADIUS_UNITS, PlayerId, ZoneSnapshot};
 pub struct InterestQueryStats {
     pub cells_visited: usize,
     pub candidates_tested: usize,
+    /// Candidates inside the interest radius, before the priority cap.
+    pub relevant: usize,
 }
 
 /// Cumulative deterministic index maintenance work since zone construction or recovery.
