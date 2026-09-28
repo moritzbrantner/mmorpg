@@ -11,7 +11,7 @@ use mmorpg_core::{MAX_PLAYERS_PER_ZONE, TICK_HZ, ZoneId, ZoneSimulation};
 use mmorpg_protocol::{decode_command, encode_canonical_snapshot, encode_snapshot};
 
 pub const PINNED_GAME_SERVER_REVISION: &str = "f7efa8fc6d61abffdbc55afaa05d6fde48c05da1";
-pub const PINNED_PHYSICS_ENGINE_REVISION: &str = "c796ea382bdcb0276b9309e8a3cca34c8c28313b";
+pub const PINNED_PHYSICS_ENGINE_REVISION: &str = "1b98f84d409796b2a15b84f3fa4ed7f03a11f8bd";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ZoneHostBuildError {
