@@ -10,9 +10,13 @@ import {
 } from "../src/character-selection";
 import {
   characterRosterStorageKey,
+  hasRetainedCharacterSaves,
   loadCreatedCharacters,
+  mergeStoredRoster,
   saveCreatedCharacters,
 } from "../src/character-roster";
+import { storageKeyForCharacter } from "../src/character-customization";
+import { demoSaveKey } from "../src/demo-save";
 import { characterVisualProfile } from "../src/character-visuals";
 
 function memory() {
@@ -120,4 +124,47 @@ test("sex affects presentation geometry while class changes palette and main-han
   assert.equal(warden.weapon, "sword");
   assert.equal(arcanist.weapon, "staff");
   assert.notEqual(warden.chestColor, arcanist.chestColor);
+});
+
+test("never reissues an identity whose checkpoint or appearance save still exists", () => {
+  const storage = memory();
+  storage.setItem(demoSaveKey("local-1"), "{}");
+  storage.setItem(storageKeyForCharacter("local-2"), "{}");
+  const retained = (id: string) => hasRetainedCharacterSaves(storage, id);
+  assert.ok(retained("local-1"));
+  assert.ok(retained("local-2"));
+  assert.ok(!retained("local-3"));
+
+  // The roster entries for local-1/local-2 are gone, but their saves remain.
+  const created = createCharacterPreview({ name: "Alina", sex: "female", classId: "ranger" }, [PREVIEW_CHARACTER], retained);
+  assert.equal(created.id, "local-3");
+
+  const unreadable = {
+    getItem: () => { throw new Error("denied"); },
+    setItem: () => { throw new Error("denied"); },
+  };
+  assert.ok(!hasRetainedCharacterSaves(unreadable, "local-1"));
+});
+
+test("submitting a draft after another tab appended keeps both characters with distinct IDs", () => {
+  const storage = memory();
+  // Both tabs start from an empty roster; the other tab creates and persists first.
+  const staleView = [PREVIEW_CHARACTER];
+  const theirs = createCharacterPreview({ name: "Dorian", sex: "male", classId: "warden" }, staleView);
+  saveCreatedCharacters(storage, [theirs]);
+
+  const merged = mergeStoredRoster(staleView, loadCreatedCharacters(storage));
+  const ours = createCharacterPreview({ name: "Alina", sex: "female", classId: "ranger" }, merged);
+  assert.notEqual(ours.id, theirs.id);
+  const next = [...merged, ours];
+  saveCreatedCharacters(storage, next.filter((character) => character.id.startsWith("local-")));
+  assert.deepEqual(loadCreatedCharacters(storage), [theirs, ours]);
+  assert.throws(() => createCharacterPreview({ name: "dorian", sex: "female", classId: "arcanist" }, next), /already exists/);
+
+  // In-memory characters the stored roster lacks are retained, not dropped.
+  const sessionOnly = localCharacterPreview("local-5", "Mira", "arcanist", "female");
+  assert.deepEqual(
+    mergeStoredRoster([PREVIEW_CHARACTER, sessionOnly], [theirs]).map((character) => character.id),
+    [PREVIEW_CHARACTER.id, theirs.id, sessionOnly.id],
+  );
 });

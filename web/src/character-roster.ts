@@ -6,6 +6,8 @@ import {
   localCharacterPreview,
   type CharacterPreview,
 } from "./character-selection";
+import { storageKeyForCharacter } from "./character-customization";
+import { demoSaveKey } from "./demo-save";
 
 const ROSTER_SCHEMA_VERSION = 1;
 const ROSTER_KEY = "mmorpg.offline-roster.v1";
@@ -110,4 +112,35 @@ export function saveCreatedCharacters(
     throw new Error("Local character roster is too large.");
   }
   storage.setItem(ROSTER_KEY, raw);
+}
+
+/**
+ * True while a game checkpoint or appearance save still exists for `characterId`.
+ * Such an identity must not be reissued to a new character, even when the roster
+ * entry itself was lost or reset. Unreadable storage retains nothing.
+ */
+export function hasRetainedCharacterSaves(storage: CharacterRosterStorage, characterId: string): boolean {
+  try {
+    return storage.getItem(demoSaveKey(characterId)) !== null ||
+      storage.getItem(storageKeyForCharacter(characterId)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Combines the roster another tab may have written with this tab's in-memory view.
+ * Stored characters come first in stored order; in-memory local characters that are
+ * absent from storage are kept after them, so neither side's characters are dropped.
+ */
+export function mergeStoredRoster(
+  inMemory: readonly CharacterPreview[],
+  stored: readonly CharacterPreview[],
+): CharacterPreview[] {
+  const storedIds = new Set(stored.map((character) => character.id));
+  return [
+    PREVIEW_CHARACTER,
+    ...stored,
+    ...inMemory.filter((character) => character.id !== PREVIEW_CHARACTER.id && !storedIds.has(character.id)),
+  ];
 }

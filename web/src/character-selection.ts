@@ -112,11 +112,22 @@ function comparableName(value: string): string {
   return value.normalize("NFKC").toLowerCase();
 }
 
-function nextLocalCharacterId(existing: readonly CharacterPreview[]): string {
+/** Upper bound on local ID numbers, so retired identities cannot make allocation unbounded. */
+export const MAX_LOCAL_CHARACTER_ID = 1024;
+
+/**
+ * Allocates the lowest free local ID that is neither in the roster nor retired.
+ * An ID is retired while any per-character save still references it, so a new
+ * character never inherits a former character's checkpoint or appearance.
+ */
+function nextLocalCharacterId(
+  existing: readonly CharacterPreview[],
+  isRetired: (id: string) => boolean,
+): string {
   const ids = new Set(existing.map((character) => character.id));
-  for (let slot = 1; slot <= MAX_CHARACTER_SLOTS; slot += 1) {
+  for (let slot = 1; slot <= MAX_LOCAL_CHARACTER_ID; slot += 1) {
     const candidate = `local-${slot}`;
-    if (!ids.has(candidate)) {
+    if (!ids.has(candidate) && !isRetired(candidate)) {
       return candidate;
     }
   }
@@ -150,6 +161,7 @@ export function localCharacterPreview(
 export function createCharacterPreview(
   draft: CharacterCreationDraft,
   existing: readonly CharacterPreview[],
+  isRetired: (id: string) => boolean = () => false,
 ): CharacterPreview {
   if (existing.length >= MAX_CHARACTER_SLOTS) {
     throw new Error(`All ${MAX_CHARACTER_SLOTS} character slots are full.`);
@@ -164,7 +176,7 @@ export function createCharacterPreview(
   if (!isCharacterSex(draft.sex)) {
     throw new Error("Choose male or female.");
   }
-  return localCharacterPreview(nextLocalCharacterId(existing), name, draft.classId, draft.sex);
+  return localCharacterPreview(nextLocalCharacterId(existing, isRetired), name, draft.classId, draft.sex);
 }
 
 export function draftCharacterPreview(draft: CharacterCreationDraft): CharacterPreview {

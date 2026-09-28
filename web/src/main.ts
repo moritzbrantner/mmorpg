@@ -35,7 +35,13 @@ import { DEMO_WORLD_HALF_EXTENT, type DemoProgress } from "./demo-save";
 import { installDemoSaveControls } from "./demo-save-controls";
 import { SnapshotBuffer, TICK_HZ, UNITS_PER_METRE, type Vector3 } from "./replication";
 import { installCharacterTurntable } from "./character-turntable";
-import { characterRosterStorageKey, loadCreatedCharacters, saveCreatedCharacters } from "./character-roster";
+import {
+  characterRosterStorageKey,
+  hasRetainedCharacterSaves,
+  loadCreatedCharacters,
+  mergeStoredRoster,
+  saveCreatedCharacters,
+} from "./character-roster";
 import { characterVisualProfile, type CharacterVisualProfile } from "./character-visuals";
 import "./character-selection-layout.css";
 import "./character-creation.css";
@@ -873,6 +879,23 @@ function persistCreatedRoster(): boolean {
   }
 }
 
+// Storage events are ignored while a draft is open, so another tab may have
+// appended characters since this tab last read the roster. Merge the stored
+// roster before allocating an ID so this write cannot drop or reuse theirs.
+function reconcileStoredRoster(): void {
+  if (!rosterStorageHealthy) {
+    return;
+  }
+  let stored: CharacterPreview[];
+  try {
+    stored = loadCreatedCharacters(window.localStorage);
+  } catch {
+    rosterStorageHealthy = false;
+    return;
+  }
+  characters = mergeStoredRoster(characters, stored);
+}
+
 function finishCharacterCreation(): void {
   if (!creationDraft) {
     return;
@@ -882,7 +905,12 @@ function finishCharacterCreation(): void {
     return;
   }
   try {
-    const character = createCharacterPreview(creationDraft, characters);
+    reconcileStoredRoster();
+    const character = createCharacterPreview(
+      creationDraft,
+      characters,
+      (id) => hasRetainedCharacterSaves(window.localStorage, id),
+    );
     characters = [...characters, character];
     const persisted = persistCreatedRoster();
     creationDraft = null;
