@@ -53,11 +53,6 @@ impl Presentation {
         }
     }
 
-    #[must_use]
-    pub fn scenery(&self) -> &Scenery {
-        &self.scenery
-    }
-
     /// Start a new connection epoch without blending with obsolete samples.
     pub fn reset(&mut self, now: Instant) {
         self.history.clear();
