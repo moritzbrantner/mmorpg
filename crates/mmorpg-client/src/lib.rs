@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod camera;
 pub mod graphics;
 pub mod network;
 pub mod presentation;

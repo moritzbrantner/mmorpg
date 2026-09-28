@@ -1,5 +1,5 @@
 //! Native GPU adapter for shared 3d-lab geometry/camera models.
-use crate::{ClientError, presentation::SceneBox};
+use crate::{ClientError, camera::CameraView, presentation::SceneBox};
 use bytemuck::{Pod, Zeroable};
 use std::{mem, sync::Arc, time::Duration};
 use three_d_camera::PerspectiveCamera;
@@ -164,7 +164,7 @@ impl SceneRenderer {
         &self,
         target: &wgpu::TextureView,
         scene: &[SceneBox],
-        focus: [f32; 3],
+        view: CameraView,
     ) -> Result<(), ClientError> {
         if scene.len() > MAX_INSTANCES {
             return Err("scene exceeds instance capacity".into());
@@ -178,8 +178,8 @@ impl SceneRenderer {
             })
             .collect();
         let camera = PerspectiveCamera::new(
-            Vec3::new(focus[0] + 9.0, focus[1] + 10.0, focus[2] + 12.0),
-            Vec3::new(focus[0], focus[1], focus[2]),
+            Vec3::new(view.eye[0], view.eye[1], view.eye[2]),
+            Vec3::new(view.target[0], view.target[1], view.target[2]),
             Vec3::new(0.0, 1.0, 0.0),
             50_f32.to_radians(),
             self.width as f32 / self.height as f32,
@@ -305,7 +305,7 @@ impl WindowRenderer {
         self.surface.configure(&self.renderer.device, &self.config);
     }
 
-    pub fn render(&mut self, scene: &[SceneBox], focus: [f32; 3]) -> Result<(), ClientError> {
+    pub fn render(&mut self, scene: &[SceneBox], view: CameraView) -> Result<(), ClientError> {
         if self.suspended {
             return Ok(());
         }
@@ -326,11 +326,8 @@ impl WindowRenderer {
                 return Err("GPU surface validation failed".into());
             }
         };
-        self.renderer.render(
-            &frame.texture.create_view(&Default::default()),
-            scene,
-            focus,
-        )?;
+        self.renderer
+            .render(&frame.texture.create_view(&Default::default()), scene, view)?;
         self.renderer.queue.present(frame);
         Ok(())
     }
@@ -338,7 +335,7 @@ impl WindowRenderer {
 
 /// Explicit GPU smoke check. Readback proves a frame was rendered, rather than
 /// accepting successful command submission as graphics evidence.
-pub async fn render_offscreen(scene: &[SceneBox], focus: [f32; 3]) -> Result<usize, ClientError> {
+pub async fn render_offscreen(scene: &[SceneBox], view: CameraView) -> Result<usize, ClientError> {
     const WIDTH: u32 = 640;
     const HEIGHT: u32 = 360;
     let instance = wgpu::Instance::default();
@@ -359,7 +356,7 @@ pub async fn render_offscreen(scene: &[SceneBox], focus: [f32; 3]) -> Result<usi
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    renderer.render(&texture.create_view(&Default::default()), scene, focus)?;
+    renderer.render(&texture.create_view(&Default::default()), scene, view)?;
     let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("smoke readback"),
         size: u64::from(WIDTH * HEIGHT * 4),
