@@ -112,19 +112,19 @@ Each step is one issue and one PR, validated by the full gate from `AGENTS.md`. 
 
 1. **Refresh pinned foundations** (#4): game-server, physics-engine, 3d-lab crates/renderer, winit, tempfile, three, TypeScript and Vite patch releases, with compatibility evidence.
 2. **Design contract**: this document, ADR 0002, roadmap section and tracking issues.
-3. **Snapshot fragmentation in game-server**: oversized player snapshots are split into bounded datagram fragments and reassembled by clients. This removes the connection-closing cliff before projections grow. Bump the pin here.
-4. **Movement v3**: facing, camera-relative movement, backpedal, jump, run speed, integer trig; command wire v2, snapshot v3 with entity kinds and facing. Native and browser decoders updated.
-5. **Greyhaven Vale content**: larger zone definition, colliders, spawn and NPC placement tables, the `mmorpg-scenery` crate (props, relief, subzones), interest radius, projection cap and byte-budget test. Native client renders scenery.
-6. **Browser runs the shared simulation**: `mmorpg-wasm` local host, build pipeline and Pages workflow. The web demo sends commands and renders decoded projections plus Rust scenery, and its duplicated illustrative rules are removed.
-7. **Units, combat and creature AI**: creatures, targeting, auto-attack, death/respawn, regen, threat/leash/assist, zone RNG, events; browser target frame, nameplates, combat text.
-8. **Classes and abilities**: resources, GCD, cooldowns, casts, auras, the ability kit above; action bar and cast bars.
-9. **Progression, loot, inventory, equipment, vendor**: XP/levels, loot windows, bags, character pane, vendor window.
-10. **Quests**: definitions, NPC dialog, log, tracker, markers, chain and boss.
-11. **Starter-zone workload evidence**: deterministic multi-player combat workload with work counters and a snapshot-byte ratchet (BENCH-016).
-12. **World presentation**: terrain relief, instanced vegetation, water, sky, fog and day/night (3d-lab renderer extensions), procedural animated character and creature models, spell effects, selection circles, minimap.
-13. **Native client parity**: units, health bars, targeting, abilities, orbit camera and HUD over the same projections.
-14. **Browser online mode**: a WebTransport session to a local zone host for real multiplayer from browser tabs; Pages stays offline.
-15. **Character persistence for the demo**: a durable character record (class, level, XP, inventory, equipment, quests) behind core command/query APIs; browser save slots persist it.
-16. **Zone chat and emotes**: bounded, rate-limited `/say`, `/yell` and emotes as zone-local events.
+3. **Snapshot fragmentation in game-server** (#18): oversized player snapshots are split into bounded datagram fragments and reassembled by clients. This removes the connection-closing cliff before projections grow. Bump the pin here.
+4. **Movement v3** (#19): facing, camera-relative movement, backpedal, jump, run speed, integer trig; command wire v2, snapshot v3 with entity kinds and facing. Native and browser decoders updated.
+5. **Greyhaven Vale content** (#20): larger zone definition, colliders, spawn and NPC placement tables, the `mmorpg-scenery` crate (props, relief, subzones), interest radius, projection cap and byte-budget test. Native client renders scenery.
+6. **Browser runs the shared simulation** (#21): `mmorpg-wasm` local host, build pipeline and Pages workflow. The web demo sends commands and renders decoded projections plus Rust scenery, and its duplicated illustrative rules are removed.
+7. **Units, combat and creature AI** (#22): creatures, targeting, auto-attack, death/respawn, regen, threat/leash/assist, zone RNG, events; browser target frame, nameplates, combat text.
+8. **Classes and abilities** (#23): resources, GCD, cooldowns, casts, auras, the ability kit above; action bar and cast bars.
+9. **Progression, loot, inventory, equipment, vendor** (#24): XP/levels, loot windows, bags, character pane, vendor window.
+10. **Quests** (#25): definitions, NPC dialog, log, tracker, markers, chain and boss.
+11. **Starter-zone workload evidence** (#26): deterministic multi-player combat workload with work counters and a snapshot-byte ratchet (BENCH-016).
+12. **World presentation** (#27): terrain relief, instanced vegetation, water, sky, fog and day/night (3d-lab renderer extensions), procedural animated character and creature models, spell effects, selection circles, minimap.
+13. **Native client parity** (#28): units, health bars, targeting, abilities, orbit camera and HUD over the same projections.
+14. **Browser online mode** (#29): a WebTransport session to a local zone host for real multiplayer from browser tabs; Pages stays offline.
+15. **Character persistence for the demo** (#30): a durable character record (class, level, XP, inventory, equipment, quests) behind core command/query APIs; browser save slots persist it.
+16. **Zone chat and emotes** (#31): bounded, rate-limited `/say`, `/yell` and emotes as zone-local events.
 
 Steps 3 and 12 (renderer work) run in parallel with gameplay steps. Later steps may be re-sliced when evidence says so. Any foundation defect found on the way is fixed upstream and pinned here.
