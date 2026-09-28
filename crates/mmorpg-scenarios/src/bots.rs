@@ -13,7 +13,8 @@ use game_server::{
     RuntimeError, SessionLease,
 };
 use mmorpg_core::{
-    EntityKind, EntitySnapshot, MAX_PLAYERS_PER_ZONE, PlayerId, ZoneCommand, ZoneId, ZoneSnapshot,
+    Area, EntityKind, EntitySnapshot, MAX_PLAYERS_PER_ZONE, PlayerId, ZoneCommand, ZoneId,
+    ZoneSnapshot, outpost_areas,
 };
 use mmorpg_game_server::{ZoneGameServerAdapter, build_zone_host, zone_match_id};
 use mmorpg_protocol::{decode_snapshot, encode_command};
@@ -64,6 +65,7 @@ pub struct BotSpec {
 pub enum Action {
     Join,
     Move,
+    Jump,
     Disconnect,
     Reconnect,
 }
@@ -73,6 +75,7 @@ impl Action {
         match self {
             Self::Join => "join",
             Self::Move => "move",
+            Self::Jump => "jump",
             Self::Disconnect => "disconnect",
             Self::Reconnect => "reconnect",
         }
@@ -81,7 +84,7 @@ impl Action {
     fn success(self) -> &'static str {
         match self {
             Self::Join => "joined",
-            Self::Move => "applied",
+            Self::Move | Self::Jump => "applied",
             Self::Disconnect => "disconnected",
             Self::Reconnect => "resumed",
         }
@@ -100,7 +103,7 @@ pub struct Step {
     pub strafe: Option<i8>,
     /// Move heading: 65 536 steps per turn, 0 faces +Z, 16 384 faces +X.
     pub facing: Option<u16>,
-    /// Command sequence override; defaults to the bot's next sequence.
+    /// Command sequence override (move and jump); defaults to the bot's next sequence.
     pub seq: Option<u32>,
     /// Connection epoch override; defaults to the bot's current epoch.
     pub connection_epoch: Option<u32>,
@@ -117,6 +120,7 @@ pub enum ExpectKind {
     Acknowledged,
     Identity,
     VisibleCount,
+    Area,
 }
 
 impl ExpectKind {
@@ -128,6 +132,7 @@ impl ExpectKind {
             Self::Acknowledged => "acknowledged",
             Self::Identity => "identity",
             Self::VisibleCount => "visible_count",
+            Self::Area => "area",
         }
     }
 }
@@ -146,6 +151,8 @@ pub struct Expectation {
     pub position: Option<[i32; 3]>,
     pub sequence: Option<u32>,
     pub count: Option<usize>,
+    /// Name of the core area the target stands in (`area` expectations).
+    pub area: Option<String>,
 }
 
 /// Parses and validates a scenario at the file trust boundary.
@@ -203,8 +210,11 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                 "{at}: forward, strafe and facing are required for move and only for move"
             ));
         }
-        if !is_move && (step.seq.is_some() || step.connection_epoch.is_some()) {
-            return Err(format!("{at}: seq/connection_epoch apply only to move"));
+        let is_command = matches!(step.action, Action::Move | Action::Jump);
+        if !is_command && (step.seq.is_some() || step.connection_epoch.is_some()) {
+            return Err(format!(
+                "{at}: seq/connection_epoch apply only to move and jump"
+            ));
         }
     }
     for (index, expectation) in scenario.expect.iter().enumerate() {
@@ -238,6 +248,7 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             ExpectKind::Acknowledged => expectation.sequence.is_some(),
             ExpectKind::Identity => true,
             ExpectKind::VisibleCount => expectation.count.is_some(),
+            ExpectKind::Area => expectation.area.is_some(),
         };
         if !required {
             return Err(format!(
@@ -410,7 +421,7 @@ impl Runner<'_> {
         let index = self.bot_index(&step.bot)?;
         let (tag, detail) = match step.action {
             Action::Join => self.join(index)?,
-            Action::Move => self.submit(index, step)?,
+            Action::Move | Action::Jump => self.submit(index, step)?,
             Action::Disconnect => self.disconnect(index)?,
             Action::Reconnect => self.reconnect(index)?,
         };
@@ -477,19 +488,28 @@ impl Runner<'_> {
         let sequence = step.seq.unwrap_or(bot.next_sequence);
         let epoch = step.connection_epoch.unwrap_or(lease.connection_epoch);
         bot.next_sequence = bot.next_sequence.max(sequence.saturating_add(1));
-        let (forward, strafe, facing) = (
-            step.forward.unwrap_or_default(),
-            step.strafe.unwrap_or_default(),
-            step.facing.unwrap_or_default(),
-        );
-        let payload = encode_command(ZoneCommand::Move {
-            forward,
-            strafe,
-            facing,
-        });
-        let detail = format!(
-            "seq={sequence} epoch={epoch} forward={forward} strafe={strafe} facing={facing}"
-        );
+        let (payload, detail) = if step.action == Action::Jump {
+            (
+                encode_command(ZoneCommand::Jump),
+                format!("seq={sequence} epoch={epoch}"),
+            )
+        } else {
+            let (forward, strafe, facing) = (
+                step.forward.unwrap_or_default(),
+                step.strafe.unwrap_or_default(),
+                step.facing.unwrap_or_default(),
+            );
+            (
+                encode_command(ZoneCommand::Move {
+                    forward,
+                    strafe,
+                    facing,
+                }),
+                format!(
+                    "seq={sequence} epoch={epoch} forward={forward} strafe={strafe} facing={facing}"
+                ),
+            )
+        };
         let outcome = self.runtime(|runtime| {
             runtime.submit_command(lease.player_id, epoch, sequence, &payload)
         })?;
@@ -783,6 +803,18 @@ impl Runner<'_> {
                     Err(format!("got count={count}"))
                 }
             }
+            ExpectKind::Area => {
+                let expected = expectation.area.as_deref().unwrap_or_default();
+                let [x, _, z] = visible(target)
+                    .ok_or_else(|| format!("{target_name} not visible"))?
+                    .position;
+                // The areas of the outpost content that `build_zone_host` installs.
+                match outpost_areas().area_at(x, z).map(Area::name) {
+                    Some(name) if name == expected => Ok(format!("{target_name} in {name}")),
+                    Some(name) => Err(format!("{target_name} in {name}")),
+                    None => Err(format!("{target_name} in no named area")),
+                }
+            }
         }
     }
 }
@@ -816,6 +848,7 @@ fn describe(expectation: &Expectation) -> String {
         ExpectKind::Acknowledged => format!("{bot} acknowledged"),
         ExpectKind::Identity => format!("{bot} identity"),
         ExpectKind::VisibleCount => format!("{bot} visible_count"),
+        ExpectKind::Area => format!("{bot} area {target}"),
     }
 }
 

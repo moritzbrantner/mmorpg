@@ -144,6 +144,38 @@ position = [999, 90, 0]
 }
 
 #[test]
+fn area_expectations_compare_with_the_core_area_table() {
+    let report = run_bots(
+        r#"
+name = "wrong-area"
+zone = 1
+ticks = 1
+[[bots]]
+name = "alice"
+[[steps]]
+tick = 0
+bot = "alice"
+action = "join"
+[[steps]]
+tick = 0
+bot = "alice"
+action = "jump"
+seq = 3
+[[expect]]
+kind = "area"
+bot = "alice"
+tick = 1
+area = "Nowhere"
+"#,
+    )
+    .unwrap();
+    let text = report.to_text();
+    assert!(!report.passed());
+    assert!(text.contains("jump -> applied seq=3"), "{text}");
+    assert!(text.contains("FAIL alice in Greyhaven Outpost"), "{text}");
+}
+
+#[test]
 fn unexpected_control_plane_outcomes_fail_the_scenario() {
     let report = run_control_plane(
         r#"
@@ -193,6 +225,18 @@ fn invalid_scenarios_are_rejected_at_load() {
         (
             "name = \"x\"\nzone = 1\nticks = 2\ntypo = 1\n[[bots]]\nname = \"a\"",
             "unknown field",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"jump\"\nfacing = 0",
+            "forward, strafe and facing",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"disconnect\"\nseq = 2",
+            "apply only to move and jump",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"area\"\nbot = \"a\"\ntick = 1",
+            "missing its required field",
         ),
     ] {
         let error = bots::load(text).unwrap_err();

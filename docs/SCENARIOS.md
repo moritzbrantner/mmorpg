@@ -33,7 +33,7 @@ name = "alice"
 [[steps]]                   # applied at `tick`, before it advances to tick + 1
 tick = 0
 bot = "alice"
-action = "join"             # join | move | disconnect | reconnect
+action = "join"             # join | move | jump | disconnect | reconnect
 
 [[steps]]
 tick = 0
@@ -42,12 +42,12 @@ action = "move"
 forward = 1                 # move requires forward, strafe (i8; the zone accepts -1..=1)
 strafe = 0
 facing = 16384              # and facing (u16 yaw, 65536 per turn; 0 faces +Z, 16384 faces +X)
-seq = 5                     # optional; default is the bot's next sequence
-connection_epoch = 1        # optional; default is the bot's current epoch
+seq = 5                     # optional (move and jump); default is the bot's next sequence
+connection_epoch = 1        # optional (move and jump); default is the bot's current epoch
 expect = "applied"          # optional; default is the action's success tag
 
 [[expect]]                  # checked against the snapshot decoded at `tick`
-kind = "sees"               # sees | not_sees | position | acknowledged | identity | visible_count
+kind = "sees"               # sees | not_sees | position | acknowledged | identity | visible_count | area
 bot = "alice"
 target = "bob"
 tick = 1                    # or by_tick = N (sees only), optionally with from_tick
@@ -63,6 +63,9 @@ Step outcome tags are `joined`, `applied`, `ignored_stale`, `disconnected`, `res
 | `acknowledged` | `sequence`, `tick` | acknowledges that command sequence |
 | `identity` | `tick` | shows the bot under the player ID from its first join |
 | `visible_count` | `count`, `tick` | contains exactly `count` players, including itself |
+| `area` | `area`, `tick`, optional `target` | shows the target (default: itself) inside the named core area (`outpost_areas`, the areas of the hosted outpost content) |
+
+A `jump` step submits the `Jump` command; like `move` it takes optional `seq` and `connection_epoch` overrides and no intent fields.
 
 A disconnected bot receives no snapshot, so any expectation on it fails. Other bots keep seeing it until reconnect grace expires.
 
@@ -116,7 +119,7 @@ MMORPG_SCENARIOS_UPDATE=1 cargo test -p mmorpg-scenarios --test scenarios --lock
 
 ## Limits
 
-- The bot runner covers one zone per scenario and `Move` commands. `Jump` is not scriptable yet; `mmorpg-core`'s movement tests and `mmorpg-client`'s connected-world test cover it.
+- The bot runner covers one zone per scenario and the `Move` and `Jump` commands. `browser-local-session` scripts the browser demo's session (enter, camera-relative run and strafe, jump arc, area, leave, re-enter) through the hosted runtime; `mmorpg-wasm`'s tests prove the WASM local host produces byte-identical projections for the same commands.
 - Scenarios run in process. Transport framing, datagram size limits, TLS and real reconnect timing are not covered. `scripts/smoke-native.py` and `mmorpg-client`'s loopback test still cover those.
 - A network mode against `mmorpg-zone-host` is not implemented. The reusable client session lives in `mmorpg-client`, which depends on wgpu and winit unconditionally.
 - The control-plane runner checks the in-memory reference model. It does not check a distributed deployment.
