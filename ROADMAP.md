@@ -1,5 +1,26 @@
 # MMORPG roadmap
 
+## Greyhaven Vale starter zone (tech demo)
+
+Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Each step is a tracked issue and its own pull request.
+
+- [x] Record the starter-zone design contract and the browser WASM-host decision ([ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md)).
+- Refresh pinned foundations and dependencies.
+- Fragment player snapshots above the datagram budget in `game-server`.
+- Movement v3: facing, camera-relative movement, jump.
+- Greyhaven Vale content, shared presentation scenery, projection budget.
+- Browser demo runs the shared simulation as a local WASM zone host.
+- Units, combat and creature AI.
+- Classes and abilities.
+- Progression, loot, inventory, equipment and vendors.
+- Quests and the Redbrand Hollow chain.
+- Starter-zone workload evidence.
+- World presentation: relief, vegetation, water, sky, animated models, effects.
+- Native client parity.
+- Browser online mode against a local zone host.
+- Durable character record for demo saves.
+- Zone chat and emotes.
+
 ## Foundation — distributed world authority
 
 - [x] Define zone-local deterministic authority around `physics-engine`.
