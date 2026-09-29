@@ -60,6 +60,37 @@ fn recovery_refuses_changed_content_of_the_same_revision() {
     );
 }
 
+/// Dead units cannot move, so a dead player's checkpoint holds no movement
+/// or jump intent; restoring one that does fails closed.
+#[test]
+fn recovery_refuses_a_dead_player_holding_movement_intent() {
+    let content = wandering_wolf(arena::wolf(30, [1, 2]));
+    let mut dead = checkpoint(&content);
+    dead.players[0].combat.health = 0;
+    let mut zone = restore(dead.clone(), &content).unwrap();
+    zone.advance_tick().unwrap();
+    let holding = |forward: i8, strafe: i8, jump_pending: bool| {
+        let mut state = dead.clone();
+        state.players[0].forward = forward;
+        state.players[0].strafe = strafe;
+        state.players[0].jump_pending = jump_pending;
+        state
+    };
+    for (forward, strafe, jump) in [(1, 0, false), (0, -1, false), (-1, 1, false), (0, 0, true)] {
+        assert_eq!(
+            restore(holding(forward, strafe, jump), &content)
+                .err()
+                .unwrap(),
+            "a dead player holds no movement intent",
+            "{forward} {strafe} {jump}"
+        );
+    }
+    // The living may hold both.
+    let mut alive = holding(1, -1, true);
+    alive.players[0].combat.health = 1;
+    assert!(restore(alive, &content).is_ok());
+}
+
 #[test]
 fn an_authored_rng_seed_is_bound_to_recovery_identity() {
     let content = wandering_wolf(arena::wolf(30, [1, 2]));

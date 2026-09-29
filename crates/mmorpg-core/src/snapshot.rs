@@ -419,6 +419,11 @@ impl ZoneSimulation {
         if combat.health == 0 && combat.auto_attack {
             return Err(ZoneError::new("a dead player cannot auto-attack"));
         }
+        if combat.health == 0
+            && (forward != Axis::Zero || strafe != Axis::Zero || player.jump_pending)
+        {
+            return Err(ZoneError::new("a dead player holds no movement intent"));
+        }
         if combat.abilities.class.is_some() && self.content.ability_revision() == 0 {
             return Err(ZoneError::new(
                 "a class player needs content that binds the ability catalog",

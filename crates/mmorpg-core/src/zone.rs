@@ -388,7 +388,9 @@ impl ZoneSimulation {
     /// the tick. A malformed or stale command changes nothing. A well-formed
     /// intent beyond [`MAX_PENDING_INTENTS`] is a gameplay outcome, not an
     /// error: it consumes its sequence, is dropped, and the next tick reports
-    /// it with an `Error` event.
+    /// it with an `Error` event. Dead units cannot move: while dead, `Move`
+    /// and `Jump` consume their sequence and hold no intent, so nothing held
+    /// before or during death moves the released spirit.
     pub fn apply_command(
         &mut self,
         player_id: PlayerId,
@@ -404,6 +406,7 @@ impl ZoneSimulation {
         }
 
         // Validate completely before mutating: a malformed command changes nothing.
+        let alive = player.is_alive();
         let intent = match command {
             ZoneCommand::Move {
                 forward,
@@ -412,14 +415,16 @@ impl ZoneSimulation {
             } => {
                 let forward = Axis::new(forward)?;
                 let strafe = Axis::new(strafe)?;
-                player.forward = forward;
-                player.strafe = strafe;
-                player.facing = facing;
+                if alive {
+                    player.forward = forward;
+                    player.strafe = strafe;
+                    player.facing = facing;
+                }
                 None
             }
             // Resolved during the next tick against the pre-step world.
             ZoneCommand::Jump => {
-                player.jump_pending = true;
+                player.jump_pending = alive;
                 None
             }
             ZoneCommand::SelectTarget(target) => Some(PlayerIntent::SelectTarget(target)),
