@@ -127,6 +127,9 @@ describe("WASM local zone host", () => {
     expect(scene.stats.staticVertices).toBeLessThanOrEqual(230_000);
     expect(scenery.scenery.props.length).toBeGreaterThan(scene.stats.staticNodes * 5);
     expect(new Set(scene.batches.map((batch) => batch.node.geometry.resourceKey)).size).toBe(scene.batches.length);
+    // Terrain and far-ring meshes span the whole vale, so none is ever culled: keep their palette small.
+    const terrainMeshes = scene.batches.filter((batch) => /^static-all-(terrain|far):/.test(batch.node.id)).length;
+    expect(terrainMeshes).toBeLessThanOrEqual(56);
   });
 
   test("props stand on the drawn terrain where the finer relief would lift them off it", () => {

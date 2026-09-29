@@ -5,8 +5,8 @@ import { MeshBuilder, hash01, type Vec3 } from "./mesh-builder";
 import type { Color, Scenery, TerrainGrid } from "./scenery";
 
 /**
- * Terrain from the exported relief grids: a few large indexed meshes, one per
- * colour, with smooth normals from the height field. Each triangle takes the
+ * Terrain from the exported relief grids: a few dozen large indexed meshes,
+ * one per quantised colour, with smooth normals from the height field. Each triangle takes the
  * biome most of its corners share, which turns the 4 m sample grid's
  * staircase edges into diagonals. Roads and the lake bed are drawn as smooth
  * surfaces on top instead of grid cells, so their vertices take the
@@ -199,8 +199,13 @@ const TONED_BIOMES: ReadonlySet<string> = new Set(["meadow", "hub", "woods", "ho
 /** Tone keys pack a biome ID and a tone variant: `biome * TONES + variant`. */
 const TONES = 4;
 const PLAIN_TONE = 1;
-/** Terrain colour channels round to multiples of this. */
-const TONE_STEP = 8;
+/**
+ * Terrain colour channels round to multiples of this. Every colour is a
+ * scene-wide mesh that is never culled, so the step bounds the draw calls:
+ * the vale's blends of biome tones, tone variants and haze bands come to
+ * about 50 terrain and far-ring meshes (over 100 at a step of 8).
+ */
+const TONE_STEP = 16;
 
 /** Smooth seeded value noise in [0, 1) over `cell`-metre squares; presentation only. */
 function valueNoise(x: number, z: number, cell: number, seed: number): number {
@@ -249,7 +254,7 @@ function biomeColor(scenery: Scenery, style: EnvironmentStyle): (corners: readon
     if (!color) {
       const [a, b, c] = sorted.map(tone) as [Color, Color, Color];
       const blended = mixColor(mixColor(a, b, 0.5), c, 1 / 3);
-      // Near-identical blends share one mesh; the step is below what reads on screen.
+      // Near-identical blends share one mesh.
       color = quantizeColor(mixColor(blended, style.haze.color, mix), TONE_STEP);
       cache.set(key, color);
     }
