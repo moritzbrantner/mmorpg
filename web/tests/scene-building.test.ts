@@ -101,6 +101,25 @@ describe("the static scene", () => {
     }
   });
 
+  test("props stand on the drawn terrain whatever feet height the export gives", () => {
+    // The exported feet follow the full-resolution relief, which the 4 m mesh only approximates.
+    for (const kind of ["tree-oak", "grass-tuft", "flowers", "house"] as const) {
+      const prop = scenery.props.find((candidate) => candidate.kind === kind)!;
+      const { unitsPerMetre } = scenery;
+      const surface = terrainSurfaceY(scenery.terrain, unitsPerMetre, prop.position[0] / unitsPerMetre, prop.position[2] / unitsPerMetre);
+      const positions = (feetMetres: number) => build([{
+        ...prop,
+        position: [prop.position[0], Math.round(feetMetres * unitsPerMetre), prop.position[2]],
+      }]).batches.filter((batch) => !batch.node.id.startsWith("static-all")).flatMap((batch) => batch.node.geometry.positions);
+      const floating = positions(surface + 0.4);
+      expect(positions(surface - 0.4), kind).toEqual(floating);
+      const lowest = Math.min(...floating.map(([, y]) => y));
+      // Trunks and blades reach a little into the ground; nothing hovers above it.
+      expect(lowest, kind).toBeLessThanOrEqual(surface + 1e-9);
+      expect(lowest, kind).toBeGreaterThan(surface - 0.35);
+    }
+  });
+
   test("the body-height footprint sees faces that span the band without a vertex in it", () => {
     // A 4 m tall wall box: its only vertices are at y = 0 and y = 4.
     const wall = new MeshBuilder();

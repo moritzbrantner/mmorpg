@@ -3,7 +3,9 @@ import { encodeCommand } from "../src/command-wire";
 import { decodeSnapshot, type EntityState } from "../src/replication";
 import { createLocalWorld } from "../src/world/local-world";
 import { LocalZoneSource, type LocalZoneHandle } from "../src/world/local-zone-source";
+import type { Prop } from "../src/world/scenery";
 import { buildSceneryScene } from "../src/world/scenery-nodes";
+import { terrainSurfaceY } from "../src/world/terrain-mesh";
 import { localZoneModule } from "./support/local-zone-module";
 import { worldSourceContract } from "./support/world-source-contract";
 
@@ -125,6 +127,28 @@ describe("WASM local zone host", () => {
     expect(scene.stats.staticVertices).toBeLessThanOrEqual(230_000);
     expect(scenery.scenery.props.length).toBeGreaterThan(scene.stats.staticNodes * 5);
     expect(new Set(scene.batches.map((batch) => batch.node.geometry.resourceKey)).size).toBe(scene.batches.length);
+  });
+
+  test("props stand on the drawn terrain where the finer relief would lift them off it", () => {
+    const vale = createLocalWorld(wasm).scenery.scenery;
+    const { terrain, unitsPerMetre } = vale;
+    const surfaceAt = (prop: Prop) => terrainSurfaceY(terrain, unitsPerMetre, prop.position[0] / unitsPerMetre, prop.position[2] / unitsPerMetre);
+    // The prop of each kind whose exported feet sit highest above the 4 m mesh, if more than 10 cm.
+    const worst = new Map<string, { prop: Prop; lift: number }>();
+    for (const prop of vale.props) {
+      const lift = prop.position[1] / unitsPerMetre - surfaceAt(prop);
+      if (lift > 0.1 && lift > (worst.get(prop.kind)?.lift ?? 0)) {
+        worst.set(prop.kind, { prop, lift });
+      }
+    }
+    // Woodland relief has detail the 4 m grid cannot follow: trees, grass and flowers.
+    expect([...worst.keys()]).toEqual(expect.arrayContaining(["tree-oak", "grass-tuft"]));
+    for (const { prop } of worst.values()) {
+      const lowest = Math.min(...buildSceneryScene({ ...vale, props: [prop] }).batches
+        .filter((batch) => !batch.node.id.startsWith("static-all"))
+        .flatMap((batch) => batch.node.geometry.positions.map(([, y]) => y)));
+      expect(lowest, prop.kind).toBeLessThanOrEqual(surfaceAt(prop) + 0.02);
+    }
   });
 });
 

@@ -26,8 +26,9 @@ import type { Color, Prop, PropKind } from "./scenery";
 
 /**
  * Procedural low-poly models for every scenery prop kind, appended into the
- * static batches. A model is built in the prop's local frame (feet anchor at
- * the origin, local +Z turned by the prop's yaw) from the prop's body box, so
+ * static batches. A model is built in the prop's local frame (its anchor on
+ * the drawn terrain at the origin, local +Z turned by the prop's yaw) from the
+ * prop's body box, so
  * a structure's walls are exactly its core collider; roofs, towers and
  * canopies rise above it. Parts that move (windmill sails, the campfire
  * flame, swaying reeds) go to `AnimatedParts` instead of the batches.
@@ -113,10 +114,16 @@ function box(put: Put, color: Color, center: Vec3, half: Vec3, rotation: Affine 
   put(color, BOX, at(center[0], center[1], center[2], half[0], half[1], half[2], rotation), cull);
 }
 
-/** The world transform of a prop: feet anchor, then yaw. */
-function propFrame(prop: Prop, unitsPerMetre: number, extraYaw = 0): Affine {
-  const [x, y, z] = prop.position;
-  return compose(translate(x / unitsPerMetre, y / unitsPerMetre, z / unitsPerMetre), rotateY(yawRadians(prop.yaw) + extraYaw));
+/**
+ * The world transform of a prop: its anchor on the drawn terrain, then yaw.
+ * The exported feet height follows the full-resolution relief, which the
+ * 4 m terrain mesh only approximates (by up to about 0.4 m on woodland
+ * relief), so props stand on what is drawn instead.
+ */
+function propFrame(context: ModelContext, prop: Prop, extraYaw = 0): Affine {
+  const x = prop.position[0] / context.unitsPerMetre;
+  const z = prop.position[2] / context.unitsPerMetre;
+  return compose(translate(x, context.surface(x, z), z), rotateY(yawRadians(prop.yaw) + extraYaw));
 }
 
 function putter(context: ModelContext, prop: Prop, frame: Affine, defaultCull: CullClass): Put {
@@ -155,7 +162,7 @@ function buildingFrame(context: ModelContext, prop: Prop): BuildingFrame {
   // Door on the face whose outward axis points most toward the target: +Z, +X, -Z or -X.
   const quarter = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 1 : 3) : (dz >= 0 ? 0 : 2);
   const turned = quarter % 2 === 1;
-  const frame = propFrame(prop, context.unitsPerMetre, (quarter * Math.PI) / 2);
+  const frame = propFrame(context, prop, (quarter * Math.PI) / 2);
   return { put: putter(context, prop, frame, "always"), w: turned ? hz : hx, d: turned ? hx : hz, h: hy * 2 };
 }
 
@@ -353,7 +360,7 @@ function windmill(context: ModelContext, prop: Prop, index: number): void {
   door(put, palette, radius * 0.92, 1.0, 2.0);
   box(put, palette.window, [0, h * 0.6, radius * 0.86], [0.3, 0.4, 0.06]);
   // The sails face the door side; the hub sits proud of the cap.
-  const frame = propFrame(prop, context.unitsPerMetre);
+  const frame = propFrame(context, prop);
   const doorFrame = buildingDoorYaw(context, prop);
   const hubLocal: Vec3 = [0, h + 0.9, top + 0.9];
   const cos = Math.cos(doorFrame);
@@ -404,7 +411,7 @@ function sailMeshes(context: ModelContext, index: number): AnimatedMesh[] {
 
 function well(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "always");
+  const put = putter(context, prop, propFrame(context, prop), "always");
   const [hx, , hz] = half(prop, context.unitsPerMetre);
   const radius = Math.min(hx, hz);
   put(palette.stone, frustum(10, 1, { offset: 0.5 }), at(0, 0, 0, radius, 0.95, radius));
@@ -420,7 +427,7 @@ function well(context: ModelContext, prop: Prop): void {
 
 function waystone(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "always");
+  const put = putter(context, prop, propFrame(context, prop), "always");
   const [hx, hy, hz] = half(prop, context.unitsPerMetre);
   const height = hy * 2;
   box(put, palette.stoneDark, [0, 0.12, 0], [hx + 0.05, 0.12, hz + 0.05]);
@@ -433,7 +440,7 @@ function waystone(context: ModelContext, prop: Prop): void {
 
 function gravestone(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [hx, hy, hz] = half(prop, context.unitsPerMetre);
   const top = hy * 2 - hx;
   box(put, palette.stoneDark, [0, top / 2, 0], [hx, top / 2, hz]);
@@ -446,7 +453,7 @@ function gravestone(context: ModelContext, prop: Prop): void {
 
 function palisade(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "always");
+  const put = putter(context, prop, propFrame(context, prop), "always");
   const [hx, hy, hz] = half(prop, context.unitsPerMetre);
   const alongX = hx >= hz;
   const length = (alongX ? hx : hz) * 2;
@@ -471,7 +478,7 @@ function palisade(context: ModelContext, prop: Prop): void {
 
 function gatePost(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "always");
+  const put = putter(context, prop, propFrame(context, prop), "always");
   const [hx, hy, hz] = half(prop, context.unitsPerMetre);
   const radius = Math.min(hx, hz);
   const height = hy * 2;
@@ -495,7 +502,7 @@ function gatePost(context: ModelContext, prop: Prop): void {
 
 function fence(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [hx, hy, hz] = half(prop, context.unitsPerMetre);
   const alongX = hx >= hz;
   const length = (alongX ? hx : hz) * 2;
@@ -524,7 +531,7 @@ function tent(context: ModelContext, prop: Prop): void {
 
 function campfire(context: ModelContext, prop: Prop, index: number): void {
   const { palette } = context.style;
-  const frame = propFrame(prop, context.unitsPerMetre);
+  const frame = propFrame(context, prop);
   const put = putter(context, prop, frame, "mid");
   const [hx, , hz] = half(prop, context.unitsPerMetre);
   const ring = Math.min(hx, hz) * 0.85;
@@ -557,7 +564,7 @@ function campfire(context: ModelContext, prop: Prop, index: number): void {
 
 function crate(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [hx, hy, hz] = half(prop, context.unitsPerMetre);
   box(put, palette.woodLight, [0, hy, 0], [hx, hy, hz]);
   for (const y of [hy * 0.45, hy * 1.55]) {
@@ -567,7 +574,7 @@ function crate(context: ModelContext, prop: Prop): void {
 
 function barrel(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [hx, hy] = half(prop, context.unitsPerMetre);
   const height = hy * 2;
   put(palette.wood, frustum(9, 1.12, { smooth: true, caps: false }), at(0, 0, 0, hx * 0.88, height / 2, hx * 0.88));
@@ -579,7 +586,7 @@ function barrel(context: ModelContext, prop: Prop): void {
 
 function cart(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [hx, , hz] = half(prop, context.unitsPerMetre);
   box(put, palette.wood, [0, 0.62, 0], [hx * 0.8, 0.08, hz]);
   box(put, palette.woodLight, [0, 0.9, hz - 0.04], [hx * 0.8, 0.22, 0.04]);
@@ -594,7 +601,7 @@ function cart(context: ModelContext, prop: Prop): void {
 
 function signpost(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [, hy] = half(prop, context.unitsPerMetre);
   const height = hy * 2;
   box(put, palette.wood, [0, height / 2, 0], [0.07, height / 2, 0.07]);
@@ -606,7 +613,7 @@ function signpost(context: ModelContext, prop: Prop): void {
 
 function lamp(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [, hy] = half(prop, context.unitsPerMetre);
   const height = hy * 2;
   box(put, palette.stoneDark, [0, 0.15, 0], [0.18, 0.15, 0.18]);
@@ -637,7 +644,7 @@ function mineEntrance(context: ModelContext, prop: Prop): void {
 
 function cliff(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "always");
+  const put = putter(context, prop, propFrame(context, prop), "always");
   const [hx, hy, hz] = half(prop, context.unitsPerMetre);
   const height = hy * 2;
   const seed = seedOf(prop);
@@ -676,7 +683,7 @@ function cliff(context: ModelContext, prop: Prop): void {
 
 function dock(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [hx, , hz] = half(prop, context.unitsPerMetre);
   const deck = 0.34;
   const planks = Math.round(hx * 2 / 0.5);
@@ -693,8 +700,8 @@ function dock(context: ModelContext, prop: Prop): void {
 
 function cropRow(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "near");
-  const ridge = putter(context, prop, propFrame(prop, context.unitsPerMetre), "far");
+  const put = putter(context, prop, propFrame(context, prop), "near");
+  const ridge = putter(context, prop, propFrame(context, prop), "far");
   const [hx, , hz] = half(prop, context.unitsPerMetre);
   box(ridge, shadeColor(palette.soil, 0.9), [0, 0.06, 0], [hx, 0.08, hz * 0.8]);
   const plants = Math.floor((hx * 2) / 0.7);
@@ -724,7 +731,7 @@ function trunk(put: Put, color: Color, radius: number, height: number, sides: nu
 function tree(context: ModelContext, prop: Prop, variant: "oak" | "pine" | "birch"): void {
   const { palette } = context.style;
   const background = isBackground(prop);
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), background ? "always" : "far");
+  const put = putter(context, prop, propFrame(context, prop), background ? "always" : "far");
   const [hx, hy] = half(prop, context.unitsPerMetre);
   const seed = seedOf(prop);
   // Collider trunks are full height; decorative trees scale with their prop.
@@ -781,7 +788,7 @@ function tree(context: ModelContext, prop: Prop, variant: "oak" | "pine" | "birc
 
 function bush(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "mid");
+  const put = putter(context, prop, propFrame(context, prop), "mid");
   const [hx, hy] = half(prop, context.unitsPerMetre);
   const seed = Math.floor(seedOf(prop) * 6);
   put(palette.bush, blob(0, { jitter: 0.22, seed: seed + 30 }), at(0, hy * 0.7, 0, hx, hy * 1.1, hx));
@@ -791,7 +798,7 @@ function bush(context: ModelContext, prop: Prop): void {
 
 function rock(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), prop.collider ? "always" : "mid");
+  const put = putter(context, prop, propFrame(context, prop), prop.collider ? "always" : "mid");
   const [hx, hy, hz] = half(prop, context.unitsPerMetre);
   const seed = seedOf(prop);
   const color = seed > 0.5 ? palette.rock : palette.rockDark;
@@ -803,7 +810,7 @@ function rock(context: ModelContext, prop: Prop): void {
 
 function grassTuft(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "near");
+  const put = putter(context, prop, propFrame(context, prop), "near");
   const [hx, hy] = half(prop, context.unitsPerMetre);
   const seed = seedOf(prop);
   const color = seed > 0.5 ? palette.grass : palette.grassDark;
@@ -819,7 +826,7 @@ function grassTuft(context: ModelContext, prop: Prop): void {
 
 function flowers(context: ModelContext, prop: Prop): void {
   const { palette } = context.style;
-  const put = putter(context, prop, propFrame(prop, context.unitsPerMetre), "near");
+  const put = putter(context, prop, propFrame(context, prop), "near");
   const [hx, hy] = half(prop, context.unitsPerMetre);
   const color = palette.flowers[prop.yaw % palette.flowers.length]!;
   put(palette.grassDark, BLADE, at(0, -0.02, 0, hx * 0.5, hy * 1.4, hx * 0.5));
@@ -840,7 +847,7 @@ function reeds(context: ModelContext, prop: Prop, groups: Map<number, Map<Color,
     groups.set(group, byColor);
   }
   const target = byColor;
-  const frame = propFrame(prop, context.unitsPerMetre);
+  const frame = propFrame(context, prop);
   const put: Put = (color, shape, local) => {
     let builder = target.get(color);
     if (!builder) {
