@@ -1,14 +1,16 @@
 import type { RendererSceneNode } from "@moritzbrantner/three-d-renderer";
-import type { EntityKind, EntityState } from "../replication";
+import type { EntityKind, EntityRef, EntityState } from "../replication";
+import type { ContentCatalog } from "./catalog";
 import { UnitAnimator, poseFor, type LocomotionState } from "./character-animation";
 import { OTHER_PLAYER_LOOK, humanoidNodes, humanoidStance, type HumanoidLook, type UnitPlacement } from "./humanoid";
+import { PLACEHOLDER_BODY_MODEL } from "./units/creature-bodies";
 
 /**
  * Unit rendering by projected entity. A registry maps each entity kind to a
  * model, and the model reads the whole projected entity, so it can pick a
  * body by appearance (template ID) and stand on its own half height. Players
- * are animated humanoids. Creature and NPC kinds (step 7) register their
- * models here, and the render loop stays unchanged.
+ * are animated humanoids; creatures and NPCs are placeholder bodies
+ * (`units/creature-bodies.ts`) until they get models of their own.
  */
 export type { UnitPlacement } from "./humanoid";
 
@@ -23,6 +25,10 @@ export type UnitContext = {
   /** The player this projection is addressed to. */
   viewerId: number;
   viewerLook: UnitLook;
+  /** Creature template and NPC facts for the IDs projections carry. */
+  catalog: ContentCatalog;
+  /** The viewer's current target, which its model marks. */
+  viewerTarget: EntityRef | null;
 };
 
 /** Everything a unit model draws from in one frame. */
@@ -81,6 +87,8 @@ export const PLAYER_MODEL: UnitModel = {
 
 export const UNIT_MODELS: UnitModels = {
   player: PLAYER_MODEL,
+  creature: PLACEHOLDER_BODY_MODEL,
+  npc: PLACEHOLDER_BODY_MODEL,
 };
 
 /** The model that draws a projected entity. */

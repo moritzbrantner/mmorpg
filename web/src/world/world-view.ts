@@ -6,7 +6,8 @@ import type {
   RendererWorkObservations,
   ThreeSceneRenderer,
 } from "@moritzbrantner/three-d-renderer";
-import type { EntityState } from "../replication";
+import type { WorldCommand } from "../command-wire";
+import type { EntityState, ZoneSnapshot } from "../replication";
 import { DebugOverlay, FrameRate } from "./debug-overlay";
 import { ENVIRONMENT } from "./environment";
 import type { LocalWorld } from "./local-world";
@@ -16,6 +17,8 @@ import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput, type DragMode, type 
 import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type SceneryScene } from "./scenery-nodes";
 import { SkyLayer } from "./sky";
 import { UnitAnimators, placeWithModel, unitIdentity, unitModel, type UnitContext, type UnitLook } from "./unit-nodes";
+import { CombatHud } from "./units/combat-hud";
+import { SecondaryClick, attackToggle } from "./units/targeting";
 
 /**
  * The in-world presentation: static scenery, animated units, the orbit
@@ -30,7 +33,14 @@ export type WorldViewElements = {
   overlay: HTMLElement;
   areaName: HTMLElement;
   objective: HTMLElement;
+  /** The viewer's health and target line. */
+  unitStatus: HTMLElement;
+  /** The latest combat feedback line. */
+  combatFeedback: HTMLElement;
 };
+
+/** A targeting or attack intent, resolved against the latest projection when it is sent. */
+export type Intent = (projection: ZoneSnapshot) => WorldCommand | null;
 
 /** Outside every named area the HUD names the zone itself. */
 const ZONE_NAME = "Greyhaven Vale";
@@ -99,6 +109,9 @@ export class WorldView {
   readonly #frameRate = new FrameRate();
   readonly #sky: SkyLayer;
   readonly #animators = new UnitAnimators();
+  readonly #combatHud: CombatHud;
+  readonly #intents: Intent[] = [];
+  readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
   #sceneryFrame: SceneryFrame | null = null;
   #minimap: Minimap | null = null;
@@ -124,6 +137,7 @@ export class WorldView {
     this.#reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     this.#overlay = new DebugOverlay(elements.overlay);
     this.#sky = new SkyLayer(elements.sky, ENVIRONMENT);
+    this.#combatHud = new CombatHud(elements.unitStatus, elements.combatFeedback);
     this.#outbox = new MovementOutbox(this.#input({ keys: new Set(), jumps: 0 }));
   }
 
@@ -149,6 +163,8 @@ export class WorldView {
     this.#endDrag();
     this.#outbox.reset(this.#input(input));
     this.#animators.clear();
+    this.#intents.length = 0;
+    this.#combatHud.reset();
     this.#shownArea = null;
     this.#flyTo = null;
     this.#framePending = true;
@@ -176,6 +192,11 @@ export class WorldView {
     this.#endDrag();
     this.#sky.show(false);
     this.#overlay.hide();
+  }
+
+  /** Queues an intent for the next frame; the zone decides what happens. */
+  queueIntent(intent: Intent): void {
+    this.#intents.push(intent);
   }
 
   toggleOverlay(): void {
@@ -207,7 +228,14 @@ export class WorldView {
     if (!scene || !sceneryFrame) {
       throw new Error("The world view has no scenery loaded.");
     }
-    const { source, scenery } = world;
+    const { source, scenery, catalog } = world;
+    const latest = source.latestProjection();
+    for (const intent of this.#intents.splice(0)) {
+      const command = latest ? intent(latest) : null;
+      if (command) {
+        source.sendCommand(command);
+      }
+    }
     for (const command of this.#outbox.update(this.#input(input), now)) {
       source.sendCommand(command);
     }
@@ -220,7 +248,14 @@ export class WorldView {
     this.#seconds += deltaSeconds;
     this.#orbit.update(deltaSeconds, !animate);
     const { unitsPerMetre, playerHalfExtents } = scenery.scenery;
-    const unitContext: UnitContext = { unitsPerMetre, playerHalfHeightUnits: playerHalfExtents[1], viewerId: projection.viewerId, viewerLook: look };
+    const unitContext: UnitContext = {
+      unitsPerMetre,
+      playerHalfHeightUnits: playerHalfExtents[1],
+      viewerId: projection.viewerId,
+      viewerLook: look,
+      catalog,
+      viewerTarget: projection.viewer.target,
+    };
     const nodes: RendererSceneNode[] = [];
     const units: RendererSceneNode[] = [];
     const visible = new Set<string>();
@@ -246,6 +281,7 @@ export class WorldView {
     if (!self) {
       throw new Error("The projection is missing the viewer's own unit.");
     }
+    this.#combatHud.update(projection, catalog, now);
     this.#lastSelf = { x: self.x, z: self.z, facing: self.facing };
     if (this.#framePending) {
       this.#framePending = false;
@@ -302,10 +338,12 @@ export class WorldView {
     }
     const mode = event.button === 2 ? "turn" : "orbit";
     this.#drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, mode };
+    this.#secondaryClick.down(event);
     this.#elements.canvas.dataset.drag = mode;
   }
 
   pointerMove(event: PointerEvent): void {
+    this.#secondaryClick.move(event);
     const drag = this.#drag;
     if (!drag || drag.pointerId !== event.pointerId) {
       return;
@@ -316,12 +354,17 @@ export class WorldView {
   }
 
   pointerEnd(event: PointerEvent): void {
+    // A right click that never became a turn drag toggles auto-attack.
+    if (this.#secondaryClick.end(event)) {
+      this.queueIntent(attackToggle);
+    }
     if (this.#drag?.pointerId === event.pointerId) {
       this.#endDrag();
     }
   }
 
   #endDrag(): void {
+    this.#secondaryClick.reset();
     const drag = this.#drag;
     if (drag && this.#elements.canvas.hasPointerCapture(drag.pointerId)) {
       this.#elements.canvas.releasePointerCapture(drag.pointerId);

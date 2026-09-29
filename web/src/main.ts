@@ -43,6 +43,7 @@ import type { LocalWorld } from "./world/local-world";
 import { loadLocalWorld } from "./world/wasm-runtime";
 import { characterLook } from "./world/humanoid";
 import { WorldView, webGpuProjection } from "./world/world-view";
+import { attackToggle, nextTabTarget } from "./world/units/targeting";
 import "./character-selection-layout.css";
 import "./character-creation.css";
 
@@ -177,6 +178,8 @@ const worldView = new WorldView(renderer, camera, {
   overlay: requireElement<HTMLElement>("#debug-overlay"),
   areaName: requireElement<HTMLElement>("#area-name"),
   objective: requireElement<HTMLElement>("#objective"),
+  unitStatus: requireElement<HTMLElement>("#unit-status"),
+  combatFeedback: requireElement<HTMLElement>("#combat-feedback"),
 });
 // Debug-only hooks (camera viewpoints, stats) for screenshots; `?debug` enables them.
 if (new URLSearchParams(window.location.search).has("debug")) {
@@ -879,7 +882,20 @@ window.addEventListener("keydown", (event) => {
     // The outbox sends one Jump per counted press; the zone decides whether it lifts off.
     jumps += 1;
   }
-  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(event.code)) {
+  // Targeting and attacking are intents; the zone decides what happens.
+  if (!event.repeat) {
+    if (event.code === "Tab") {
+      worldView.queueIntent((projection) => {
+        const target = nextTabTarget(projection);
+        return target ? { kind: "select-target", target } : null;
+      });
+    } else if (event.code === "KeyF") {
+      worldView.queueIntent(attackToggle);
+    } else if (event.code === "KeyR") {
+      worldView.queueIntent((projection) => (projection.viewer.dead ? { kind: "release-spirit" } : null));
+    }
+  }
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "Tab"].includes(event.code)) {
     event.preventDefault();
   }
 });

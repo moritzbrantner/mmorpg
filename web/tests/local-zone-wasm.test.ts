@@ -17,7 +17,7 @@ const RUN_UNITS_PER_TICK = 21;
 
 function self(source: LocalZoneSource): EntityState {
   const projection = source.latestProjection();
-  const entity = projection?.entities.find((candidate) => candidate.entityId === projection.viewerId);
+  const entity = projection?.entities.find((candidate) => candidate.kind === "player" && candidate.entityId === projection.viewerId);
   if (!entity) throw new Error("The viewer is missing from its projection");
   return entity;
 }
@@ -32,10 +32,13 @@ describe("WASM local zone host", () => {
   test("loads under Bun and hosts zone 1 with the shared content revision", () => {
     const zone = new wasm.LocalZone() as InstanceType<typeof wasm.LocalZone> & { zoneId(): number };
     expect(zone.zoneId()).toBe(1);
-    expect(zone.contentRevision()).toBe(2n);
+    expect(zone.contentRevision()).toBe(3n);
     const player = zone.join();
     const projection = decodeSnapshot(zone.projection(player));
-    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 2n, viewerId: player });
+    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 3n, viewerId: player });
+    expect(projection.viewer).toEqual({
+      health: 50, maxHealth: 50, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
+    });
     expect(() => zone.submit(player, 1, Uint8Array.of(1, 1, 0, 0, 0, 0))).toThrow();
     expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(true);
     expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(false);
@@ -90,14 +93,14 @@ describe("WASM local zone host", () => {
     run(source, 2);
     const before = self(source).position[0];
     source.advance(TICK_SECONDS / 2);
-    const sampled = source.sample().find((entity) => entity.entityId === source.latestProjection()?.viewerId);
+    const sampled = source.sample().find((entity) => entity.kind === "player" && entity.entityId === source.latestProjection()?.viewerId);
     expect(sampled?.position[0]).toBeGreaterThan(before - RUN_UNITS_PER_TICK);
     expect(sampled?.position[0]).toBeLessThan(before);
   });
 
   test("scenery and areas come from the same content as the zone", () => {
     const { source, scenery } = createLocalWorld(wasm);
-    expect(scenery.scenery.contentRevision).toBe(2n);
+    expect(scenery.scenery.contentRevision).toBe(3n);
     expect(scenery.scenery.source).toBe("mmorpg-scenery");
     expect(scenery.scenery.playerHalfExtents).toEqual([30, 90, 30]);
     source.join();
@@ -152,6 +155,43 @@ describe("WASM local zone host", () => {
         .flatMap((batch) => batch.node.geometry.positions.map(([, y]) => y)));
       expect(lowest, prop.kind).toBeLessThanOrEqual(surfaceAt(prop) + 0.02);
     }
+  });
+});
+
+describe("WASM local zone combat intents", () => {
+  test("the catalog names the hosted units and matches the zone's content", () => {
+    const { catalog } = createLocalWorld(wasm);
+    expect(catalog.contentRevision).toBe(3n);
+    expect([...catalog.creatureTemplates.values()].map((template) => template.name)).toEqual([
+      "Timber Wolf", "Young Boar", "Grain Rat", "Field Marauder", "Mirefin Lurker", "Redbrand Bandit", "Garrick Redbrand",
+    ]);
+    expect(catalog.npcs.get(5)).toEqual({ id: 5, name: "Brother Aldous", role: "spirit_healer", level: 10 });
+    expect(catalog.areas.get(2)).toBe("Wolfrun Woods");
+  });
+
+  test("hub NPCs are visible, selectable and refuse to be attacked", () => {
+    const { source, catalog } = createLocalWorld(wasm);
+    source.join();
+    const projection = source.latestProjection();
+    const npcs = projection?.entities.filter((entity) => entity.kind === "npc") ?? [];
+    expect(npcs.length).toBeGreaterThan(0);
+    expect(projection?.entities.some((entity) => entity.kind === "creature")).toBe(false);
+    const guard = npcs[0]!;
+    expect(catalog.npcs.has(guard.entityId)).toBe(true);
+    expect(guard.flags.attackable).toBe(false);
+    const target = { kind: "npc", id: guard.entityId } as const;
+    source.sendCommand({ kind: "select-target", target });
+    source.sendCommand({ kind: "start-attack" });
+    run(source, 1);
+    const refused = source.latestProjection();
+    expect(refused?.viewer.target).toEqual(target);
+    expect(refused?.viewer.autoAttacking).toBe(false);
+    expect(refused?.events).toEqual([{ kind: "error", code: "not-attackable", target }]);
+    source.sendCommand({ kind: "release-spirit" });
+    source.sendCommand({ kind: "select-target", target: null });
+    run(source, 1);
+    expect(source.latestProjection()?.events).toEqual([{ kind: "error", code: "not-dead", target: null }]);
+    expect(source.latestProjection()?.viewer.target).toBeNull();
   });
 });
 

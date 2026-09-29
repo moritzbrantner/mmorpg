@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { EntityState } from "../src/replication";
+import { decodeCatalog } from "../src/world/catalog";
 import { OTHER_PLAYER_LOOK, characterLook } from "../src/world/humanoid";
 import {
   PLAYER_MODEL,
@@ -12,21 +13,26 @@ import {
   type UnitContext,
   type UnitModel,
 } from "../src/world/unit-nodes";
+import { PLACEHOLDER_BODY_MODEL } from "../src/world/units/creature-bodies";
+import { catalogJson } from "./support/catalog";
+import { NO_FLAGS, playerEntity } from "./support/snapshots";
 
 const CONTEXT: UnitContext = {
   unitsPerMetre: 100,
   playerHalfHeightUnits: 90,
   viewerId: 3,
   viewerLook: characterLook({ classId: "ranger", sex: "female" }, "ranger-cap"),
+  catalog: decodeCatalog(JSON.stringify(catalogJson())),
+  viewerTarget: null,
 };
 
 function player(entityId: number, position: EntityState["position"] = [0, 90, 0]): EntityState {
-  return { kind: "player", entityId, position, velocity: [0, 0, 0], facing: 0 };
+  return playerEntity(entityId, position);
 }
 
 describe("unit placement", () => {
   test("feet sit on flat physics ground raised by presentation relief", () => {
-    const entity = { kind: "player" as const, entityId: 4, position: [250, 90, -100] as const, velocity: [0, 0, 0] as const, facing: 16_384 };
+    const entity = playerEntity(4, [250, 90, -100], [0, 0, 0], 16_384);
     expect(placeUnit(entity, 90, 0, 100)).toEqual({ x: 2.5, feetY: 0, z: -1, yawRadians: Math.PI / 2 });
     expect(placeUnit(entity, 90, 40, 100).feetY).toBeCloseTo(0.4, 9);
     expect(unitIdentity(entity)).toBe("unit-player-4");
@@ -35,8 +41,10 @@ describe("unit placement", () => {
 
 describe("unit model registry", () => {
   test("every entity kind has a model and animation state is kept per visible unit", () => {
-    expect(Object.keys(UNIT_MODELS)).toEqual(["player"]);
+    expect(Object.keys(UNIT_MODELS)).toEqual(["player", "creature", "npc"]);
     expect(unitModel(player(3))).toBe(PLAYER_MODEL);
+    expect(unitModel({ kind: "creature" })).toBe(PLACEHOLDER_BODY_MODEL);
+    expect(unitModel({ kind: "npc" })).toBe(PLACEHOLDER_BODY_MODEL);
     const animators = new UnitAnimators();
     const entity = { ...player(3), velocity: [21, 0, 0] as const, facing: 16_384 };
     const first = placeUnit(entity, 90, 0, 100);
@@ -86,5 +94,31 @@ describe("unit model registry", () => {
     const locomotion = new UnitAnimators().locomotion(tall, placement, 100, 1 / 30, true);
     sized.nodes({ id: unitIdentity(tall), entity: tall, placement, locomotion, context: CONTEXT });
     expect(seen).toEqual([tall]);
+  });
+});
+
+describe("creature and NPC models", () => {
+  const wolf: EntityState = {
+    kind: "creature", entityId: 108, appearance: 1, position: [300, 45, 400], velocity: [0, 0, 0], facing: 0,
+    level: 2, healthPercent: 60, flags: { ...NO_FLAGS, hostile: true, attackable: true },
+  };
+  const guard: EntityState = { ...playerEntity(6, [0, 90, 0]), kind: "npc", appearance: 6, level: 10 };
+
+  test("stand on their own collision box and ring only the viewer's target", () => {
+    expect(PLACEHOLDER_BODY_MODEL.halfHeightUnits(wolf, CONTEXT)).toBe(45);
+    expect(PLACEHOLDER_BODY_MODEL.halfHeightUnits(guard, CONTEXT)).toBe(90);
+    expect(placeWithModel(PLACEHOLDER_BODY_MODEL, wolf, CONTEXT, 25).feetY).toBeCloseTo(0.25, 9);
+    const draw = (entity: EntityState, viewerTarget: UnitContext["viewerTarget"]) => {
+      const placement = placeWithModel(PLACEHOLDER_BODY_MODEL, entity, CONTEXT, 0);
+      const locomotion = new UnitAnimators().locomotion(entity, placement, 100, 1 / 30, true);
+      return PLACEHOLDER_BODY_MODEL.nodes({
+        id: unitIdentity(entity), entity, placement, locomotion, context: { ...CONTEXT, viewerTarget },
+      }).map((node) => node.id);
+    };
+    expect(draw(wolf, null)).toEqual(["unit-creature-108-body", "unit-creature-108-nose"]);
+    expect(draw(wolf, { kind: "creature", id: 108 })[0]).toBe("unit-creature-108-target-ring");
+    // Same ID, another kind: not the target.
+    expect(draw(wolf, { kind: "npc", id: 108 })).not.toContain("unit-creature-108-target-ring");
+    expect(draw(guard, { kind: "npc", id: 6 })).toEqual(["unit-npc-6-target-ring", "unit-npc-6-body", "unit-npc-6-nose"]);
   });
 });

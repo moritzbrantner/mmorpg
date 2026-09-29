@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createLocalWorld, type LocalZoneModule } from "../src/world/local-world";
 import { PROP_KINDS, createSceneryProvider, decodeScenery } from "../src/world/scenery";
+import { catalogJson } from "./support/catalog";
 import { fixtureExport, fixtureScenery } from "./support/scenery-fixture";
 
 const decode = (patch: Record<string, unknown> = {}) => fixtureScenery(patch);
@@ -84,9 +85,10 @@ describe("scenery provider and local world", () => {
     expect(createSceneryProvider(content(1)).reliefAt(1.4, 2.6)).toBe(4);
   });
 
-  test("refuses scenery from another content revision than the zone", () => {
-    const module = (revision: bigint): LocalZoneModule => ({
+  test("refuses scenery or a catalog from another content revision than the zone", () => {
+    const module = (revision: bigint, catalogRevision = "7"): LocalZoneModule => ({
       ...content(1),
+      catalog: () => JSON.stringify(catalogJson(catalogRevision)),
       LocalZone: class {
         join() { return 1; }
         leave() { return true; }
@@ -96,7 +98,10 @@ describe("scenery provider and local world", () => {
         contentRevision() { return revision; }
       },
     });
-    expect(() => createLocalWorld(module(8n))).toThrow("does not match");
-    expect(createLocalWorld(module(7n)).scenery.scenery.contentRevision).toBe(7n);
+    expect(() => createLocalWorld(module(8n))).toThrow("Scenery content revision 7 does not match");
+    expect(() => createLocalWorld(module(7n, "8"))).toThrow("Catalog content revision 8 does not match");
+    const world = createLocalWorld(module(7n));
+    expect(world.scenery.scenery.contentRevision).toBe(7n);
+    expect(world.catalog.creatureTemplates.get(1)?.name).toBe("Timber Wolf");
   });
 });

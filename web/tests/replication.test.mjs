@@ -1,52 +1,105 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { decodeSnapshot, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
+import { decodeSnapshot, findEntity, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
+import { NO_FLAGS, playerEntity, testSnapshot } from "./support/snapshots.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v4.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v5.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
-const player = (entityId, x, facing = 0) => ({
-  kind: "player", entityId, position: [x, 90, 0], velocity: [21, 0, 0], facing,
-});
-const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => ({
+const player = (entityId, x, facing = 0) => playerEntity(entityId, [x, 90, 0], [21, 0, 0], facing);
+const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapshot({
   zoneId: 1, tick: BigInt(tick), contentRevision: 7n, acknowledgedSequence: 9, viewerId: 1, entities,
 });
 
+const VIEWER = { kind: "player", id: 7 };
+const WOLF = { kind: "creature", id: 108 };
+/** Byte offsets of the fixture's sections (docs/PROTOCOL.md). */
+const EVENTS = 52;
+const ENTITY_COUNT = EVENTS + 1 + 7 * 14;
+const FIRST_ENTITY = ENTITY_COUNT + 2;
+
 describe("Rust/browser snapshot contract", () => {
   test("decodes the same golden bytes as the Rust encoder", () => {
+    expect(fixture.length).toBe(55 + 7 * 14 + 4 * 21);
     expect(decodeSnapshot(fixture)).toEqual({
-      zoneId: 42, tick: 99n, contentRevision: 42n, acknowledgedSequence: 81, viewerId: 7,
+      zoneId: 42, tick: 99n, contentRevision: 3n, acknowledgedSequence: 81, viewerId: 7,
+      viewer: { health: 38, maxHealth: 50, level: 1, dead: false, inCombat: true, autoAttacking: true, target: WOLF },
+      targetOfTarget: VIEWER,
+      events: [
+        { kind: "damage-dealt", source: VIEWER, target: WOLF, amount: 7, critical: true },
+        { kind: "damage-taken", source: WOLF, target: VIEWER, amount: 3, critical: false },
+        { kind: "miss", source: VIEWER, target: WOLF },
+        { kind: "evade", source: VIEWER, target: WOLF },
+        { kind: "died", entity: WOLF, killer: VIEWER },
+        { kind: "error", code: "out-of-range", target: WOLF },
+        { kind: "error", code: "no-target", target: null },
+      ],
       entities: [
-        { kind: "player", entityId: 7, position: [10, 20, -30], velocity: [1, -2, 3], facing: 16_384 },
-        { kind: "player", entityId: 9, position: [-400, 90, 2_500], velocity: [-13, 16, -128], facing: 49_152 },
+        {
+          kind: "player", entityId: 7, appearance: 0, position: [10, 90, -30], velocity: [1, -2, 3], facing: 16_384,
+          level: 1, healthPercent: 76, flags: { ...NO_FLAGS, inCombat: true },
+        },
+        {
+          kind: "creature", entityId: 108, appearance: 1, position: [-845, 45, 2_500], velocity: [-13, 0, -128],
+          facing: 49_152, level: 2, healthPercent: 43,
+          flags: { ...NO_FLAGS, inCombat: true, hostile: true, attackable: true, targetsViewer: true },
+        },
+        {
+          kind: "npc", entityId: 5, appearance: 5, position: [-1_650, 90, 4_550], velocity: [0, 0, 0], facing: 49_152,
+          level: 10, healthPercent: 100, flags: NO_FLAGS,
+        },
+        {
+          kind: "creature", entityId: 109, appearance: 1, position: [-900, 45, 2_600], velocity: [0, 0, 0], facing: 0,
+          level: 1, healthPercent: 0, flags: { ...NO_FLAGS, dead: true, hostile: true, tappedByOther: true },
+        },
       ],
     });
     const offsetBuffer = new Uint8Array(fixture.length + 4);
     offsetBuffer.set(fixture, 2);
     expect(decodeSnapshot(offsetBuffer.subarray(2, -2))).toEqual(decodeSnapshot(fixture));
+    expect(findEntity(decodeSnapshot(fixture), WOLF)?.level).toBe(2);
+    expect(findEntity(decodeSnapshot(fixture), { kind: "creature", id: 7 })).toBeUndefined();
   });
 
-  test("rejects legacy, canonical, truncated, excessive, unknown-kind, and trailing payloads", () => {
+  test("rejects legacy, canonical, truncated, excessive, malformed and trailing payloads", () => {
     for (let length = 0; length < fixture.length; length++) {
       expect(() => decodeSnapshot(fixture.slice(0, length))).toThrow();
     }
-    // Wire v3, canonical scope, schema v3, count above records, reserved and unknown kinds.
-    for (const [offset, value] of [[0, 3], [1, 1], [3, 3], [32, 255], [34, 2], [34, 0], [50, 3]]) {
+    const wolfRecord = FIRST_ENTITY + 21;
+    for (const [offset, value, message] of [
+      [0, 4, "version"],
+      [1, 1, "player-visible"],
+      [3, 4, "version"],
+      [41, 0b1000, "Reserved"],
+      [41, 0b111, "Inconsistent"],
+      [42, 9, "kind"],
+      [47, 0, "absent"],
+      [EVENTS, 17, "event capacity"],
+      [EVENTS + 1, 9, "event kind"],
+      [EVENTS + 2, 2, "flags"],
+      [EVENTS + 1 + 2 * 14 + 1, 1, "flags"],
+      [EVENTS + 1 + 6 * 14 + 13, 99, "error code"],
+      [ENTITY_COUNT, 255, "count"],
+      [FIRST_ENTITY, 0, "kind"],
+      [FIRST_ENTITY, 4, "kind"],
+      [wolfRecord + 19, 101, "Health percent"],
+      [wolfRecord + 20, 0x80, "Reserved"],
+      [31, 9, "viewer"],
+    ]) {
       const invalid = fixture.slice();
       invalid[offset] = value;
-      expect(() => decodeSnapshot(invalid)).toThrow();
+      expect(() => decodeSnapshot(invalid), `byte ${offset} = ${value}`).toThrow(message);
     }
     const fewer = fixture.slice();
-    new DataView(fewer.buffer).setUint16(32, 1);
+    new DataView(fewer.buffer).setUint16(ENTITY_COUNT, 3);
     expect(() => decodeSnapshot(fewer)).toThrow("count");
     expect(() => decodeSnapshot(new Uint8Array([...fixture, 0]))).toThrow();
     expect(() => decodeSnapshot(new Uint8Array(1_078))).toThrow("budget");
   });
 
   test("requires the viewer to lead the priority-ordered records", () => {
-    const swapped = new Uint8Array(fixture.length);
-    swapped.set(fixture.slice(0, 34));
-    swapped.set(fixture.slice(50, 66), 34);
-    swapped.set(fixture.slice(34, 50), 50);
+    const swapped = fixture.slice();
+    swapped.set(fixture.slice(FIRST_ENTITY + 21, FIRST_ENTITY + 42), FIRST_ENTITY);
+    swapped.set(fixture.slice(FIRST_ENTITY, FIRST_ENTITY + 21), FIRST_ENTITY + 21);
     expect(() => decodeSnapshot(swapped)).toThrow("viewer");
     const otherViewer = fixture.slice();
     new DataView(otherViewer.buffer).setUint32(28, 9);
@@ -60,10 +113,10 @@ describe("Rust/browser snapshot contract", () => {
   });
 
   test("rejects duplicate entity identities", () => {
-    const encoded = new Uint8Array(fixture.length + 16);
+    const encoded = new Uint8Array(fixture.length + 21);
     encoded.set(fixture);
-    encoded.set(fixture.slice(34, 50), fixture.length);
-    new DataView(encoded.buffer).setUint16(32, 3);
+    encoded.set(fixture.slice(FIRST_ENTITY, FIRST_ENTITY + 21), fixture.length);
+    new DataView(encoded.buffer).setUint16(ENTITY_COUNT, 5);
     expect(() => decodeSnapshot(encoded)).toThrow("Duplicate");
   });
 });
