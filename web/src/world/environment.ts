@@ -132,6 +132,39 @@ export function quantizeColor(color: Color, step: number): Color {
   return toHex(channels(color).map((channel) => Math.round(channel / step) * step));
 }
 
+/**
+ * Merges near-identical colours into more common ones. Colours are visited
+ * from most to least used (ties by value); each maps onto the nearest colour
+ * already kept within `distance` (Euclidean over sRGB channels) or is kept
+ * itself. The most common colours stay exact and no colour moves farther
+ * than `distance`, so unlike coarser quantisation no hue drifts.
+ */
+export function mergeNearColors(colors: readonly Color[], distance: number): Map<Color, Color> {
+  const counts = new Map<Color, number>();
+  for (const color of colors) {
+    counts.set(color, (counts.get(color) ?? 0) + 1);
+  }
+  const ordered = [...counts.entries()].sort(([left, leftCount], [right, rightCount]) =>
+    rightCount - leftCount || left.localeCompare(right));
+  const kept: { color: Color; rgb: [number, number, number] }[] = [];
+  const merged = new Map<Color, Color>();
+  for (const [color] of ordered) {
+    const rgb = channels(color);
+    let nearest: { color: Color; distance: number } | null = null;
+    for (const candidate of kept) {
+      const gap = Math.hypot(rgb[0] - candidate.rgb[0], rgb[1] - candidate.rgb[1], rgb[2] - candidate.rgb[2]);
+      if (gap <= distance && (nearest === null || gap < nearest.distance)) {
+        nearest = { color: candidate.color, distance: gap };
+      }
+    }
+    if (nearest === null) {
+      kept.push({ color, rgb });
+    }
+    merged.set(color, nearest?.color ?? color);
+  }
+  return merged;
+}
+
 /** Scales a colour's channels, e.g. 0.85 to darken; the result stays a valid colour. */
 export function shadeColor(color: Color, factor: number): Color {
   return toHex(channels(color).map((channel) => channel * factor));

@@ -1,16 +1,16 @@
 import type { RendererSceneNode } from "@moritzbrantner/three-d-renderer";
-import { hazeMix, mixColor, quantizeColor, shadeColor, type EnvironmentStyle } from "./environment";
+import { hazeMix, mergeNearColors, mixColor, quantizeColor, shadeColor, type EnvironmentStyle } from "./environment";
 import type { SceneBatcher } from "./mesh-batching";
 import { MeshBuilder, hash01, type Vec3 } from "./mesh-builder";
 import type { Color, Scenery, TerrainGrid } from "./scenery";
 
 /**
  * Terrain from the exported relief grids: a few dozen large indexed meshes,
- * one per quantised colour, with smooth normals from the height field. Each triangle takes the
- * biome most of its corners share, which turns the 4 m sample grid's
- * staircase edges into diagonals. Roads and the lake bed are drawn as smooth
- * surfaces on top instead of grid cells, so their vertices take the
- * surrounding ground's biome here. The far ring samples the same relief every
+ * one per colour after near-identical tones merge, with smooth normals from
+ * the height field. Each triangle takes the biome most of its corners share,
+ * which turns the 4 m sample grid's staircase edges into diagonals. Roads and
+ * the lake bed are drawn as smooth surfaces on top instead of grid cells, so
+ * their vertices take the surrounding ground's biome here. The far ring samples the same relief every
  * 20 m around the terrain grid and blends toward the sky haze by distance.
  */
 type Grid = TerrainGrid;
@@ -166,6 +166,7 @@ function appendGrid(options: TerrainOptions): void {
     map.set(sample, index);
     return index;
   };
+  const triangles: { corners: readonly [number, number, number]; color: Color }[] = [];
   for (let row = 0; row + 1 < grid.rows; row += 1) {
     for (let column = 0; column + 1 < grid.columns; column += 1) {
       if (!options.includeCell(column, row)) {
@@ -184,13 +185,16 @@ function appendGrid(options: TerrainOptions): void {
         return Math.hypot(x / samples.length, z / samples.length);
       };
       // Counter-clockwise seen from above, so faces point up.
-      for (const triangle of [[s00, s01, s10], [s10, s01, s11]] as const) {
-        const [a, bSample, c] = triangle;
-        const color = options.colorOf([b(a), b(bSample), b(c)], centre([a, bSample, c]));
-        const mesh = options.meshFor(color);
-        mesh.indices.push(vertex(mesh, a), vertex(mesh, bSample), vertex(mesh, c));
+      for (const corners of [[s00, s01, s10], [s10, s01, s11]] as const) {
+        const [a, bSample, c] = corners;
+        triangles.push({ corners, color: options.colorOf([b(a), b(bSample), b(c)], centre([a, bSample, c])) });
       }
     }
+  }
+  const palette = mergeNearColors(triangles.map((triangle) => triangle.color), MERGE_DISTANCE);
+  for (const { corners: [a, b, c], color } of triangles) {
+    const mesh = options.meshFor(palette.get(color) ?? color);
+    mesh.indices.push(vertex(mesh, a), vertex(mesh, b), vertex(mesh, c));
   }
 }
 
@@ -199,13 +203,15 @@ const TONED_BIOMES: ReadonlySet<string> = new Set(["meadow", "hub", "woods", "ho
 /** Tone keys pack a biome ID and a tone variant: `biome * TONES + variant`. */
 const TONES = 4;
 const PLAIN_TONE = 1;
+/** Terrain colour channels round to multiples of this. */
+const TONE_STEP = 8;
 /**
- * Terrain colour channels round to multiples of this. Every colour is a
- * scene-wide mesh that is never culled, so the step bounds the draw calls:
- * the vale's blends of biome tones, tone variants and haze bands come to
- * about 50 terrain and far-ring meshes (over 100 at a step of 8).
+ * Rarer terrain colours within this sRGB distance of a more common one take
+ * its colour. Every colour is a scene-wide mesh that is never culled, so this
+ * bounds the draw calls: the vale's blends of biome tones, tone variants and
+ * haze bands come to about 36 terrain and far-ring meshes instead of over 100.
  */
-const TONE_STEP = 16;
+const MERGE_DISTANCE = 12;
 
 /** Smooth seeded value noise in [0, 1) over `cell`-metre squares; presentation only. */
 function valueNoise(x: number, z: number, cell: number, seed: number): number {
