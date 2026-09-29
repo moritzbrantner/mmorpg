@@ -40,11 +40,9 @@ import {
 } from "./character-roster";
 import { characterVisualProfile, type CharacterVisualProfile } from "./character-visuals";
 import type { LocalWorld } from "./world/local-world";
-import { MovementOutbox, type MovementInput } from "./world/movement-outbox";
-import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput } from "./world/orbit-camera";
-import { buildSceneryNodes } from "./world/scenery-nodes";
-import { placeUnit, unitNodes, type UnitLook } from "./world/unit-nodes";
 import { loadLocalWorld } from "./world/wasm-runtime";
+import { characterLook } from "./world/humanoid";
+import { WorldView, webGpuProjection } from "./world/world-view";
 import "./character-selection-layout.css";
 import "./character-creation.css";
 
@@ -57,8 +55,6 @@ function requireElement<T extends Element>(selector: string): T {
 }
 
 const canvas = requireElement<HTMLCanvasElement>("#world");
-const areaName = requireElement<HTMLElement>("#area-name");
-const objective = requireElement<HTMLElement>("#objective");
 const characterSelect = requireElement<HTMLElement>("#character-select");
 const enterWorldButton = requireElement<HTMLButtonElement>("#enter-world");
 const enterWorldLabel = requireElement<HTMLElement>("#enter-world-label");
@@ -91,8 +87,9 @@ const sexInputs = [...document.querySelectorAll<HTMLInputElement>('input[name="c
 const hatButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-hat-style]")];
 const worldUi = [...document.querySelectorAll<HTMLElement>("[data-world-ui]")];
 
+// A transparent canvas: the CSS sky shows through behind the world.
 const renderer = createThreeSceneRenderer(canvas, {
-  background: "#111820",
+  alpha: true,
   antialias: true,
   pixelRatioLimit: 2,
 });
@@ -101,9 +98,6 @@ fallbackCharacter.hidden = true;
 
 type RotationQuaternion = [number, number, number, number];
 type LocalPoint = (x: number, y: number, z: number) => [number, number, number];
-
-/** Outside every named area the HUD names the zone itself. */
-const ZONE_NAME = "Greyhaven Vale";
 
 let lastTime = performance.now();
 const keys = new Set<string>();
@@ -126,13 +120,7 @@ let world: LocalWorld | null = null;
 let worldLoadError: string | null = null;
 /** Why the last entry failed or the world was left after an error; cleared by the next entry. */
 let worldFailure: string | null = null;
-let sceneryNodes: RendererSceneNode[] = [];
-let orbit = new OrbitCamera();
-let movementFacing = 0;
 let jumps = 0;
-const outbox = new MovementOutbox(currentMovementInput());
-let orbitDrag: { pointerId: number; x: number; y: number } | null = null;
-let shownAreaName: string | null = null;
 
 function loadCreatedRoster(): CharacterPreview[] {
   try {
@@ -174,8 +162,26 @@ function restoreAppearance(character: CharacterPreview): void {
   characterAppearance = { ...(appearanceByCharacterId.get(character.id) ?? defaultAppearanceForCharacter(character)) };
 }
 
-const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 600);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.2, 1_400);
 const previewCamera = new THREE.PerspectiveCamera(48, 1, 0.1, 80);
+const worldView = new WorldView(renderer, camera, {
+  canvas,
+  sky: requireElement<HTMLElement>("#sky"),
+  minimap: {
+    root: requireElement<HTMLElement>("#minimap"),
+    canvas: requireElement<HTMLCanvasElement>("#minimap-canvas"),
+    zoomIn: requireElement<HTMLButtonElement>("#minimap-zoom-in"),
+    zoomOut: requireElement<HTMLButtonElement>("#minimap-zoom-out"),
+    northUp: requireElement<HTMLButtonElement>("#minimap-north-up"),
+  },
+  overlay: requireElement<HTMLElement>("#debug-overlay"),
+  areaName: requireElement<HTMLElement>("#area-name"),
+  objective: requireElement<HTMLElement>("#objective"),
+});
+// Debug-only hooks (camera viewpoints, stats) for screenshots; `?debug` enables them.
+if (new URLSearchParams(window.location.search).has("debug")) {
+  Object.assign(window, { __valeDebug: worldView.debugApi() });
+}
 
 const selectionStageNodes: RendererSceneNode[] = [
   node("selection-floor", "cylinder", [-1.2, -0.12, 0], "#27332f", [3.0, 0.28, 0]),
@@ -204,18 +210,6 @@ function node(
         : { kind, radius: dimensions[0], height: dimensions[1] };
 
   return { id, geometry, color, transform: { translation } };
-}
-
-function webGpuProjectionFromThree(source = camera): Matrix4Values {
-  const gl = source.projectionMatrix.elements;
-  const gpu = [...gl];
-  for (const index of [2, 6, 10, 14]) {
-    const z = gl[index];
-    const w = gl[index + 1];
-    if (z === undefined || w === undefined) throw new Error("Incomplete projection matrix");
-    gpu[index] = (z + w) / 2;
-  }
-  return gpu as Matrix4Values;
 }
 
 function selectionCharacterNodes(): RendererSceneNode[] {
@@ -698,77 +692,14 @@ function renderSelection() {
   renderer.render({
     camera: {
       viewMatrix: [...previewCamera.matrixWorldInverse.elements] as Matrix4Values,
-      projectionMatrix: webGpuProjectionFromThree(previewCamera),
+      projectionMatrix: webGpuProjection(previewCamera),
     },
     nodes: [...selectionStageNodes, ...selectionCharacterNodes()],
   });
 }
 
-function currentMovementInput(): MovementInput {
-  const input = movementInput(keys, orbit.facing(), movementFacing, jumps);
-  movementFacing = input.facing;
-  return input;
-}
-
-function localLook(): UnitLook {
-  return { visuals: characterVisualProfile(selectedCharacter()), hat: characterAppearance.hat };
-}
-
-/** Projections carry no appearance yet, so other players share a neutral look. */
-const otherPlayerLook: UnitLook = {
-  visuals: { ...characterVisualProfile({ classId: "warden", sex: "male" }), bodyColor: "#8b9094", shoulderColor: "#9aa0a4" },
-  hat: null,
-};
-
-function showArea(name: string): void {
-  if (name === shownAreaName) {
-    return;
-  }
-  shownAreaName = name;
-  areaName.textContent = name;
-  // A placeholder objective until quests exist; area names come from core content.
-  objective.textContent = name === ZONE_NAME
-    ? "Explore Greyhaven Vale. Quests are not in this build yet."
-    : `Explore Greyhaven Vale — you are in ${name}. Quests are not in this build yet.`;
-}
-
-function renderWorld(activeWorld: LocalWorld, deltaSeconds: number, now: number) {
-  const { source, scenery } = activeWorld;
-  for (const command of outbox.update(currentMovementInput(), now)) {
-    source.sendCommand(command);
-  }
-  source.advance(deltaSeconds);
-  const projection = source.latestProjection();
-  if (!projection) {
-    throw new Error("The local zone has no projection for the joined player.");
-  }
-  const { unitsPerMetre, playerHalfExtents } = scenery.scenery;
-  const entities = source.sample();
-  const nodes = [...sceneryNodes];
-  let focus: [number, number, number] | null = null;
-  for (const entity of entities) {
-    const placement = placeUnit(entity, playerHalfExtents[1], scenery.reliefAt(entity.position[0], entity.position[2]), unitsPerMetre);
-    const self = entity.kind === "player" && entity.entityId === projection.viewerId;
-    if (self) {
-      focus = [placement.x, placement.feetY + playerHalfExtents[1] / unitsPerMetre, placement.z];
-      showArea(scenery.areaAt(entity.position[0], entity.position[2])?.name ?? ZONE_NAME);
-    }
-    nodes.push(...unitNodes(`unit-${entity.kind}-${entity.entityId}`, placement, self ? localLook() : otherPlayerLook));
-  }
-  if (!focus) {
-    throw new Error("The projection is missing the viewer's own unit.");
-  }
-  const view = orbit.view(focus);
-  camera.position.set(...view.eye);
-  camera.lookAt(...view.target);
-  camera.updateMatrixWorld(true);
-  renderer.render({
-    camera: {
-      viewMatrix: [...camera.matrixWorldInverse.elements] as Matrix4Values,
-      projectionMatrix: webGpuProjectionFromThree(),
-    },
-    nodes,
-  });
+function worldInput() {
+  return { keys, jumps };
 }
 
 function errorMessage(error: unknown): string {
@@ -782,7 +713,7 @@ function frame(now: number) {
   lastTime = now;
   if (entryState.phase === "world" && world) {
     try {
-      renderWorld(world, deltaSeconds, now);
+      worldView.frame(world, worldInput(), characterLook(selectedCharacter(), characterAppearance.hat), deltaSeconds, now);
     } catch (error) {
       // Fail closed and visibly: leave the world and say why on the selection screen.
       console.error(error);
@@ -791,13 +722,6 @@ function frame(now: number) {
     return;
   }
   renderSelection();
-}
-
-function endOrbitDrag(): void {
-  if (orbitDrag && canvas.hasPointerCapture(orbitDrag.pointerId)) {
-    canvas.releasePointerCapture(orbitDrag.pointerId);
-  }
-  orbitDrag = null;
 }
 
 function enterWorld() {
@@ -819,11 +743,7 @@ function enterWorld() {
   turntable.cancel();
   entryState = next;
   keys.clear();
-  endOrbitDrag();
-  orbit = new OrbitCamera();
-  movementFacing = orbit.facing();
-  outbox.reset(currentMovementInput());
-  shownAreaName = null;
+  worldView.enter(worldInput());
   characterSelect.hidden = true;
   for (const element of worldUi) {
     element.hidden = false;
@@ -846,7 +766,7 @@ function returnToCharacters(failure: string | null = null) {
   worldFailure = failure;
   entryState = initialEntryState(character);
   keys.clear();
-  endOrbitDrag();
+  worldView.leave();
   characterSelect.hidden = false;
   for (const element of worldUi) {
     element.hidden = true;
@@ -894,36 +814,17 @@ creationForm.addEventListener("submit", (event) => {
   event.preventDefault();
   finishCharacterCreation();
 });
-// Drag with the primary or secondary button to orbit; the wheel zooms.
+// Left drag orbits freely, right drag turns the character with the view; the wheel zooms.
 canvas.addEventListener("pointerdown", (event) => {
   if (entryState.phase !== "world") {
     return;
   }
   canvas.focus();
-  if (orbitDrag || (event.button !== 0 && event.button !== 2)) {
-    return;
-  }
-  try {
-    canvas.setPointerCapture(event.pointerId);
-  } catch {
-    return;
-  }
-  orbitDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  worldView.pointerDown(event);
 });
-canvas.addEventListener("pointermove", (event) => {
-  if (!orbitDrag || orbitDrag.pointerId !== event.pointerId) {
-    return;
-  }
-  orbit.orbit(event.clientX - orbitDrag.x, event.clientY - orbitDrag.y);
-  orbitDrag.x = event.clientX;
-  orbitDrag.y = event.clientY;
-});
+canvas.addEventListener("pointermove", (event) => worldView.pointerMove(event));
 for (const name of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
-  canvas.addEventListener(name, (event) => {
-    if (orbitDrag?.pointerId === event.pointerId) {
-      endOrbitDrag();
-    }
-  });
+  canvas.addEventListener(name, (event) => worldView.pointerEnd(event));
 }
 canvas.addEventListener("contextmenu", (event) => {
   if (entryState.phase === "world") {
@@ -935,11 +836,7 @@ canvas.addEventListener("wheel", (event) => {
     return;
   }
   event.preventDefault();
-  const lines = event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
-    ? event.deltaY / PIXELS_PER_WHEEL_LINE
-    : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY : event.deltaY * 3;
-  // Scrolling up (negative delta) zooms in.
-  orbit.zoom(-lines);
+  worldView.wheel(event);
 }, { passive: false });
 
 window.addEventListener("keydown", (event) => {
@@ -968,6 +865,13 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "Escape" && !event.repeat) {
     event.preventDefault();
     returnToCharacters();
+    return;
+  }
+  if (event.code === "F3") {
+    event.preventDefault();
+    if (!event.repeat) {
+      worldView.toggleOverlay();
+    }
     return;
   }
   keys.add(event.code);
@@ -1012,8 +916,8 @@ new ResizeObserver(layoutPreview).observe(previewSurface);
 resize();
 requestAnimationFrame(frame);
 void loadLocalWorld().then((loaded) => {
+  worldView.load(loaded);
   world = loaded;
-  sceneryNodes = buildSceneryNodes(loaded.scenery.scenery);
   updateEntryButton();
 }, (error: unknown) => {
   worldLoadError = errorMessage(error);

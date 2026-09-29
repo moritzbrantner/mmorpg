@@ -16,6 +16,8 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
 - Quests and the Redbrand Hollow chain.
 - Starter-zone workload evidence.
 - World presentation: relief, vegetation, water, sky, animated models, effects.
+  - [x] Part A (browser): biome terrain and far ranges, procedural props and vegetation in static batches, lake, CSS sky, animated humanoids with class gear, camera polish, minimap, F3 statistics.
+  - Part B: creature and NPC models, spell effects, selection circles, and fog, instancing, vertex colours and lighting once 3d-lab #82 and #84 are pinned.
 - Native client parity.
 - Browser online mode against a local zone host.
 - Durable character record for demo saves.

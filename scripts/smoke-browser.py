@@ -10,6 +10,7 @@ Run from the repository root: python scripts/smoke-browser.py
 """
 from __future__ import annotations
 
+import base64
 import functools
 import http.server
 import json
@@ -88,8 +89,8 @@ class BrowserAcceptance(unittest.TestCase):
         self.context.close()
         self.assertEqual(self.errors, [], "Browser application raised an uncaught error")
 
-    def open(self):
-        self.page.goto(self.url)
+    def open(self, query=""):
+        self.page.goto(self.url + query)
         self.page.wait_for_function("window.__calls.draws > 0")
         expect(self.page.locator("#character-stage-fallback")).to_be_hidden()
         expect(self.page.get_by_role("slider", name="Character rotation")).to_be_visible()
@@ -298,6 +299,136 @@ class BrowserAcceptance(unittest.TestCase):
         expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
         self.page.keyboard.press("Escape")
         expect(note).to_contain_text("Start ")
+
+    def colour_stats(self, png: bytes):
+        """Distinct RGB colours in a screenshot and the share of pixels that differ from the page
+        background, counted in the page (no image library needed)."""
+        return self.page.evaluate("""async data => {
+          const image = new Image();
+          image.src = 'data:image/png;base64,' + data;
+          await image.decode();
+          const canvas = document.createElement('canvas');
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const context = canvas.getContext('2d');
+          context.drawImage(image, 0, 0);
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          const background = getComputedStyle(document.body).backgroundColor.match(/\\d+/g).map(Number);
+          const colours = new Set();
+          let samples = 0;
+          let covered = 0;
+          for (let i = 0; i < pixels.length; i += 4 * 5) {
+            const rgb = [pixels[i], pixels[i + 1], pixels[i + 2]];
+            colours.add((rgb[0] << 16) | (rgb[1] << 8) | rgb[2]);
+            samples += 1;
+            if (rgb.some((channel, index) => Math.abs(channel - background[index]) > 3)) covered += 1;
+          }
+          return {distinct: colours.size, covered: covered / samples};
+        }""", base64.b64encode(png).decode())
+
+    def canvas_colours(self, hide_canvas=False):
+        """Colour statistics of what the renderer drew in the world clip. The canvas is
+        transparent over the CSS sky, and the minimap, HUD and F3 overlay sit on top of it;
+        with those hidden, only rendered pixels differ from the plain page background."""
+        layers = "#sky, #debug-overlay, [data-world-ui]" + (", #world" if hide_canvas else "")
+        self.page.evaluate("layers => document.querySelectorAll(layers).forEach(e => { e.style.visibility = 'hidden'; })", layers)
+        try:
+            return self.colour_stats(self.world_view())
+        finally:
+            self.page.evaluate("layers => document.querySelectorAll(layers).forEach(e => { e.style.visibility = ''; })", layers)
+
+    def debug_stats(self):
+        return self.page.evaluate("window.__valeDebug.stats()")
+
+    def test_vale_viewpoints_overlay_minimap_and_mouse_look(self):
+        """Debug-only camera viewpoints (never the simulation) show the subzones; F3 reports scene work."""
+        self.open("?debug")
+        self.enter_world()
+        self.frames(6)
+        spawn = self.debug_stats()["self"]
+        overlay = self.page.get_by_role("region", name="Debug statistics")
+        expect(overlay).to_be_hidden()
+        self.page.keyboard.press("F3")
+        expect(overlay).to_be_visible()
+        minimap = self.page.get_by_role("complementary", name="Minimap")
+        expect(minimap).to_be_visible()
+        expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
+        # Control: without the canvas the measurement sees only the plain page background.
+        self.assertEqual(self.canvas_colours(hide_canvas=True), {"distinct": 1, "covered": 0})
+        viewpoints = {}
+        for name in ["hub", "woods", "hollow"]:
+            self.page.evaluate("name => window.__valeDebug.flyTo(name)", name)
+            self.frames(8)
+            self.page.screenshot(path=str(ARTIFACTS / f"viewpoint-{name}.png"))
+            colours = self.canvas_colours()
+            self.assertGreater(colours["distinct"], 400, f"The {name} viewpoint must render a varied scene, not a uniform canvas")
+            self.assertGreater(colours["covered"], 0.5, f"The {name} viewpoint must draw most of the view, not leave the canvas empty")
+            viewpoints[name] = {"canvasColours": colours, "frame": self.debug_stats()["frame"]}
+        self.frames(12)
+        stats = self.debug_stats()
+        overlay_stats = json.loads(overlay.get_attribute("data-stats"))
+        self.assertGreater(overlay_stats["nodes"], overlay_stats["staticNodes"])
+        self.assertLessEqual(overlay_stats["staticNodes"], 600, "Static batching keeps draw calls bounded")
+        self.assertGreater(overlay_stats["fps"], 0)
+        (ARTIFACTS / "scene-stats.json").write_text(json.dumps({
+            "note": "fps comes from headless Chromium with SwiftShader software rendering; it is not a hardware measurement",
+            "overlay": overlay_stats,
+            "buildMs": stats["buildMs"],
+            "scene": stats["scene"],
+            "viewpoints": viewpoints,
+        }, indent=2))
+        # The viewpoints moved only the camera: the character never left its spawn.
+        self.assertEqual(stats["self"], spawn)
+        self.page.evaluate("window.__valeDebug.follow()")
+
+        # Minimap zoom buttons step through their range; clicking them leaves the keyboard
+        # with the world, so movement, jumps and F3 keep working without clicking the canvas.
+        zoom_out = self.page.get_by_role("button", name="Zoom minimap out")
+        for _ in range(4):
+            if zoom_out.is_enabled():
+                zoom_out.click()
+        expect(zoom_out).to_be_disabled()
+        north_up = self.page.get_by_role("button", name="Keep north up")
+        north_up.click()
+        expect(north_up).to_have_attribute("aria-pressed", "true")
+        self.page.keyboard.down("KeyW")
+        self.frames(12)
+        self.page.keyboard.up("KeyW")
+        self.frames(4)
+        ran = self.debug_stats()["self"]
+        self.assertNotEqual((ran["x"], ran["z"]), (spawn["x"], spawn["z"]), "W runs right after a minimap click")
+        self.page.keyboard.press("Space")
+        self.frames(2)
+        expect(north_up).to_have_attribute("aria-pressed", "true")
+        self.page.keyboard.press("F3")
+        expect(overlay).to_be_hidden()
+        self.page.keyboard.press("F3")
+        expect(overlay).to_be_visible()
+
+        # A left drag looks around without turning the character; a right drag turns it.
+        box = self.page.locator("#world").bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        self.page.mouse.move(x, y)
+        self.page.mouse.down()
+        self.page.mouse.move(x + 200, y, steps=5)
+        self.page.mouse.up()
+        self.frames(8)
+        self.assertEqual(self.debug_stats()["self"]["facing"], ran["facing"], "Left-drag orbit leaves the facing alone")
+        self.page.mouse.move(x, y)
+        self.page.mouse.down(button="right")
+        self.page.mouse.move(x + 200, y, steps=5)
+        self.page.mouse.up(button="right")
+        self.assertTrue(self.wait_for_facing_change(ran["facing"]), "Right-drag mouse-look turns the character")
+        self.page.screenshot(path=str(ARTIFACTS / "world-mouse-look.png"))
+        self.page.keyboard.press("F3")
+        expect(overlay).to_be_hidden()
+
+    def wait_for_facing_change(self, facing, timeout_frames=60):
+        for _ in range(timeout_frames):
+            self.frames(2)
+            if abs(self.debug_stats()["self"]["facing"] - facing) > 1e-3:
+                return True
+        return False
 
     def assert_rendering(self):
         draws = self.page.evaluate("window.__calls.draws")

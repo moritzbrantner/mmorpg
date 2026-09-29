@@ -3,7 +3,9 @@ import { encodeCommand } from "../src/command-wire";
 import { decodeSnapshot, type EntityState } from "../src/replication";
 import { createLocalWorld } from "../src/world/local-world";
 import { LocalZoneSource, type LocalZoneHandle } from "../src/world/local-zone-source";
-import { buildSceneryNodes } from "../src/world/scenery-nodes";
+import type { Prop } from "../src/world/scenery";
+import { buildSceneryScene } from "../src/world/scenery-nodes";
+import { terrainSurfaceY } from "../src/world/terrain-mesh";
 import { localZoneModule } from "./support/local-zone-module";
 import { worldSourceContract } from "./support/world-source-contract";
 
@@ -106,17 +108,50 @@ describe("WASM local zone host", () => {
     // Spawn slots are flat; the mountains beyond the walls are not.
     expect(scenery.reliefAt(x, z)).toBe(0);
     expect(scenery.reliefAt(0, -19_000)).toBeGreaterThan(1_000);
-    // The keep's block is its collider, and the lake is walkable water.
-    expect(scenery.scenery.props.some((prop) => prop.colliderId === 100)).toBe(true);
+    // The keep is its exact collider, and the lake is walkable water.
+    const keep = scenery.scenery.props.find((prop) => prop.collider?.id === 100);
+    expect(keep?.kind).toBe("keep");
+    expect(keep?.collider?.halfExtents).toEqual(keep?.halfExtents);
     expect(scenery.scenery.water).toEqual([{ centerXz: [5_500, -5_500], radiiXz: [2_200, 1_600], surfaceY: 15 }]);
-    // One terrain mesh per biome present, one prop mesh per colour: the node
-    // count stays small however many props the scenery carries.
-    const nodes = buildSceneryNodes(scenery.scenery);
-    const biomes = new Set(scenery.scenery.terrain.biomes).size;
-    const colours = new Set(scenery.scenery.props.map((prop) => prop.color)).size;
-    expect(nodes.filter((node) => node.id.startsWith("terrain-")).length).toBe(biomes);
-    expect(nodes.length).toBe(biomes + colours + scenery.scenery.water.length);
-    expect(scenery.scenery.props.length).toBeGreaterThan(nodes.length * 10);
+    expect(scenery.scenery.roads.map((road) => road.name)).toContain("Hollow Road");
+    expect(Math.max(...scenery.scenery.farTerrain.heights)).toBeGreaterThan(Math.max(...scenery.scenery.terrain.heights));
+  });
+
+  test("the vale's static scene models every prop within a bounded node and vertex budget", () => {
+    const { scenery } = createLocalWorld(wasm);
+    const scene = buildSceneryScene(scenery.scenery);
+    const modelled = Object.values(scene.stats.props).reduce((sum, count) => sum + (count ?? 0), 0);
+    expect(modelled).toBe(scenery.scenery.props.length);
+    // Draw-call and per-frame validation budgets: ~4 200 props merge into a few hundred batches.
+    expect(scene.stats.staticNodes).toBeLessThanOrEqual(600);
+    expect(scene.stats.staticVertices).toBeLessThanOrEqual(230_000);
+    expect(scenery.scenery.props.length).toBeGreaterThan(scene.stats.staticNodes * 5);
+    expect(new Set(scene.batches.map((batch) => batch.node.geometry.resourceKey)).size).toBe(scene.batches.length);
+    // Terrain and far-ring meshes span the whole vale, so none is ever culled: keep their palette small.
+    const terrainMeshes = scene.batches.filter((batch) => /^static-all-(terrain|far):/.test(batch.node.id)).length;
+    expect(terrainMeshes).toBeLessThanOrEqual(44);
+  });
+
+  test("props stand on the drawn terrain where the finer relief would lift them off it", () => {
+    const vale = createLocalWorld(wasm).scenery.scenery;
+    const { terrain, unitsPerMetre } = vale;
+    const surfaceAt = (prop: Prop) => terrainSurfaceY(terrain, unitsPerMetre, prop.position[0] / unitsPerMetre, prop.position[2] / unitsPerMetre);
+    // The prop of each kind whose exported feet sit highest above the 4 m mesh, if more than 10 cm.
+    const worst = new Map<string, { prop: Prop; lift: number }>();
+    for (const prop of vale.props) {
+      const lift = prop.position[1] / unitsPerMetre - surfaceAt(prop);
+      if (lift > 0.1 && lift > (worst.get(prop.kind)?.lift ?? 0)) {
+        worst.set(prop.kind, { prop, lift });
+      }
+    }
+    // Woodland relief has detail the 4 m grid cannot follow: trees, grass and flowers.
+    expect([...worst.keys()]).toEqual(expect.arrayContaining(["tree-oak", "grass-tuft"]));
+    for (const { prop } of worst.values()) {
+      const lowest = Math.min(...buildSceneryScene({ ...vale, props: [prop] }).batches
+        .filter((batch) => !batch.node.id.startsWith("static-all"))
+        .flatMap((batch) => batch.node.geometry.positions.map(([, y]) => y)));
+      expect(lowest, prop.kind).toBeLessThanOrEqual(surfaceAt(prop) + 0.02);
+    }
   });
 });
 

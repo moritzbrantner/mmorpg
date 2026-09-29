@@ -17,7 +17,9 @@
 //! Walkable ground is physically flat at y = 0. [`Scenery::height_at`] adds at
 //! most ±0.6 m of relief inside the playable square, flattened to exactly 0
 //! under and around structures, roads, the spawn plaza and water, and rises to
-//! mountains of up to 40 m beyond the boundary walls. Clients render a unit at
+//! mountains of up to 40 m beyond the boundary walls. Beyond the ±200 m
+//! terrain grid the same function keeps rising into distant ranges of up to
+//! 140 m, which clients draw as a coarse far ring. Clients render a unit at
 //! its physics position plus the relief height at its XZ; the offset never
 //! feeds back into gameplay.
 //!
@@ -35,10 +37,21 @@ use mmorpg_core::{Area, AreaId, StaticCollider, XzBounds, greyhaven_vale_definit
 
 /// Half the side of the square the terrain grid covers (±200 m).
 pub const TERRAIN_EXTENT_UNITS: i32 = 20_000;
+/// Half the side of the square the far terrain ring covers (±600 m).
+pub const FAR_TERRAIN_EXTENT_UNITS: i32 = 60_000;
 /// Largest relief magnitude inside the playable square (0.6 m).
 pub const WALKABLE_RELIEF_UNITS: i32 = 60;
-/// Highest mountain relief beyond the boundary walls (40 m).
+/// Highest mountain relief beyond the boundary walls, within the terrain
+/// grid (40 m).
 pub const MOUNTAIN_PEAK_UNITS: i32 = 4_000;
+/// Snow caps start here (50 m): above every mountain within the terrain grid,
+/// so only the distant ranges beyond it carry snow and read as far peaks.
+pub const SNOW_LINE_UNITS: i32 = 5_000;
+/// Highest relief of the distant ranges beyond the terrain grid (140 m).
+pub const FAR_PEAK_UNITS: i32 = 14_000;
+/// The distant ranges rise from nothing at the terrain grid's edge to full
+/// height over this distance (120 m).
+const FAR_RISE_UNITS: i64 = 12_000;
 /// Visual half width of every road (3 m wide); core keeps 2 m clear.
 pub const ROAD_HALF_WIDTH_UNITS: i32 = 150;
 
@@ -89,6 +102,88 @@ pub enum PropKind {
     MineEntrance,
     CropRow,
     Dock,
+}
+
+impl PropKind {
+    /// Every kind with its variants flattened, in declaration order.
+    pub const ALL: [Self; 34] = [
+        Self::Keep,
+        Self::Inn,
+        Self::House,
+        Self::Smithy,
+        Self::Barn,
+        Self::Farmhouse,
+        Self::Windmill,
+        Self::Well,
+        Self::PalisadeSegment,
+        Self::GatePost,
+        Self::Waystone,
+        Self::Gravestone,
+        Self::Tree(TreeVariant::Oak),
+        Self::Tree(TreeVariant::Pine),
+        Self::Tree(TreeVariant::Birch),
+        Self::Bush,
+        Self::Rock(RockSize::Small),
+        Self::Rock(RockSize::Medium),
+        Self::Rock(RockSize::Large),
+        Self::Cliff,
+        Self::GrassTuft,
+        Self::Flowers,
+        Self::Reeds,
+        Self::Fence,
+        Self::Tent,
+        Self::Campfire,
+        Self::Crate,
+        Self::Barrel,
+        Self::Cart,
+        Self::Signpost,
+        Self::Lamp,
+        Self::MineEntrance,
+        Self::CropRow,
+        Self::Dock,
+    ];
+
+    /// Stable kebab-case name with the variant, independent of `Debug`
+    /// output; clients key their models by it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Inn => "inn",
+            Self::House => "house",
+            Self::Smithy => "smithy",
+            Self::Barn => "barn",
+            Self::Farmhouse => "farmhouse",
+            Self::Windmill => "windmill",
+            Self::Well => "well",
+            Self::PalisadeSegment => "palisade",
+            Self::GatePost => "gate-post",
+            Self::Waystone => "waystone",
+            Self::Gravestone => "gravestone",
+            Self::Tree(TreeVariant::Oak) => "tree-oak",
+            Self::Tree(TreeVariant::Pine) => "tree-pine",
+            Self::Tree(TreeVariant::Birch) => "tree-birch",
+            Self::Bush => "bush",
+            Self::Rock(RockSize::Small) => "rock-small",
+            Self::Rock(RockSize::Medium) => "rock-medium",
+            Self::Rock(RockSize::Large) => "rock-large",
+            Self::Cliff => "cliff",
+            Self::GrassTuft => "grass-tuft",
+            Self::Flowers => "flowers",
+            Self::Reeds => "reeds",
+            Self::Fence => "fence",
+            Self::Tent => "tent",
+            Self::Campfire => "campfire",
+            Self::Crate => "crate",
+            Self::Barrel => "barrel",
+            Self::Cart => "cart",
+            Self::Signpost => "signpost",
+            Self::Lamp => "lamp",
+            Self::MineEntrance => "mine-entrance",
+            Self::CropRow => "crop-row",
+            Self::Dock => "dock",
+        }
+    }
 }
 
 /// One placed prop. `half_extents` describe its ground-level body box (a
@@ -407,6 +502,8 @@ const SEED_DETAIL: u64 = 0x5641_4c45_4445_5441;
 const SEED_RIDGE: u64 = 0x5249_4447_4553_2121;
 const SEED_TINT: u64 = 0x5449_4e54_5449_4e54;
 const SEED_PROPS: u64 = 0x5052_4f50_5345_4544;
+const SEED_MASSIF: u64 = 0x4d41_5353_4946_2121;
+const SEED_CRAGS: u64 = 0x4352_4147_5321_2121;
 const LAKE: Water = Water {
     name: "Stillwater Lake",
     centre: [5_500, -5_500],
@@ -489,9 +586,21 @@ impl Scenery {
     /// `step_units` (at least one unit).
     #[must_use]
     pub fn terrain_grid(&self, step_units: i32) -> TerrainGrid {
+        self.grid_over(TERRAIN_EXTENT_UNITS, step_units)
+    }
+
+    /// The same relief and biomes over ±[`FAR_TERRAIN_EXTENT_UNITS`], for a
+    /// coarse far ring around the terrain grid. Inside ±[`TERRAIN_EXTENT_UNITS`]
+    /// its samples equal [`Scenery::terrain_grid`]'s at the same positions.
+    #[must_use]
+    pub fn far_terrain_grid(&self, step_units: i32) -> TerrainGrid {
+        self.grid_over(FAR_TERRAIN_EXTENT_UNITS, step_units)
+    }
+
+    fn grid_over(&self, extent: i32, step_units: i32) -> TerrainGrid {
         let step = step_units.max(1);
-        let count = usize::try_from(2 * TERRAIN_EXTENT_UNITS / step + 1).unwrap_or(1);
-        let origin = [-TERRAIN_EXTENT_UNITS, -TERRAIN_EXTENT_UNITS];
+        let count = usize::try_from(2 * extent / step + 1).unwrap_or(1);
+        let origin = [-extent, -extent];
         let mut heights = Vec::with_capacity(count * count);
         let mut biomes = Vec::with_capacity(count * count);
         let mut colors = Vec::with_capacity(count * count);
@@ -519,8 +628,9 @@ impl Scenery {
         }
     }
 
-    /// FNV-1a over every prop, road, water body and a coarse terrain grid:
-    /// equal on every platform for the same content revision.
+    /// FNV-1a over every prop, road, water body and coarse samples of the
+    /// terrain grid and the far ring: equal on every platform for the same
+    /// content revision.
     #[must_use]
     pub fn stable_hash(&self) -> u64 {
         let mut hash = Fnv::default();
@@ -548,10 +658,11 @@ impl Scenery {
             }
             hash.write(&water.surface.to_be_bytes());
         }
-        let grid = self.terrain_grid(1_000);
-        for (height, color) in grid.heights.iter().zip(&grid.colors) {
-            hash.write(&height.to_be_bytes());
-            hash.write(color);
+        for grid in [self.terrain_grid(1_000), self.far_terrain_grid(6_000)] {
+            for (height, color) in grid.heights.iter().zip(&grid.colors) {
+                hash.write(&height.to_be_bytes());
+                hash.write(color);
+            }
         }
         hash.0
     }
@@ -577,8 +688,8 @@ impl Scenery {
         let point = [x, z];
         if beyond_playable(x, z) > 0 {
             return match height {
-                2_800.. => Biome::Snow,
-                1_500..=2_799 => Biome::Rock,
+                SNOW_LINE_UNITS.. => Biome::Snow,
+                1_500..SNOW_LINE_UNITS => Biome::Rock,
                 700..=1_499 => Biome::Highland,
                 _ => Biome::Foothills,
             };
@@ -624,7 +735,7 @@ pub const ROAD_COLOR: [u8; 3] = [140, 112, 76];
 pub const PLAZA_COLOR: [u8; 3] = [150, 136, 110];
 /// The lake bed under the water surface.
 pub const LAKE_BED_COLOR: [u8; 3] = [120, 112, 88];
-/// Snow caps above 28 m.
+/// Snow caps above [`SNOW_LINE_UNITS`].
 pub const SNOW_COLOR: [u8; 3] = [236, 238, 242];
 
 fn clamp_channel(value: i32) -> u8 {
@@ -633,11 +744,33 @@ fn clamp_channel(value: i32) -> u8 {
 
 /// Chebyshev distance outside the playable square, zero or negative inside.
 fn beyond_playable(x: i32, z: i32) -> i64 {
+    beyond(x, z, PLAYABLE_BOUNDS)
+}
+
+/// Chebyshev distance outside `bounds`, zero or negative inside.
+fn beyond(x: i32, z: i32, bounds: XzBounds) -> i64 {
     let over = |value: i32, bounds: [i32; 2]| {
         (i64::from(bounds[0]) - i64::from(value)).max(i64::from(value) - i64::from(bounds[1]))
     };
-    let bounds: XzBounds = PLAYABLE_BOUNDS;
     over(x, [bounds.min[0], bounds.max[0]]).max(over(z, [bounds.min[1], bounds.max[1]]))
+}
+
+/// Extra height of the distant ranges: zero on and inside the terrain
+/// grid's edge, rising over [`FAR_RISE_UNITS`] to seeded massifs and crags.
+fn distant_ranges(x: i32, z: i32) -> i64 {
+    let grid = XzBounds {
+        min: [-TERRAIN_EXTENT_UNITS, -TERRAIN_EXTENT_UNITS],
+        max: [TERRAIN_EXTENT_UNITS, TERRAIN_EXTENT_UNITS],
+    };
+    let outside = beyond(x, z, grid);
+    if outside <= 0 {
+        return 0;
+    }
+    let rise = outside.min(FAR_RISE_UNITS) * 1024 / FAR_RISE_UNITS;
+    let massif = (value_noise(SEED_MASSIF, x, z, 18_000) + 1024) / 2;
+    let crags = value_noise(SEED_CRAGS, x, z, 6_000);
+    let shape = 1_500 + massif * 6_500 / 1024 + crags * 1_500 / 1024;
+    rise * shape.max(0) / 1024
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -763,10 +896,11 @@ impl Relief {
             let base = (beyond * 2 / 3).min(3_200);
             let ridge =
                 value_noise(SEED_RIDGE, x, z, 3_000) * 800 / 1024 * beyond.min(3_000) / 3_000;
-            (walkable + base + ridge).clamp(
+            let near = (walkable + base + ridge).clamp(
                 -i64::from(WALKABLE_RELIEF_UNITS),
                 i64::from(MOUNTAIN_PEAK_UNITS),
-            )
+            );
+            (near + distant_ranges(x, z)).min(i64::from(FAR_PEAK_UNITS))
         } else {
             let cell = (
                 x.div_euclid(RELIEF_BUCKET_UNITS),
