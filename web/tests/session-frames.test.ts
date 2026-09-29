@@ -13,6 +13,7 @@ import {
   encodeCommandFrame,
   snapshotHash,
 } from "../src/session/frames";
+import { parseSessionRoute, reconnectUrl } from "../src/session/route";
 import {
   SNAPSHOT_REASSEMBLY_MAX_BUFFERED_BYTES,
   SNAPSHOT_REASSEMBLY_MAX_IDLE_DATAGRAMS,
@@ -79,6 +80,16 @@ describe("game-server session frames (shared golden fixture)", () => {
     expect(Number(field(contract, "reassembly_max_pending"))).toBe(SNAPSHOT_REASSEMBLY_MAX_PENDING);
     expect(Number(field(contract, "reassembly_max_buffered_bytes"))).toBe(SNAPSHOT_REASSEMBLY_MAX_BUFFERED_BYTES);
     expect(Number(field(contract, "reassembly_max_idle_datagrams"))).toBe(SNAPSHOT_REASSEMBLY_MAX_IDLE_DATAGRAMS);
+  });
+
+  test("the resume route is the hosted reconnect route, and a page never accepts one", () => {
+    const [route] = lines("route");
+    if (!route) throw new Error("fixture lacks the route line");
+    const admission = parseSessionRoute(`https://127.0.0.1:4433${field(route, "prefix")}/matches/${field(route, "match_id")}`);
+    expect(admission).toMatchObject({ prefix: "/game", matchId: "zone-1", zoneId: 1 });
+    const resume = reconnectUrl(admission, bytes(field(route, "token")));
+    expect(resume).toBe(`https://127.0.0.1:4433${route.encoded}`);
+    expect(() => parseSessionRoute(resume)).toThrow();
   });
 
   test("welcomes decode to the Rust fields and the test host encodes the same bytes", () => {
