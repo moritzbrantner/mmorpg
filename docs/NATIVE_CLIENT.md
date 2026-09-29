@@ -36,6 +36,8 @@ To exercise the exact launcher without leaving a window open:
 ./scripts/dev-native.sh --smoke
 ```
 
+Browser tabs can join a local zone host too: `./scripts/dev-browser-online.sh` starts the host with the same certificate and ports and serves the page in [browser online mode](../README.md#browser-online-mode), which follows the session and resume rules below. Run it instead of this launcher, not beside it.
+
 Run this command in another terminal for a second player after the launcher is ready:
 
 ```sh
@@ -76,7 +78,7 @@ While the window remains open, a transport timeout/local connection loss or five
 
 Tokens stay in memory and never appear in CLI arguments or application logs. Session URLs must name a fresh hosted-match route without credentials, query parameters, or fragments. The server owns token rotation and expiry. Reconnect lasts at most ten seconds or the advertised grace period, whichever is shorter; it includes a 250 ms delay for server-side disconnect processing. That delay is best effort, not an acknowledgement protocol. The retained player may continue its last server-owned movement during the interruption until the stop reaches the server.
 
-A rejected, expired, incompatible, or incomplete resume ends the session with an error. The client never substitutes a new player. Protocol errors and server application rejections are terminal. Closing the window cancels a pending attempt. Resume after closing the application, server restart recovery, and live zone rerouting are not implemented.
+A rejected, expired, incompatible, or incomplete resume ends the session with an error. The client never substitutes a new player. The browser's online mode implements the same resume rules; browsers cannot tell a server's application close from a lost path, so it treats both as an interruption and relies on the host refusing a resume it will not grant. Protocol errors and server application rejections are terminal. Closing the window cancels a pending attempt. Resume after closing the application, server restart recovery, and live zone rerouting are not implemented.
 
 ## Current limits
 
