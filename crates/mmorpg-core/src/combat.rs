@@ -200,13 +200,11 @@ impl ZoneSimulation {
         let Some(player) = self.players.get_mut(&player_id) else {
             return Ok(());
         };
-        if !player.is_alive() {
-            return Ok(());
-        }
+        // Timers run for the dead too: combat ends 5 s after the killing blow.
         player.swing_timer = player.swing_timer.saturating_sub(1);
         player.combat_timer = player.combat_timer.saturating_sub(1);
         player.error_cooldown = player.error_cooldown.saturating_sub(1);
-        if !player.auto_attack {
+        if !player.is_alive() || !player.auto_attack {
             return Ok(());
         }
         let (target, creature_id) = match player.target {

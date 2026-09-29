@@ -5,7 +5,7 @@ mod support;
 
 use std::sync::Arc;
 
-use mmorpg_core::unit::{CORPSE_TICKS, PLAYER_SWING_TICKS};
+use mmorpg_core::unit::{COMBAT_LINGER_TICKS, CORPSE_TICKS, PLAYER_SWING_TICKS};
 use mmorpg_core::{
     CREATURE_EVADE_SPEED_UNITS_PER_TICK, CanonicalCreatureSnapshot, CreatureAi, CreatureId,
     CreatureLife, EntityKind, EntityRef, ErrorCode, NpcId, ThreatEntry, ZoneCommand, ZoneEvent,
@@ -343,6 +343,13 @@ fn assist_death_release_spirit_and_evade() {
         let (dx, dz) = (i64::from(x - home[0]), i64::from(z - home[1]));
         assert!(dx * dx + dz * dz <= 20 * 20, "{id:?} is home at {x}, {z}");
     }
+    // Combat lingers 5 s after the killing blow, whether dead or alive.
+    while session.zone.current_tick() < died + u64::from(COMBAT_LINGER_TICKS) {
+        session.tick();
+    }
+    let view = session.zone.snapshot_for_player(1).unwrap();
+    assert!(view.viewer.dead && !view.viewer.in_combat);
+    assert!(!view.entities[0].flags.in_combat);
 
     session.send(arena::stand(NORTHWARD));
     session.send(ZoneCommand::ReleaseSpirit);
