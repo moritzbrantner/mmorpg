@@ -2,14 +2,15 @@ import type { RendererSceneNode } from "@moritzbrantner/three-d-renderer";
 import type { EntityKind, EntityRef, EntityState } from "../replication";
 import type { ContentCatalog } from "./catalog";
 import { UnitAnimator, poseFor, type LocomotionState } from "./character-animation";
-import { OTHER_PLAYER_LOOK, humanoidNodes, humanoidStance, type HumanoidLook, type UnitPlacement } from "./humanoid";
+import { archerNodes } from "./archer-asset";
+import { OTHER_PLAYER_LOOK, humanoidHeadwearNodes, humanoidNodes, humanoidStance, type HumanoidLook, type UnitPlacement } from "./humanoid";
 import { PLACEHOLDER_BODY_MODEL } from "./units/creature-bodies";
 
 /**
  * Unit rendering by projected entity. A registry maps each entity kind to a
  * model, and the model reads the whole projected entity, so it can pick a
  * body by appearance (template ID) and stand on its own half height. Players
- * are animated humanoids; creatures and NPCs are placeholder bodies
+ * are animated humanoids (Rangers use the packaged archer mesh); creatures and NPCs are placeholder bodies
  * (`units/creature-bodies.ts`) until they get models of their own.
  */
 export type { UnitPlacement } from "./humanoid";
@@ -81,6 +82,10 @@ export const PLAYER_MODEL: UnitModel = {
   halfHeightUnits: (_entity, context) => context.playerHalfHeightUnits,
   nodes: ({ id, entity, placement, locomotion, context }) => {
     const look = entity.entityId === context.viewerId ? context.viewerLook : OTHER_PLAYER_LOOK;
+    if (look.visuals.weapon === "bow") {
+      const pose = poseFor(locomotion, "bow");
+      return [...archerNodes(id, placement, look, pose.bob), ...humanoidHeadwearNodes(id, placement, look, pose)];
+    }
     return humanoidNodes(id, placement, look, poseFor(locomotion, humanoidStance(look)));
   },
 };

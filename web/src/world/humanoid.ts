@@ -254,12 +254,33 @@ export function humanoidNodes(id: string, placement: UnitPlacement, look: Humano
 
   gear(parts, look, spine, hands, forearms, root, b.torso, b.depth);
 
+  return renderParts(id, parts);
+}
+
+function renderParts(id: string, parts: Part[]): RendererSceneNode[] {
   return parts.map((entry) => ({
     id: `${id}-${entry.name}`,
     geometry: { kind: "mesh", resourceKey: `humanoid:${entry.shape}`, ...shape(entry.shape) },
     color: entry.color,
     transform: { translation: entry.frame.p, rotationQuaternion: entry.frame.q, scale: entry.scale },
   }));
+}
+
+/** Retain local headwear customization while the first asset kit only supplies a bare head. */
+export function humanoidHeadwearNodes(id: string, placement: UnitPlacement, look: HumanoidLook, pose: Pose): RendererSceneNode[] {
+  const b = build(look.visuals);
+  const root: Frame = { p: [placement.x, placement.feetY, placement.z], q: qAxis(1, placement.yawRadians) };
+  const pelvis = child(root, [0, b.pelvisY + pose.bob, 0], qAxis(1, pose.hipYaw));
+  const spine = child(pelvis, [0, 0.06, 0], euler(pose.lean, pose.twist));
+  const neck = child(spine, [0, b.torso + 0.02, 0], euler(pose.headPitch));
+  const head = child(neck, [0, b.head + 0.05, 0.01]);
+  const parts: Part[] = [];
+  hat(parts, look, head, b.head);
+  if (look.longHair) {
+    part(parts, "braid", "limb", look.hair, child(head, [0, -b.head * 0.2, -b.head * 0.85], euler(0.25)), [0.045, 0.3, 0.04]);
+    part(parts, "braid-tie", "blob", LEATHER, child(head, [0, -b.head * 0.2 - 0.29, -b.head * 0.85 - 0.075]), [0.035, 0.03, 0.035]);
+  }
+  return renderParts(id, parts);
 }
 
 function hat(parts: Part[], look: HumanoidLook, head: Frame, radius: number): void {

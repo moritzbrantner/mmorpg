@@ -1,0 +1,6 @@
+{
+  "repository": "moritzbrantner/asset-tooling",
+  "commit": "d0585174de734ba3e0ff407197dcdaa06a252c4d",
+  "generator": "examples/medieval-character-kit/build.ts",
+  "archetype": "archer"
+}

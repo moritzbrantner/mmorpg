@@ -57,7 +57,7 @@ describe("unit model registry", () => {
     const fresh = animators.locomotion(moved, placeUnit(moved, 90, 0, 100), 100, 1 / 30, true);
     expect(fresh.stridePhase).toBe(0);
     const nodes = PLAYER_MODEL.nodes({ id: "unit-player-3", entity, placement: first, locomotion, context: CONTEXT });
-    expect(nodes.length).toBeGreaterThan(20);
+    expect(nodes.map((node) => node.id)).toContain("unit-player-3-bow-stave");
   });
 
   test("the player model dresses the viewer's own unit in the local look and others in the shared one", () => {
