@@ -19,7 +19,8 @@ bun web/scripts/package-archer.ts ../asset-tooling --check
 
 Use `--write` to reconcile the packaged outputs after an intentional source
 revision change. The check re-executes asset-tooling's generator and compares
-the OBJ and manifest bytes; it does not rewrite packaged files. The ordinary
+the OBJ and manifest bytes; it rejects a dirty source checkout and does not
+rewrite packaged files. The ordinary
 web test verifies the committed OBJ's SHA-256, byte length, group order, mesh
 topology and renderer resource keys without requiring the sibling checkout.
 The OBJ uses right-handed Y-up millimeters, lowered exactly once to

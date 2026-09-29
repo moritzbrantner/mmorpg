@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { spawnSync } from "node:child_process";
+import { assertCleanSourceCheckout } from "./asset-source-checkout";
 
 const packageDirectory = fileURLToPath(new URL("../assets/medieval-character-kit/", import.meta.url));
 const source = JSON.parse(await readFile(path.join(packageDirectory, "source.json"), "utf8")) as {
@@ -13,10 +13,7 @@ const mode = process.argv[3] ?? "--check";
 if (mode !== "--check" && mode !== "--write") {
   throw new Error("usage: bun scripts/package-archer.ts [asset-tooling-checkout] [--check|--write]");
 }
-const revision = spawnSync("git", ["-C", checkout, "rev-parse", "HEAD"], { encoding: "utf8" });
-if (revision.status !== 0 || revision.stdout.trim() !== source.commit) {
-  throw new Error(`asset-tooling checkout must be at ${source.commit}`);
-}
+assertCleanSourceCheckout(checkout, source.commit);
 const kit = await import(pathToFileURL(path.join(checkout, "src/medieval-character-kit.ts")).href);
 const materialKit = await import(pathToFileURL(path.join(checkout, "src/medieval-character-materials.ts")).href);
 const generated = kit.generateMedievalCharacterObj(source.archetype);
