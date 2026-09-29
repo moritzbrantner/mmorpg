@@ -14,16 +14,17 @@ pub const SNAPSHOT_WIRE_VERSION: u8 = 4;
 
 /// Smallest WebTransport datagram payload measured over the pinned stack:
 /// QUIC's 1,200-byte initial MTU before path MTU discovery, observed as 1,161
-/// bytes by both peers (`mmorpg-client` `connected_world` tests). The pinned
-/// `game-server` captures its limit when a connection starts, which on a real
-/// path can precede discovery, and closes the session for a larger snapshot.
+/// bytes by both peers (`mmorpg-client` `connected_world` tests). This remains
+/// the current projection-policy budget even though the transport can fragment
+/// larger session frames.
 pub const MEASURED_MIN_DATAGRAM_BYTES: usize = 1_161;
 /// `game-server` session frame header in front of every snapshot payload.
 pub const SESSION_SNAPSHOT_HEADER_BYTES: usize = 20;
 /// Headroom for transport overhead the measurement does not cover.
 pub const DATAGRAM_SAFETY_MARGIN_BYTES: usize = 64;
-/// Largest player projection payload: one datagram until `game-server`
-/// snapshot fragmentation is pinned (issue #18), when this budget can rise.
+/// Largest player projection payload under the current MMO relevance policy.
+/// Transport fragmentation permits future sections to grow beyond this budget
+/// once the projection policy and both decoders change together.
 pub const MAX_PLAYER_PROJECTION_BYTES: usize =
     MEASURED_MIN_DATAGRAM_BYTES - SESSION_SNAPSHOT_HEADER_BYTES - DATAGRAM_SAFETY_MARGIN_BYTES;
 

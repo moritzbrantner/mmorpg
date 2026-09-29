@@ -8,8 +8,8 @@ use mmorpg_client::{
     session::{MovementInput, NetworkUpdate},
 };
 use mmorpg_core::{
-    EntitySnapshot, MAX_VISIBLE_ENTITIES, PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, ZoneId, ZoneSnapshot,
-    greyhaven_vale_definition,
+    EntityKind, EntitySnapshot, MAX_VISIBLE_ENTITIES, PLAYER_HALF_EXTENTS_UNITS,
+    SNAPSHOT_SCHEMA_VERSION, TICK_HZ, ZoneId, ZoneSnapshot, greyhaven_vale_definition,
 };
 use mmorpg_game_server::{ZoneGameServerAdapter, zone_match_id};
 use mmorpg_protocol::{
@@ -376,6 +376,113 @@ async fn a_projection_at_the_relevance_cap_reaches_a_client() {
     })
     .await;
     local.stop().await;
+    result.unwrap().unwrap();
+}
+
+/// Exercise the native receive loop with a valid v4 projection split into
+/// datagrams. The current 64-entity policy fits the measured production path;
+/// a smaller send budget forces the transport branch without changing policy.
+#[tokio::test]
+async fn fragmented_projection_reaches_the_native_client() {
+    use game_server::{
+        SnapshotFrame, Welcome, encode_snapshot, encode_snapshot_fragments, encode_welcome,
+        snapshot_hash,
+    };
+    use wtransport::{Endpoint, Identity, ServerConfig};
+
+    let zone_id = ZoneId::new(1);
+    let revision = greyhaven_vale_definition().revision();
+    let player_id = 42;
+    let snapshot = ZoneSnapshot {
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
+        zone_id,
+        tick: 7,
+        content_revision: revision,
+        acknowledged_sequence: 0,
+        viewer_id: player_id,
+        entities: (0..MAX_VISIBLE_ENTITIES)
+            .map(|index| EntitySnapshot {
+                kind: EntityKind::Player,
+                id: player_id + u32::try_from(index).unwrap(),
+                position: [0; 3],
+                velocity: [0; 3],
+                facing: 0,
+            })
+            .collect(),
+    };
+    let payload = mmorpg_protocol::encode_snapshot(&snapshot).unwrap();
+    let frame = encode_snapshot(&SnapshotFrame {
+        tick: snapshot.tick,
+        state_hash: snapshot_hash(snapshot.tick, &payload),
+        payload,
+    })
+    .unwrap();
+    let test_budget = game_server::MIN_FRAGMENTED_DATAGRAM_BYTES;
+    assert!(frame.len() > test_budget);
+    let fragments = encode_snapshot_fragments(&frame, test_budget).unwrap();
+    assert!(fragments.len() > 1);
+    assert!(
+        fragments
+            .iter()
+            .all(|fragment| fragment.len() <= test_budget)
+    );
+    let tick = snapshot.tick;
+
+    let identity = Identity::self_signed(["localhost"]).unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let certificate = temporary.path().join("cert.pem");
+    std::fs::write(
+        &certificate,
+        identity.certificate_chain().as_slice()[0].to_pem(),
+    )
+    .unwrap();
+    let server = Endpoint::server(
+        ServerConfig::builder()
+            .with_bind_default(0)
+            .with_identity(identity)
+            .build(),
+    )
+    .unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let host = tokio::spawn(async move {
+        let request = server.accept().await.await.unwrap();
+        let connection = request.accept().await.unwrap();
+        let opening = connection.open_uni().await.unwrap();
+        let mut stream = opening.await.unwrap();
+        stream
+            .write_all(&encode_welcome(Welcome {
+                player_id,
+                tick_hz: TICK_HZ,
+                max_players: 512,
+                current_tick: tick,
+                connection_epoch: 1,
+                reconnect_token: [1; 16],
+                reconnect_grace_ticks: 120,
+            }))
+            .await
+            .unwrap();
+        stream.finish().await.unwrap();
+        for fragment in fragments {
+            connection.send_datagram(&fragment).unwrap();
+        }
+        let _ = released.await;
+    });
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
+        let session = ClientSession::connect(
+            &format!("https://localhost:{port}/game/matches/zone-1"),
+            Some(&certificate),
+            zone_id,
+            revision,
+        )
+        .await?;
+        let delivered = session.receive_snapshot().await?;
+        assert_eq!(delivered, snapshot);
+        Ok::<(), ClientError>(())
+    })
+    .await;
+    let _ = release.send(());
+    host.await.unwrap();
     result.unwrap().unwrap();
 }
 
