@@ -123,6 +123,8 @@ let world: LocalWorld | null = null;
 let worldLoadError: string | null = null;
 /** Why the last entry failed or the world was left after an error; cleared by the next entry. */
 let worldFailure: string | null = null;
+/** A join is in flight; selection stays put until it settles. */
+let joining = false;
 let jumps = 0;
 
 function loadCreatedRoster(): CharacterPreview[] {
@@ -554,10 +556,10 @@ function renderRoster(): void {
 
 function updateEntryButton(): void {
   const character = selectedCharacter();
-  enterWorldButton.disabled = world === null;
-  enterWorldLabel.textContent = "Enter World";
+  enterWorldButton.disabled = world === null || joining;
+  enterWorldLabel.textContent = joining ? "Entering…" : "Enter World";
   enterWorldNote.textContent = world
-    ? worldFailure ?? `Start ${character.name} in Greyhaven Outpost`
+    ? joining ? `Joining with ${character.name}…` : worldFailure ?? `Start ${character.name} in Greyhaven Outpost`
     : worldLoadError
       ? `The zone simulation could not load: ${worldLoadError}`
       : "Loading the zone simulation…";
@@ -577,7 +579,7 @@ function refreshSelectionPresentation(): void {
 }
 
 function selectCharacter(characterId: string): void {
-  if (creationDraft) {
+  if (creationDraft || joining) {
     return;
   }
   const character = characters.find((candidate) => candidate.id === characterId);
@@ -617,6 +619,9 @@ function syncCreationDraft(): void {
 }
 
 function openCharacterCreation(): void {
+  if (joining) {
+    return;
+  }
   if (characters.length >= MAX_CHARACTER_SLOTS) {
     rosterStatus.textContent = `All ${MAX_CHARACTER_SLOTS} character slots are full.`;
     return;
@@ -771,21 +776,26 @@ function frame(now: number) {
   renderSelection();
 }
 
-function enterWorld() {
-  if (creationDraft || !world || entryState.phase === "world") {
+/** Joins the world, then switches the page to it. Never rejects: failures are shown on the selection screen. */
+async function enterWorld(): Promise<void> {
+  if (creationDraft || !world || entryState.phase === "world" || joining) {
     return;
   }
   const next = enterPreviewWorld(entryState, selectedCharacter());
   // Join before switching the page: a refused join leaves the source unjoined, so
   // the page stays on selection, says why, and entry can be retried.
+  joining = true;
+  updateEntryButton();
   try {
     const character = selectedCharacter();
-    world.source.join({ classId: character.classId, sex: character.sex });
+    await world.source.join({ classId: character.classId, sex: character.sex });
   } catch (error) {
     console.error(error);
     worldFailure = `Could not enter the world: ${errorMessage(error)}`;
-    updateEntryButton();
     return;
+  } finally {
+    joining = false;
+    updateEntryButton();
   }
   worldFailure = null;
   turntable.cancel();
@@ -848,7 +858,7 @@ for (const button of hatButtons) {
 }
 saveCharacterButton.addEventListener("click", saveCurrentCharacter);
 loadCharacterButton.addEventListener("click", loadSavedCharacter);
-enterWorldButton.addEventListener("click", enterWorld);
+enterWorldButton.addEventListener("click", () => void enterWorld());
 returnButton.addEventListener("click", () => returnToCharacters());
 createCharacterButton.addEventListener("click", openCharacterCreation);
 for (const button of cancelCreationButtons) {
@@ -942,7 +952,7 @@ function runAction(action: GameAction): void {
       worldView.toggleOverlay();
       return;
     case "ui.enterWorld":
-      enterWorld();
+      void enterWorld();
       return;
     case "ui.cancelCreation":
       cancelCharacterCreation();

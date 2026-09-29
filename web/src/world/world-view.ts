@@ -12,7 +12,6 @@ import type { EntityRef } from "../entity-ref";
 import type { EntityState, ZoneSnapshot } from "../replication";
 import { DebugOverlay, FrameRate } from "./debug-overlay";
 import { ENVIRONMENT } from "./environment";
-import type { LocalWorld } from "./local-world";
 import { Minimap, buildMinimapLayers, dispositionOf, type MinimapElements, type MinimapUnit } from "./minimap";
 import { MovementOutbox, type MovementInput } from "./movement-outbox";
 import {
@@ -38,6 +37,7 @@ import { ProgressionHud } from "./units/progression-hud";
 import { SpellEffects, allEffectNodes, type Anchor } from "./units/spell-effects";
 import { SecondaryClick, attackToggle } from "./units/targeting";
 import type { ContentCatalog } from "./catalog";
+import type { ZoneWorld } from "./world-source";
 
 /**
  * The in-world presentation: static scenery, animated units, the orbit
@@ -102,7 +102,7 @@ type Drag = { pointerId: number; x: number; y: number; mode: Exclude<DragMode, "
 type Box = { min: Vec3; max: Vec3 };
 
 /** Structure collider boxes in metres, for choosing an unobstructed first view. */
-function occluders(world: LocalWorld): Box[] {
+function occluders(world: ZoneWorld): Box[] {
   const { props, unitsPerMetre } = world.scenery.scenery;
   const margin = 0.4;
   return props.flatMap((prop) => {
@@ -203,7 +203,7 @@ export class WorldView {
   }
 
   /** Builds the static scene and the minimap image once per loaded world. */
-  load(world: LocalWorld): void {
+  load(world: ZoneWorld): void {
     const started = performance.now();
     this.#catalog = world.catalog;
     this.#bags.load(world.catalog);
@@ -316,7 +316,7 @@ export class WorldView {
   }
 
   /** One frame: intent out, ticks, projection in, scene drawn. Throws when the projection lacks the viewer. */
-  frame(world: LocalWorld, input: WorldInput, look: UnitLook, deltaSeconds: number, now: number): void {
+  frame(world: ZoneWorld, input: WorldInput, look: UnitLook, deltaSeconds: number, now: number): void {
     const scene = this.#scene;
     const sceneryFrame = this.#sceneryFrame;
     if (!scene || !sceneryFrame) {
@@ -341,7 +341,7 @@ export class WorldView {
     }
     const projection = source.latestProjection();
     if (!projection) {
-      throw new Error("The local zone has no projection for the joined player.");
+      throw new Error("The world source has no projection for the joined player.");
     }
     const animate = this.#animate;
     this.#seconds += deltaSeconds;

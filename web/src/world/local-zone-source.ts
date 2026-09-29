@@ -1,7 +1,7 @@
 import { encodeCommand, type WorldCommand } from "../command-wire";
 import { FixedTickClock } from "../demo-clock";
 import { decodeSnapshot, SnapshotBuffer, type EntityState, type ZoneSnapshot } from "../replication";
-import { classChoiceCodes, DEFAULT_JOIN_CHARACTER, type JoinCharacter, type WorldSource } from "./world-source";
+import { classChoiceCodes, DEFAULT_JOIN_CHARACTER, type JoinCharacter, type LinkState, type WorldSource } from "./world-source";
 
 /** The subset of the wasm-bindgen `LocalZone` this source drives. */
 export type LocalZoneHandle = {
@@ -33,7 +33,8 @@ export class LocalZoneSource implements WorldSource {
     this.#zone = zone;
   }
 
-  join(character: JoinCharacter = DEFAULT_JOIN_CHARACTER): number {
+  // Async only for the contract: a local join completes before it returns its promise.
+  async join(character: JoinCharacter = DEFAULT_JOIN_CHARACTER): Promise<number> {
     if (this.#player !== null) {
       throw new Error("Already in the world; leave before joining again.");
     }
@@ -95,6 +96,10 @@ export class LocalZoneSource implements WorldSource {
 
   latestProjection(): ZoneSnapshot | null {
     return this.#latest;
+  }
+
+  linkState(): LinkState {
+    return "connected";
   }
 
   sample(): readonly EntityState[] {
