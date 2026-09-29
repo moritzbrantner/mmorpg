@@ -362,7 +362,7 @@ export class WorldView {
         onSent?.(sequence);
       }
     }
-    for (const command of this.#outbox.update(this.#input(input), now)) {
+    for (const command of this.#outbox.update(this.#input(input), now, latest?.viewer.dead ?? false)) {
       source.sendCommand(command);
     }
     const receivedProjections = source.advance(deltaSeconds);

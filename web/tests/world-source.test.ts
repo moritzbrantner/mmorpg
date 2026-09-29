@@ -177,6 +177,23 @@ describe("movement outbox", () => {
     ]);
   });
 
+  test("the dead send no held movement or jumps; living again resumes the held keys", () => {
+    const outbox = new MovementOutbox(input());
+    outbox.update(input({ forward: 1, strafe: -1, facing: 300 }), 0);
+    // Death lets go at once, at the facing last sent, whatever is held or pressed.
+    expect(outbox.update(input({ forward: 1, strafe: -1, facing: 900, jumps: 1 }), 1, true)).toEqual([
+      { kind: "move", forward: 0, strafe: 0, facing: 300 },
+    ]);
+    expect(outbox.update(input({ forward: 1, facing: 900, jumps: 2 }), 2, true)).toEqual([]);
+    expect(outbox.update(input({ forward: 1, facing: 900, jumps: 2 }), 1 + RESEND_INTERVAL_MS, true)).toEqual([
+      { kind: "move", forward: 0, strafe: 0, facing: 300 },
+    ]);
+    // Presses made while dead are never replayed after release.
+    expect(outbox.update(input({ forward: 1, facing: 900, jumps: 2 }), 1 + RESEND_INTERVAL_MS + 1)).toEqual([
+      { kind: "move", forward: 1, strafe: 0, facing: 900 },
+    ]);
+  });
+
   test("a new session drops earlier presses and resends intent", () => {
     const outbox = new MovementOutbox(input());
     outbox.update(input({ forward: 1 }), 0);
