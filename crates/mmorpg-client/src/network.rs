@@ -3,9 +3,13 @@
 //! their rotation, grace period, and connection epochs.
 
 use crate::ClientError;
-use game_server::{BrowserRoutePrefix, MatchId, ReconnectToken, WELCOME_BYTES, Welcome};
+use game_server::{
+    BrowserRoutePrefix, MatchId, ReconnectToken, SnapshotFrame, SnapshotReassembler, WELCOME_BYTES,
+    Welcome,
+};
 use mmorpg_core::{EntityKind, TICK_HZ, ZoneCommand, ZoneId, ZoneSnapshot};
 use std::{collections::BTreeSet, error::Error, fmt, path::Path, time::Duration};
+use tokio::sync::Mutex;
 use url::Url;
 use wtransport::{
     ClientConfig, Connection, Endpoint, VarInt,
@@ -102,6 +106,7 @@ pub struct ClientSession {
     // The endpoint and its verified TLS configuration outlive every connection.
     endpoint: Endpoint<Client>,
     connection: Connection,
+    reassembler: Mutex<SnapshotReassembler>,
     route: SessionRoute,
     welcome: Welcome,
     sequence: u32,
@@ -138,6 +143,7 @@ impl ClientSession {
             Ok(Self {
                 endpoint,
                 connection,
+                reassembler: Mutex::new(SnapshotReassembler::new()),
                 route,
                 welcome,
                 sequence: 0,
@@ -163,9 +169,8 @@ impl ClientSession {
 
     /// The largest datagram this connection currently negotiates, or `None`
     /// when the peer does not support datagrams. Both peers run the pinned
-    /// WebTransport stack with default transport configuration, so this is
-    /// the client-side observation of the budget the host checks snapshots
-    /// against when a connection starts.
+    /// WebTransport stack with default transport configuration; the host
+    /// observes its own current budget when sending each snapshot.
     #[must_use]
     pub fn max_datagram_size(&self) -> Option<usize> {
         self.connection.max_datagram_size()
@@ -200,6 +205,8 @@ impl ClientSession {
                 .connect(url.as_str())
                 .await
                 .map_err(|_| "could not reconnect to the existing session")?;
+            // Fragment and delivered-tick state belongs to the old connection.
+            self.reassembler = Mutex::new(SnapshotReassembler::new());
             let welcome = read_welcome(&self.connection).await?;
             if welcome.player_id != self.welcome.player_id
                 || welcome.connection_epoch <= self.welcome.connection_epoch
@@ -291,16 +298,31 @@ impl ClientSession {
     }
 
     pub async fn receive_snapshot(&self) -> Result<ZoneSnapshot, SessionError> {
-        let datagram = tokio::time::timeout(SNAPSHOT_TIMEOUT, self.connection.receive_datagram())
-            .await
-            .map_err(|_| SessionError::SnapshotTimeout)?
-            .map_err(SessionError::Receive)?;
-        self.decode_snapshot(&datagram)
-            .map_err(SessionError::InvalidData)
+        tokio::time::timeout(SNAPSHOT_TIMEOUT, async {
+            loop {
+                let datagram = self
+                    .connection
+                    .receive_datagram()
+                    .await
+                    .map_err(SessionError::Receive)?;
+                let frame = self
+                    .reassembler
+                    .lock()
+                    .await
+                    .accept(&datagram)
+                    .map_err(|error| SessionError::InvalidData(error.into()))?;
+                if let Some(frame) = frame {
+                    return self
+                        .decode_snapshot(frame)
+                        .map_err(SessionError::InvalidData);
+                }
+            }
+        })
+        .await
+        .map_err(|_| SessionError::SnapshotTimeout)?
     }
 
-    fn decode_snapshot(&self, bytes: &[u8]) -> Result<ZoneSnapshot, ClientError> {
-        let frame = game_server::decode_snapshot(bytes)?;
+    fn decode_snapshot(&self, frame: SnapshotFrame) -> Result<ZoneSnapshot, ClientError> {
         let snapshot = mmorpg_protocol::decode_snapshot(&frame.payload)?;
         if snapshot.zone_id != self.zone_id || snapshot.content_revision != self.content_revision {
             return Err("server zone or world content does not match this client".into());

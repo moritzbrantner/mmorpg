@@ -56,7 +56,7 @@ Positions are absolute `i16` units. Zone content keeps every collider bound and 
 
 ### Datagram byte budget
 
-The pinned `game-server` sends each projection as **one** WebTransport datagram and closes the session when a snapshot exceeds the `max_datagram_size` it captured when the connection started. Snapshot fragmentation (issue #18) is not pinned yet. The budget therefore derives from the smallest negotiated size:
+The pinned `game-server` sends a session snapshot frame unchanged when it fits the connection's current WebTransport datagram size. Otherwise it sends bounded, tick-keyed fragments; the native client reassembles and verifies the session frame before decoding this v4 payload. A lost fragment loses that snapshot, and newer complete ticks supersede older incomplete ones. The reassembler is reset on reconnect. This transport behavior does not change the MMO projection policy: its current budget derives from the smallest negotiated datagram size:
 
 | Term | Bytes | Source |
 | --- | ---: | --- |
@@ -69,7 +69,7 @@ On loopback, path MTU discovery raises the host's value to 1,287 bytes before ad
 
 The largest projection is `34 + 64 × 16 = 1,058` bytes, 19 bytes under the budget; at most `(1,077 − 34) / 16 = 65` records fit. A compile-time assertion and a test with extreme field values (maximum IDs, tick and revision; `i16`/`i8` extremes) prove the cap fits.
 
-Encoding is budget-driven: `pack_snapshot` writes the header, then entities in priority order until the next record would exceed the budget, and reports how many it packed. The viewer leads every projection and always fits; later steps write higher-priority sections (self state, the viewer's current target) before the remaining entities. `encode_snapshot`, which hosts use, fails closed instead of omitting any entity, so an overflow is an error rather than silent truncation. The budget rises once `game-server` fragmentation is pinned (#18).
+Encoding is budget-driven: `pack_snapshot` writes the header, then entities in priority order until the next record would exceed the budget, and reports how many it packed. The viewer leads every projection and always fits; later steps write higher-priority sections (self state, the viewer's current target) before the remaining entities. `encode_snapshot`, which hosts use, fails closed instead of omitting any entity, so an overflow is an error rather than silent truncation. Future payload growth requires a deliberate MMO budget and wire change; transport fragmentation alone does not raise the 64-entity cap.
 
 Player IDs are zone/session-local. These snapshots have no authority epoch field; the future online session/routing envelope must bind the stream to a grant and reset presentation on grant changes. An acknowledgement supports future prediction reconciliation, not permission to mutate authoritative state.
 

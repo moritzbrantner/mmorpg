@@ -74,7 +74,7 @@ A rejected, expired, incompatible, or incomplete resume ends the session with an
 - This is a connected gameplay/graphics slice, not a production account system. Sessions are anonymous; account/character binding, persistent resume across application launches, and live zone handoff are pending.
 - The host remains standalone; do not run competing hosts for one zone without the planned distributed lease integration.
 - Scenery is a coloured blockout (boxes for trunks and canopies, walls and roof slabs), not final art; full presentation parity is issue #28. Combat, inventory and NPC gameplay are not implemented.
-- The existing shared transport sends complete snapshots in datagrams. Dense projections above the negotiated packet size fail closed. Transport-level bounded replication/chunking is required before crowded-zone use.
+- The shared transport fragments oversized session snapshots and the client reassembles them per connection. The current v4 MMO projection policy still caps visibility at 64 entities and 1,077 bytes; additional projected sections require a separate protocol and budget change.
 - The built-in Greyhaven Vale (content revision 2) and snapshot v4 change the standalone host's initial simulation state. Recovery bundles captured with the former outpost cannot be silently reused; arrange an explicit migration or fresh development state.
 - Linux is the exercised desktop platform in this change. Windows/macOS builds and installers remain unverified.
 
