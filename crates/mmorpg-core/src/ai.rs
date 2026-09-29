@@ -55,6 +55,25 @@ fn steer(dx: i32, dz: i32, speed: i32) -> [i32; 2] {
     [scale(dx), scale(dz)]
 }
 
+/// A chasing creature's last step aims this far inside its reach, so the
+/// truncating integer steering can neither stall it just outside the reach
+/// nor leave it there: a step of at least this length always moves it.
+const CHASE_CLOSE_IN_UNITS: i64 = 10;
+
+/// Chase velocity toward a target `(dx, dz)` away: run speed while beyond
+/// `reach`, then a last step that ends inside it, and zero once inside.
+fn chase_velocity(dx: i32, dz: i32, reach: i32) -> [i32; 2] {
+    if distance_squared([0, 0], [dx, dz]) <= i64::from(reach).pow(2) {
+        return [0, 0];
+    }
+    let gap = i64::try_from(xz_length(dx, dz))
+        .unwrap_or(i64::MAX)
+        .saturating_sub(i64::from(reach));
+    let step =
+        i64::from(CREATURE_RUN_SPEED_UNITS_PER_TICK).min(gap.saturating_add(CHASE_CLOSE_IN_UNITS));
+    steer(dx, dz, i32::try_from(step).unwrap_or(0))
+}
+
 /// How close a creature must get to hit `target`: its reach plus the
 /// target's half-width.
 pub(crate) const fn creature_reach(target: EntityRef) -> i32 {
@@ -143,18 +162,10 @@ impl ZoneSimulation {
             CreatureAi::Engaged => match chase {
                 Some((target, to)) => {
                     let (dx, dz) = (to[0] - here[0], to[1] - here[1]);
-                    let reach = creature_reach(target);
-                    let velocity = if distance_squared(here, to) > i64::from(reach).pow(2) {
-                        let gap = i64::try_from(xz_length(dx, dz))
-                            .unwrap_or(i64::MAX)
-                            .saturating_sub(i64::from(reach));
-                        // Move at least one unit so rounding never stalls a chase.
-                        let step = i64::from(CREATURE_RUN_SPEED_UNITS_PER_TICK).min(gap + 1);
-                        steer(dx, dz, i32::try_from(step).unwrap_or(0))
-                    } else {
-                        [0, 0]
-                    };
-                    (velocity, yaw_from_vector(dx, dz))
+                    (
+                        chase_velocity(dx, dz, creature_reach(target)),
+                        yaw_from_vector(dx, dz),
+                    )
                 }
                 None => ([0, 0], None),
             },
@@ -350,5 +361,37 @@ mod tests {
         assert_eq!(steer(-300, 400, 19), [-11, 15]);
         assert_eq!(steer(3, 4, 19), [3, 4], "a short step lands on the target");
         assert_eq!(steer(1_000, 0, 24), [24, 0]);
+    }
+
+    /// Against the plain rule "outside reach, get closer; near it, arrive
+    /// inside": every offset outside reach moves, never away, and every
+    /// offset within one close-in step of the reach lands inside it.
+    #[test]
+    fn a_chase_always_progresses_and_its_last_step_lands_inside_reach() {
+        let reach = creature_reach(EntityRef::Player(1));
+        let reach_squared = i64::from(reach).pow(2);
+        assert_eq!(
+            chase_velocity(203, -109, reach),
+            [8, -4],
+            "no stall at 230.4"
+        );
+        for dx in (-300..=300).step_by(3) {
+            for dz in (-300..=300).step_by(3) {
+                let before = distance_squared([0, 0], [dx, dz]);
+                let [vx, vz] = chase_velocity(dx, dz, reach);
+                if before <= reach_squared {
+                    assert_eq!([vx, vz], [0, 0], "({dx}, {dz}) is inside reach");
+                    continue;
+                }
+                let after = distance_squared([0, 0], [dx - vx, dz - vz]);
+                assert!(after < before, "({dx}, {dz}) makes progress");
+                let within_last_step = i64::try_from(xz_length(dx, dz)).unwrap()
+                    <= i64::from(reach) + i64::from(CREATURE_RUN_SPEED_UNITS_PER_TICK)
+                        - CHASE_CLOSE_IN_UNITS;
+                if within_last_step {
+                    assert!(after <= reach_squared, "({dx}, {dz}) arrives inside reach");
+                }
+            }
+        }
     }
 }

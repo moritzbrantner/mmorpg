@@ -449,6 +449,44 @@ fn leashed_creatures_evade_and_ignore_damage() {
     assert_eq!(session.creature(FIRST).tapped_by, None, "and the tap");
 }
 
+/// However it approaches, an engaged creature closes in to melee reach and
+/// swings: integer steering must not stall it just outside its reach while
+/// the player, whose reach is longer, keeps hitting it.
+#[test]
+fn chasing_creatures_close_in_to_melee_from_every_direction() {
+    for heading in (0..16_u16).map(|step| step * 4_096 + 1_000) {
+        for distance in [400, 555, 650, 777, 900] {
+            let (x, z) = mmorpg_core::trig::direction(heading);
+            let scale = |unit| mmorpg_core::trig::checked_scale(distance, unit).unwrap();
+            let position = [scale(x), scale(z)];
+            // Player spawn slots fill the +X/+Z quadrant from the origin.
+            if position.iter().all(|&axis| axis > -100) {
+                continue;
+            }
+            let content = arena::arena(
+                vec![arena::wolf(30, [1, 2])],
+                vec![arena::spawn(1, WOLF, position)],
+                vec![],
+            );
+            let mut session = Session::new(content);
+            session.ticks(90);
+            let swung = session.events.iter().any(|(_, event)| {
+                matches!(
+                    event,
+                    ZoneEvent::DamageTaken { target: PLAYER, .. }
+                        | ZoneEvent::Miss { target: PLAYER, .. }
+                )
+            });
+            let wolf = session.creature(FIRST);
+            assert!(
+                swung,
+                "the wolf from heading {heading}, {distance} units away, stalled at {:?}",
+                wolf.position
+            );
+        }
+    }
+}
+
 /// Neutral creatures ignore nearby players until attacked; an aggressive
 /// creature's radius shrinks for higher-level players.
 #[test]
