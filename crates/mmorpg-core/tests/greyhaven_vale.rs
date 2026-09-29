@@ -1,5 +1,7 @@
 //! Greyhaven Vale content invariants: bounds, clear spawn plaza, open road
 //! corridors, walkable woods, disjoint named areas and blocking structures.
+use std::sync::Arc;
+
 use mmorpg_core::greyhaven_vale::{
     self, PLAYABLE_BOUNDS, REVISION, ROAD_CLEARANCE_UNITS, SPAWN_GRID, SPAWN_PLAZA, area_at, areas,
     clear_of_roads, ids, roads,
@@ -357,7 +359,7 @@ fn structures_and_boundary_walls_block_movement() {
     zone.add_player(1).unwrap();
     let mut snapshot = zone.snapshot().unwrap();
     snapshot.players[0].position = [0, 90, 10_000];
-    let mut zone = ZoneSimulation::from_snapshot(snapshot).unwrap();
+    let mut zone = ZoneSimulation::from_snapshot(snapshot, Arc::clone(zone.content())).unwrap();
     zone.apply_command(1, 1, run(FACE_SOUTH)).unwrap();
     let mut sequence = 1;
     for tick in 0..240 {

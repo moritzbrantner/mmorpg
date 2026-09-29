@@ -1,5 +1,6 @@
 //! Greyhaven Vale, the starter zone: immutable collision content, named
-//! areas and the road corridors that must stay walkable.
+//! areas, the road corridors that must stay walkable, and the creatures,
+//! NPCs and graveyard of [`units`].
 //!
 //! The playable square spans ±120 m around the origin inside invisible
 //! boundary walls. Map north is −Z, toward the Redbrand cliffs, matching the
@@ -7,15 +8,19 @@
 //! without colliders, water and mountains are presentation owned by
 //! `mmorpg-scenery`, which derives its structures from the collider IDs in
 //! [`ids`]. Everything here belongs to content [`REVISION`]; changing any of
-//! it requires a new revision.
+//! it requires a new revision. [`content`] bundles it as the hosted
+//! [`ZoneContent`].
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
-use super::{SpawnGrid, StaticCollider, XzBounds, ZoneDefinition};
+use super::{SpawnGrid, StaticCollider, XzBounds, ZoneContent, ZoneDefinition};
 use crate::{Area, AreaId, ZoneAreas};
 
-/// Content revision of this zone. Revision 1 was the former test outpost.
-pub const REVISION: u64 = 2;
+pub mod units;
+
+/// Content revision of this zone. Revision 1 was the former test outpost;
+/// revision 2 had no creatures or NPCs.
+pub const REVISION: u64 = 3;
 /// Gravity in units per tick squared.
 pub const GRAVITY: [i32; 3] = [0, -1, 0];
 /// The inner faces of the boundary walls enclose this square.
@@ -475,10 +480,31 @@ fn colliders() -> Vec<StaticCollider> {
     colliders
 }
 
-/// The hosted zone content. Hosts, clients and scenery consume this exact
-/// definition; the spawn grid is validated clear of every collider.
+/// The hosted collision content. Hosts, clients and scenery consume this
+/// exact definition; the spawn grid is validated clear of every collider.
 #[must_use]
 pub fn greyhaven_vale_definition() -> ZoneDefinition {
     ZoneDefinition::with_spawn_grid(REVISION, GRAVITY, SPAWN_GRID, colliders())
         .expect("built-in Greyhaven Vale content is valid")
+}
+
+static CONTENT: LazyLock<Arc<ZoneContent>> = LazyLock::new(|| {
+    Arc::new(
+        ZoneContent::new(
+            greyhaven_vale_definition(),
+            areas().clone(),
+            units::creature_templates(),
+            units::creature_spawns(),
+            units::npcs(),
+            units::GRAVEYARD,
+        )
+        .expect("built-in Greyhaven Vale unit content is valid"),
+    )
+});
+
+/// The complete hosted content: collision definition, areas, creatures,
+/// NPCs and graveyard, validated once and shared.
+#[must_use]
+pub fn content() -> Arc<ZoneContent> {
+    Arc::clone(&CONTENT)
 }

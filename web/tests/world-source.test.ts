@@ -14,6 +14,7 @@ import {
 } from "../src/world/orbit-camera";
 import { FakeWorldSource } from "./support/fake-world-source";
 import { encodeTestSnapshot } from "./support/snapshot-encoder";
+import { playerEntity, testSnapshot } from "./support/snapshots";
 import { worldSourceContract } from "./support/world-source-contract";
 
 /** Records what `LocalZoneSource` asks of the WASM zone; returns well-formed projections. */
@@ -53,10 +54,10 @@ class RecordingZone implements LocalZoneHandle {
     if (!this.#players.has(player)) throw new Error("unknown player");
     if (this.corruptProjections) return new Uint8Array([3]);
     const viewer = this.viewerOverride ?? player;
-    return encodeTestSnapshot({
+    return encodeTestSnapshot(testSnapshot({
       zoneId: 1, tick: BigInt(this.ticks), contentRevision: 1n, acknowledgedSequence: 0, viewerId: viewer,
-      entities: [{ kind: "player", entityId: viewer, position: [this.ticks * 21, 90, 0], velocity: [21, 0, 0], facing: 0 }],
-    });
+      entities: [playerEntity(viewer, [this.ticks * 21, 90, 0], [21, 0, 0])],
+    }));
   }
 }
 

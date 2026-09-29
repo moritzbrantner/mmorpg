@@ -6,6 +6,8 @@
 //! snapshot bytes. It owns no gameplay, session or visibility rules; it only
 //! records what those authorities decide and compares it with expectations.
 
+mod units;
+
 use std::collections::BTreeMap;
 
 use game_server::{
@@ -13,8 +15,8 @@ use game_server::{
     RuntimeError, SessionLease,
 };
 use mmorpg_core::{
-    Area, EntityKind, EntitySnapshot, MAX_PLAYERS_PER_ZONE, PlayerId, ZoneCommand, ZoneId,
-    ZoneSnapshot, greyhaven_vale,
+    Area, EntityKind, EntityRef, EntitySnapshot, MAX_PLAYERS_PER_ZONE, PlayerId, ZoneCommand,
+    ZoneId, ZoneSnapshot, greyhaven_vale,
 };
 use mmorpg_game_server::{ZoneGameServerAdapter, build_zone_host, zone_match_id};
 use mmorpg_protocol::{decode_snapshot, encode_command};
@@ -22,6 +24,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::report::{Report, snake_kind, validate_name};
+use units::{EventSpec, UnitSpec, UnitState, event_token};
 
 pub const SCHEMA: &str = "mmorpg.bot-scenario/v1";
 const MAX_TICKS: u64 = 100_000;
@@ -66,6 +69,10 @@ pub enum Action {
     Join,
     Move,
     Jump,
+    SelectTarget,
+    StartAttack,
+    StopAttack,
+    ReleaseSpirit,
     Disconnect,
     Reconnect,
 }
@@ -76,6 +83,10 @@ impl Action {
             Self::Join => "join",
             Self::Move => "move",
             Self::Jump => "jump",
+            Self::SelectTarget => "select_target",
+            Self::StartAttack => "start_attack",
+            Self::StopAttack => "stop_attack",
+            Self::ReleaseSpirit => "release_spirit",
             Self::Disconnect => "disconnect",
             Self::Reconnect => "reconnect",
         }
@@ -84,9 +95,27 @@ impl Action {
     fn success(self) -> &'static str {
         match self {
             Self::Join => "joined",
-            Self::Move | Self::Jump => "applied",
+            Self::Move
+            | Self::Jump
+            | Self::SelectTarget
+            | Self::StartAttack
+            | Self::StopAttack
+            | Self::ReleaseSpirit => "applied",
             Self::Disconnect => "disconnected",
             Self::Reconnect => "resumed",
+        }
+    }
+
+    /// Whether the action submits a zone command through the session.
+    const fn is_command(self) -> bool {
+        match self {
+            Self::Move
+            | Self::Jump
+            | Self::SelectTarget
+            | Self::StartAttack
+            | Self::StopAttack
+            | Self::ReleaseSpirit => true,
+            Self::Join | Self::Disconnect | Self::Reconnect => false,
         }
     }
 }
@@ -103,7 +132,9 @@ pub struct Step {
     pub strafe: Option<i8>,
     /// Move heading: 65 536 steps per turn, 0 faces +Z, 16 384 faces +X.
     pub facing: Option<u16>,
-    /// Command sequence override (move and jump); defaults to the bot's next sequence.
+    /// The unit a `select_target` step selects, or `none` to clear.
+    pub entity: Option<UnitSpec>,
+    /// Command sequence override (commands only); defaults to the bot's next sequence.
     pub seq: Option<u32>,
     /// Connection epoch override; defaults to the bot's current epoch.
     pub connection_epoch: Option<u32>,
@@ -121,6 +152,10 @@ pub enum ExpectKind {
     Identity,
     VisibleCount,
     Area,
+    Health,
+    Target,
+    Event,
+    Unit,
 }
 
 impl ExpectKind {
@@ -133,6 +168,25 @@ impl ExpectKind {
             Self::Identity => "identity",
             Self::VisibleCount => "visible_count",
             Self::Area => "area",
+            Self::Health => "health",
+            Self::Target => "target",
+            Self::Event => "event",
+            Self::Unit => "unit",
+        }
+    }
+
+    /// Kinds that may wait for a condition within a window (`by_tick`).
+    const fn allows_window(self) -> bool {
+        match self {
+            Self::Sees | Self::Event | Self::Unit => true,
+            Self::NotSees
+            | Self::Position
+            | Self::Acknowledged
+            | Self::Identity
+            | Self::VisibleCount
+            | Self::Area
+            | Self::Health
+            | Self::Target => false,
         }
     }
 }
@@ -153,6 +207,14 @@ pub struct Expectation {
     pub count: Option<usize>,
     /// Name of the core area the target stands in (`area` expectations).
     pub area: Option<String>,
+    /// The bot's own exact health (`health` expectations).
+    pub health: Option<u32>,
+    /// The unit a `target`, `event` or `unit` expectation is about.
+    pub entity: Option<UnitSpec>,
+    /// The feedback event kind of an `event` expectation.
+    pub event: Option<EventSpec>,
+    /// The visible state of a `unit` expectation.
+    pub state: Option<UnitState>,
 }
 
 /// Parses and validates a scenario at the file trust boundary.
@@ -188,6 +250,10 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             .then_some(())
             .ok_or_else(|| format!("unknown bot {name}"))
     };
+    let known_unit = |unit: &UnitSpec| match unit {
+        UnitSpec::Bot(name) => known(name),
+        UnitSpec::None | UnitSpec::Creature(_) | UnitSpec::Npc(_) => Ok(()),
+    };
     let mut previous_tick = 0;
     for (index, step) in scenario.steps.iter().enumerate() {
         let at = format!("steps[{index}]");
@@ -210,11 +276,16 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                 "{at}: forward, strafe and facing are required for move and only for move"
             ));
         }
-        let is_command = matches!(step.action, Action::Move | Action::Jump);
-        if !is_command && (step.seq.is_some() || step.connection_epoch.is_some()) {
+        if step.entity.is_some() != (step.action == Action::SelectTarget) {
             return Err(format!(
-                "{at}: seq/connection_epoch apply only to move and jump"
+                "{at}: entity is required for select_target and only for select_target"
             ));
+        }
+        if let Some(entity) = &step.entity {
+            known_unit(entity).map_err(|error| format!("{at}: {error}"))?;
+        }
+        if !step.action.is_command() && (step.seq.is_some() || step.connection_epoch.is_some()) {
+            return Err(format!("{at}: seq/connection_epoch apply only to commands"));
         }
     }
     for (index, expectation) in scenario.expect.iter().enumerate() {
@@ -223,12 +294,15 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
         if let Some(target) = &expectation.target {
             known(target).map_err(|error| format!("{at}: {error}"))?;
         }
+        if let Some(entity) = &expectation.entity {
+            known_unit(entity).map_err(|error| format!("{at}: {error}"))?;
+        }
         let tick = match (expectation.tick, expectation.by_tick) {
             (Some(tick), None) => tick,
-            (None, Some(tick)) if expectation.kind == ExpectKind::Sees => tick,
+            (None, Some(tick)) if expectation.kind.allows_window() => tick,
             _ => {
                 return Err(format!(
-                    "{at}: exactly one of tick/by_tick is required (by_tick only for sees)"
+                    "{at}: exactly one of tick/by_tick is required (by_tick only for sees, event and unit)"
                 ));
             }
         };
@@ -249,6 +323,16 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             ExpectKind::Identity => true,
             ExpectKind::VisibleCount => expectation.count.is_some(),
             ExpectKind::Area => expectation.area.is_some(),
+            ExpectKind::Health => expectation.health.is_some(),
+            ExpectKind::Target => expectation.entity.is_some(),
+            ExpectKind::Event => expectation.event.is_some(),
+            ExpectKind::Unit => {
+                expectation.state.is_some()
+                    && expectation
+                        .entity
+                        .as_ref()
+                        .is_some_and(|entity| *entity != UnitSpec::None)
+            }
         };
         if !required {
             return Err(format!(
@@ -270,6 +354,8 @@ struct Bot {
     next_sequence: u32,
     view: Option<ZoneSnapshot>,
     previous_sees: Vec<String>,
+    /// Digest of the bot's own combat state, empty while unhurt and idle.
+    previous_status: String,
 }
 
 impl Bot {
@@ -311,6 +397,7 @@ pub fn run(scenario: &BotScenario) -> Result<Report, String> {
             next_sequence: 1,
             view: None,
             previous_sees: Vec::new(),
+            previous_status: String::new(),
         })
         .collect();
     let mut runner = Runner {
@@ -421,7 +508,12 @@ impl Runner<'_> {
         let index = self.bot_index(&step.bot)?;
         let (tag, detail) = match step.action {
             Action::Join => self.join(index)?,
-            Action::Move | Action::Jump => self.submit(index, step)?,
+            Action::Move
+            | Action::Jump
+            | Action::SelectTarget
+            | Action::StartAttack
+            | Action::StopAttack
+            | Action::ReleaseSpirit => self.submit(index, step)?,
             Action::Disconnect => self.disconnect(index)?,
             Action::Reconnect => self.reconnect(index)?,
         };
@@ -481,35 +573,50 @@ impl Runner<'_> {
     }
 
     fn submit(&mut self, index: usize, step: &Step) -> Result<(String, String), String> {
-        let bot = &mut self.bots[index];
-        let Some(lease) = bot.lease else {
+        let Some(lease) = self.bots[index].lease else {
             return Ok(("rejected:no_session".into(), String::new()));
         };
+        let (command, intent) = match step.action {
+            Action::Move => {
+                let (forward, strafe, facing) = (
+                    step.forward.unwrap_or_default(),
+                    step.strafe.unwrap_or_default(),
+                    step.facing.unwrap_or_default(),
+                );
+                (
+                    ZoneCommand::Move {
+                        forward,
+                        strafe,
+                        facing,
+                    },
+                    format!(" forward={forward} strafe={strafe} facing={facing}"),
+                )
+            }
+            Action::Jump => (ZoneCommand::Jump, String::new()),
+            Action::SelectTarget => {
+                let entity = step.entity.as_ref().unwrap_or(&UnitSpec::None);
+                match entity.resolve(|name| self.player_of(name)) {
+                    Ok(target) => (
+                        ZoneCommand::SelectTarget(target),
+                        format!(" entity={entity}"),
+                    ),
+                    // The named bot has no player to select yet.
+                    Err(_) => return Ok(("rejected:unknown_entity".into(), String::new())),
+                }
+            }
+            Action::StartAttack => (ZoneCommand::StartAttack, String::new()),
+            Action::StopAttack => (ZoneCommand::StopAttack, String::new()),
+            Action::ReleaseSpirit => (ZoneCommand::ReleaseSpirit, String::new()),
+            Action::Join | Action::Disconnect | Action::Reconnect => {
+                return Err(format!("{} is not a command", step.action.name()));
+            }
+        };
+        let bot = &mut self.bots[index];
         let sequence = step.seq.unwrap_or(bot.next_sequence);
         let epoch = step.connection_epoch.unwrap_or(lease.connection_epoch);
         bot.next_sequence = bot.next_sequence.max(sequence.saturating_add(1));
-        let (payload, detail) = if step.action == Action::Jump {
-            (
-                encode_command(ZoneCommand::Jump),
-                format!("seq={sequence} epoch={epoch}"),
-            )
-        } else {
-            let (forward, strafe, facing) = (
-                step.forward.unwrap_or_default(),
-                step.strafe.unwrap_or_default(),
-                step.facing.unwrap_or_default(),
-            );
-            (
-                encode_command(ZoneCommand::Move {
-                    forward,
-                    strafe,
-                    facing,
-                }),
-                format!(
-                    "seq={sequence} epoch={epoch} forward={forward} strafe={strafe} facing={facing}"
-                ),
-            )
-        };
+        let payload = encode_command(command);
+        let detail = format!("seq={sequence} epoch={epoch}{intent}");
         let outcome = self.runtime(|runtime| {
             runtime.submit_command(lease.player_id, epoch, sequence, &payload)
         })?;
@@ -568,7 +675,7 @@ impl Runner<'_> {
     }
 
     /// Decodes every connected bot's snapshot bytes. Returns whether any
-    /// bot's visible set changed.
+    /// bot's visible set or own combat state changed or it received events.
     fn observe(&mut self, tick: u64) -> Result<bool, String> {
         let zone = ZoneId::new(self.scenario.zone);
         let mut changed = false;
@@ -603,9 +710,13 @@ impl Runner<'_> {
             match decoded {
                 Ok(snapshot) => {
                     let sees = self.sees(&snapshot);
+                    let status = self.status(&snapshot);
                     let bot = &mut self.bots[index];
-                    changed |= sees != bot.previous_sees;
+                    changed |= sees != bot.previous_sees
+                        || status != bot.previous_status
+                        || !snapshot.events.is_empty();
                     bot.previous_sees = sees;
+                    bot.previous_status = status;
                     bot.view = Some(snapshot);
                 }
                 Err(error) => {
@@ -648,6 +759,45 @@ impl Runner<'_> {
             .map(|lease| lease.player_id)
     }
 
+    /// Players by bot name, other units as `creature:<id>` or `npc:<id>`.
+    fn unit_name(&self, entity: EntityRef) -> String {
+        match entity {
+            EntityRef::Player(player_id) => self.player_name(player_id),
+            EntityRef::Creature(id) => format!("creature:{}", id.get()),
+            EntityRef::Npc(id) => format!("npc:{}", id.get()),
+        }
+    }
+
+    /// The bot's own combat state for digests: health while hurt, death,
+    /// target, auto-attack and combat. Empty while unhurt and idle.
+    fn status(&self, view: &ZoneSnapshot) -> String {
+        let me = &view.viewer;
+        let mut parts = Vec::new();
+        if me.health != me.max_health {
+            parts.push(format!("hp{}/{}", me.health, me.max_health));
+        }
+        if me.dead {
+            parts.push("dead".into());
+        }
+        if let Some(target) = me.target {
+            parts.push(format!("target={}", self.unit_name(target)));
+        }
+        if me.auto_attacking {
+            parts.push("attacking".into());
+        }
+        if me.in_combat {
+            parts.push("in_combat".into());
+        }
+        parts.join(" ")
+    }
+
+    fn event_tokens(&self, view: &ZoneSnapshot) -> Vec<String> {
+        view.events
+            .iter()
+            .map(|event| event_token(event, |unit| self.unit_name(unit)))
+            .collect()
+    }
+
     fn digest(&mut self, tick: u64) {
         let mut parts = Vec::new();
         let mut objects = Vec::new();
@@ -664,14 +814,24 @@ impl Runner<'_> {
             let position = visible_player(view, lease.player_id).map(|entity| entity.position);
             let position_text =
                 position.map_or_else(|| "(absent)".into(), |[x, y, z]| format!("({x},{y},{z})"));
-            parts.push(format!(
+            let events = self.event_tokens(view);
+            let mut text = format!(
                 "{} p{} e{} ack{} {position_text} sees[{}]",
                 bot.name,
                 lease.player_id,
                 lease.connection_epoch,
                 view.acknowledged_sequence,
                 bot.previous_sees.join(",")
-            ));
+            );
+            if !bot.previous_status.is_empty() {
+                text.push(' ');
+                text.push_str(&bot.previous_status);
+            }
+            if !events.is_empty() {
+                text.push_str(&format!(" events[{}]", events.join(",")));
+            }
+            parts.push(text);
+            let me = &view.viewer;
             objects.push(json!({
                 "bot": bot.name,
                 "player": lease.player_id,
@@ -680,6 +840,13 @@ impl Runner<'_> {
                 "ack": view.acknowledged_sequence,
                 "position": position,
                 "sees": bot.previous_sees,
+                "health": me.health,
+                "max_health": me.max_health,
+                "dead": me.dead,
+                "in_combat": me.in_combat,
+                "auto_attacking": me.auto_attacking,
+                "target": me.target.map(|target| self.unit_name(target)),
+                "events": events,
             }));
         }
         self.report.line(
@@ -815,15 +982,96 @@ impl Runner<'_> {
                     None => Err(format!("{target_name} in no named area")),
                 }
             }
+            ExpectKind::Health => {
+                let me = &view.viewer;
+                let shown = format!("health={}/{}", me.health, me.max_health);
+                if Some(me.health) == expectation.health {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
+            ExpectKind::Target => {
+                let expected = self.resolve_unit(expectation.entity.as_ref())?;
+                let actual = view.viewer.target;
+                let shown = actual.map_or_else(|| "none".into(), |unit| self.unit_name(unit));
+                if actual == expected {
+                    Ok(format!("target={shown}"))
+                } else {
+                    Err(format!("got target={shown}"))
+                }
+            }
+            ExpectKind::Event => {
+                let spec = expectation
+                    .event
+                    .ok_or("event expectation needs an event")?;
+                let unit = self.resolve_unit(expectation.entity.as_ref())?;
+                let viewer = EntityRef::Player(view.viewer_id);
+                let shown = format!("events[{}]", self.event_tokens(view).join(","));
+                if view
+                    .events
+                    .iter()
+                    .any(|event| spec.matches(event, viewer, unit))
+                {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
+            ExpectKind::Unit => {
+                let state = expectation.state.ok_or("unit expectation needs a state")?;
+                let unit = self
+                    .resolve_unit(expectation.entity.as_ref())?
+                    .ok_or("unit expectation needs a unit")?;
+                let record = view.entities.iter().find(|entity| entity.entity() == unit);
+                let shown = record.map_or_else(|| "absent".into(), record_summary);
+                if state.holds(record) {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
         }
+    }
+
+    /// The unit a scenario names; a bot must have joined.
+    fn resolve_unit(&self, unit: Option<&UnitSpec>) -> Result<Option<EntityRef>, String> {
+        unit.unwrap_or(&UnitSpec::None)
+            .resolve(|name| self.player_of(name))
+            .map_err(|name| format!("{name} has not joined"))
     }
 }
 
-/// The player behind a visible entity. Players are the only kind so far; a new
-/// kind must decide here whether bots can name, count and position it.
+/// Level, health percent, position and set flags of a visible unit.
+fn record_summary(record: &EntitySnapshot) -> String {
+    let flags = record.flags;
+    let names = [
+        (flags.dead, "dead"),
+        (flags.in_combat, "in_combat"),
+        (flags.hostile, "hostile"),
+        (flags.attackable, "attackable"),
+        (flags.tapped_by_other, "tapped_by_other"),
+        (flags.evading, "evading"),
+        (flags.targets_viewer, "targets_viewer"),
+    ]
+    .into_iter()
+    .filter_map(|(set, name)| set.then_some(name))
+    .collect::<Vec<_>>();
+    let [x, y, z] = record.position;
+    format!(
+        "L{} hp{}% ({x},{y},{z}) [{}]",
+        record.level,
+        record.health_percent,
+        names.join(",")
+    )
+}
+
+/// The player behind a visible entity. Bots name, count and position players
+/// only; creatures and NPCs have their own expectations.
 fn player_of_entity(entity: &EntitySnapshot) -> Option<PlayerId> {
     match entity.kind {
         EntityKind::Player => Some(entity.id),
+        EntityKind::Creature | EntityKind::Npc => None,
     }
 }
 
@@ -849,7 +1097,31 @@ fn describe(expectation: &Expectation) -> String {
         ExpectKind::Identity => format!("{bot} identity"),
         ExpectKind::VisibleCount => format!("{bot} visible_count"),
         ExpectKind::Area => format!("{bot} area {target}"),
+        ExpectKind::Health => format!("{bot} health"),
+        ExpectKind::Target => format!("{bot} target {}", unit_text(expectation)),
+        ExpectKind::Event => {
+            let event = expectation
+                .event
+                .map_or_else(String::new, |event| event.to_string());
+            let about = expectation
+                .entity
+                .as_ref()
+                .map_or_else(String::new, |entity| format!(" {entity}"));
+            format!("{bot} event {event}{about}{by}")
+        }
+        ExpectKind::Unit => {
+            let state = expectation.state.map_or("", UnitState::name);
+            format!("{bot} unit {} {state}{by}", unit_text(expectation))
+        }
     }
+}
+
+fn unit_text(expectation: &Expectation) -> String {
+    expectation
+        .entity
+        .as_ref()
+        .unwrap_or(&UnitSpec::None)
+        .to_string()
 }
 
 fn rejected(error: &RuntimeError) -> String {

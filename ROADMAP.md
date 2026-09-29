@@ -10,7 +10,8 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
 - [x] Movement v3: facing, camera-relative movement, jump.
 - [x] Greyhaven Vale content, shared presentation scenery, projection budget.
 - [x] Browser demo runs the shared simulation as a local WASM zone host.
-- Units, combat and creature AI.
+- [x] Units, combat and creature AI: core, protocol and minimal presentation (step 7a).
+- Combat presentation in the browser: target frame, nameplates, combat text (step 7b).
 - Classes and abilities.
 - Progression, loot, inventory, equipment and vendors.
 - Quests and the Redbrand Hollow chain.

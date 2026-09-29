@@ -2,6 +2,7 @@ import type { EntityState } from "../replication";
 import { mixColor, shadeColor, type EnvironmentStyle } from "./environment";
 import type { Color, Prop, Scenery } from "./scenery";
 import { groundBiomes } from "./terrain-mesh";
+import { disposition as unitDisposition } from "./units/creature-bodies";
 
 /**
  * The circular minimap. `buildMinimapLayers` turns scenery into a top-down
@@ -177,13 +178,12 @@ export const DOT_COLORS: Readonly<Record<Disposition, Color>> = {
 };
 
 /**
- * The dot colour class of a projected unit. It reads the whole entity, so
- * creature and NPC kinds (step 7) can colour by their flags (hostile or not).
+ * The dot colour class of a projected unit: players apart, creatures and
+ * NPCs by the disposition their placeholder bodies are coloured by
+ * (hostile or neutral creatures by their flags, friendly NPCs).
  */
 export function dispositionOf(entity: EntityState): Disposition {
-  switch (entity.kind) {
-    case "player": return "player";
-  }
+  return entity.kind === "player" ? "player" : unitDisposition(entity);
 }
 
 export type MinimapElements = {

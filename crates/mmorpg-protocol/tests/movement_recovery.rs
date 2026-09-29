@@ -1,5 +1,7 @@
 //! Recovery through the canonical wire format must continue movement, jumps and
 //! pending intent exactly, tick by tick.
+use std::sync::Arc;
+
 use mmorpg_core::{StaticCollider, ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation};
 use mmorpg_protocol::{decode_canonical_snapshot, encode_canonical_snapshot, encode_snapshot};
 
@@ -25,8 +27,11 @@ fn definition() -> ZoneDefinition {
 
 fn recover(zone: &ZoneSimulation) -> ZoneSimulation {
     let bytes = encode_canonical_snapshot(&zone.snapshot().unwrap()).unwrap();
-    let recovered = ZoneSimulation::from_snapshot(decode_canonical_snapshot(&bytes).unwrap())
-        .expect("canonical bytes restore a zone");
+    let recovered = ZoneSimulation::from_snapshot(
+        decode_canonical_snapshot(&bytes).unwrap(),
+        Arc::clone(zone.content()),
+    )
+    .expect("canonical bytes restore a zone");
     assert_eq!(recovered.snapshot().unwrap(), zone.snapshot().unwrap());
     recovered
 }

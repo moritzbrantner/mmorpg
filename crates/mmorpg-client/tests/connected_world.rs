@@ -5,16 +5,18 @@ use game_server::{
 use mmorpg_client::{
     ClientError,
     network::ClientSession,
-    session::{MovementInput, NetworkUpdate},
+    session::{NetworkUpdate, PlayerInput},
 };
 use mmorpg_core::{
-    EntityKind, EntitySnapshot, MAX_VISIBLE_ENTITIES, PLAYER_HALF_EXTENTS_UNITS,
-    SNAPSHOT_SCHEMA_VERSION, TICK_HZ, ZoneId, ZoneSnapshot, greyhaven_vale_definition,
+    EntityFlags, EntityKind, EntitySnapshot, MAX_VISIBLE_ENTITIES, PLAYER_HALF_EXTENTS_UNITS,
+    SNAPSHOT_SCHEMA_VERSION, TICK_HZ, ViewerState, ZoneId, ZoneSnapshot, greyhaven_vale,
+    greyhaven_vale_definition,
 };
 use mmorpg_game_server::{ZoneGameServerAdapter, zone_match_id};
 use mmorpg_protocol::{
     DATAGRAM_SAFETY_MARGIN_BYTES, ENTITY_RECORD_BYTES, MAX_PLAYER_PROJECTION_BYTES,
-    MEASURED_MIN_DATAGRAM_BYTES, PLAYER_SNAPSHOT_HEADER_BYTES, SESSION_SNAPSHOT_HEADER_BYTES,
+    MAX_WIRE_ENTITIES, MEASURED_MIN_DATAGRAM_BYTES, PLAYER_SNAPSHOT_FIXED_BYTES,
+    SESSION_SNAPSHOT_HEADER_BYTES,
 };
 use std::{
     net::UdpSocket,
@@ -180,7 +182,11 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
         assert_eq!(first.player_id(), player_id);
         assert_eq!(first.connection_epoch(), previous_epoch + 1);
         assert!(resumed.acknowledged_sequence >= 35);
-        let resumed_player = resumed.entities.iter().find(|p| p.id == player_id).unwrap();
+        let resumed_player = resumed
+            .entities
+            .iter()
+            .find(|p| p.kind == EntityKind::Player && p.id == player_id)
+            .unwrap();
         assert!(
             resumed_player.position[2] < start[2],
             "resume must retain movement state"
@@ -191,7 +197,11 @@ async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
             "the stopped intent keeps facing"
         );
         assert_eq!(
-            resumed.entities.len(),
+            resumed
+                .entities
+                .iter()
+                .filter(|entity| entity.kind == EntityKind::Player)
+                .count(),
             2,
             "resume must not admit another player"
         );
@@ -334,14 +344,14 @@ async fn datagram_budget_floor_matches_the_pinned_transport() {
     );
 }
 
-/// A projection at the relevance cap, the largest the zone publishes, is
+/// A crowded projection, packed to the largest size the zone publishes, is
 /// delivered through the real host as one datagram, snapshot after snapshot.
 #[tokio::test]
-async fn a_projection_at_the_relevance_cap_reaches_a_client() {
+async fn a_budget_packed_crowded_projection_reaches_a_client() {
     let zone_id = ZoneId::new(1);
-    let definition = greyhaven_vale_definition();
-    let revision = definition.revision();
-    let mut adapter = ZoneGameServerAdapter::with_definition(zone_id, definition).unwrap();
+    let content = greyhaven_vale::content();
+    let revision = content.revision();
+    let mut adapter = ZoneGameServerAdapter::with_content(zone_id, content).unwrap();
     // Resting players without sessions crowd the spawn area beyond the cap.
     for index in 0..MAX_VISIBLE_ENTITIES + 16 {
         let player_id = 100_000 + u32::try_from(index).unwrap();
@@ -358,13 +368,15 @@ async fn a_projection_at_the_relevance_cap_reaches_a_client() {
     let result = tokio::time::timeout(Duration::from_secs(20), async {
         let session =
             ClientSession::connect(&local.url, Some(&local.certificate), zone_id, revision).await?;
-        let largest = PLAYER_SNAPSHOT_HEADER_BYTES + MAX_VISIBLE_ENTITIES * ENTITY_RECORD_BYTES;
+        // Idle players have no events, so the whole budget carries entities.
+        let largest = PLAYER_SNAPSHOT_FIXED_BYTES + MAX_WIRE_ENTITIES * ENTITY_RECORD_BYTES;
         assert!(largest <= MAX_PLAYER_PROJECTION_BYTES);
         let mut previous_tick = None;
         for _ in 0..10 {
             let snapshot = session.receive_snapshot().await?;
-            assert_eq!(snapshot.entities.len(), MAX_VISIBLE_ENTITIES);
+            assert_eq!(snapshot.entities.len(), MAX_WIRE_ENTITIES);
             assert_eq!(snapshot.entities[0].id, session.player_id());
+            assert_eq!(snapshot.entities[0].kind, EntityKind::Player);
             assert_eq!(mmorpg_protocol::encode_snapshot(&snapshot)?.len(), largest);
             assert!(
                 previous_tick < Some(snapshot.tick),
@@ -379,9 +391,10 @@ async fn a_projection_at_the_relevance_cap_reaches_a_client() {
     result.unwrap().unwrap();
 }
 
-/// Exercise the native receive loop with a valid v4 projection split into
-/// datagrams. The current 64-entity policy fits the measured production path;
-/// a smaller send budget forces the transport branch without changing policy.
+/// Exercise the native receive loop with a valid v5 projection split into
+/// datagrams. The largest budget-packed projection fits the measured
+/// production path; a smaller send budget forces the transport branch without
+/// changing policy.
 #[tokio::test]
 async fn fragmented_projection_reaches_the_native_client() {
     use game_server::{
@@ -400,13 +413,25 @@ async fn fragmented_projection_reaches_the_native_client() {
         content_revision: revision,
         acknowledged_sequence: 0,
         viewer_id: player_id,
-        entities: (0..MAX_VISIBLE_ENTITIES)
+        viewer: ViewerState {
+            health: 50,
+            max_health: 50,
+            level: 1,
+            ..ViewerState::default()
+        },
+        target_of_target: None,
+        events: Vec::new(),
+        entities: (0..MAX_WIRE_ENTITIES)
             .map(|index| EntitySnapshot {
                 kind: EntityKind::Player,
                 id: player_id + u32::try_from(index).unwrap(),
+                appearance: 0,
                 position: [0; 3],
                 velocity: [0; 3],
                 facing: 0,
+                level: 1,
+                health_percent: 100,
+                flags: EntityFlags::default(),
             })
             .collect(),
     };
@@ -487,12 +512,12 @@ async fn fragmented_projection_reaches_the_native_client() {
 }
 
 async fn verify_automatic_resume(session: ClientSession) -> Result<(), ClientError> {
-    use mmorpg_client::session::{MovementInput, NetworkUpdate, run_session};
+    use mmorpg_client::session::{NetworkUpdate, PlayerInput, run_session};
     use tokio::sync::{oneshot, watch};
     let player_id = session.player_id();
     let epoch = session.connection_epoch();
     session.disconnect();
-    let (_input, input) = watch::channel(MovementInput::default());
+    let (_input, input) = watch::channel(PlayerInput::default());
     let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown, stopped) = oneshot::channel();
     // JoinSet aborts its owned task on every early-return/panic path.
@@ -524,10 +549,10 @@ async fn verify_automatic_resume(session: ClientSession) -> Result<(), ClientErr
 }
 
 async fn verify_shutdown_during_resume(session: ClientSession) -> Result<(), ClientError> {
-    use mmorpg_client::session::{MovementInput, NetworkUpdate, run_session};
+    use mmorpg_client::session::{NetworkUpdate, PlayerInput, run_session};
     use tokio::sync::{oneshot, watch};
     session.disconnect();
-    let (_input, input) = watch::channel(MovementInput::default());
+    let (_input, input) = watch::channel(PlayerInput::default());
     let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown, stopped) = oneshot::channel();
     let mut tasks = tokio::task::JoinSet::new();
@@ -563,7 +588,7 @@ async fn verify_live_input(session: ClientSession) -> Result<(), ClientError> {
     let spawned = session.receive_snapshot().await?;
     assert!(is_at_rest(own(&spawned, player_id)));
     session.disconnect();
-    let (input, watched) = watch::channel(MovementInput::default());
+    let (input, watched) = watch::channel(PlayerInput::default());
     let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown, stopped) = oneshot::channel();
     let mut tasks = tokio::task::JoinSet::new();

@@ -12,8 +12,9 @@ use mmorpg_scenery::{
 };
 
 /// Recorded from this revision; any change to content, placement or relief
-/// must update it deliberately.
-const STABLE_HASH: u64 = 0x4d3d_edec_faac_9be3;
+/// must update it deliberately. Revision 3 added creatures and NPCs only; the
+/// derived scenery is unchanged apart from the revision it carries.
+const STABLE_HASH: u64 = 0x8495_49d6_874e_b332;
 
 fn is_terrain(collider: &StaticCollider) -> bool {
     collider.id == ids::GROUND || ids::BOUNDARY_WALLS.contains(&collider.id)

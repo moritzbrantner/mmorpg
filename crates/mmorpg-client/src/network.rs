@@ -7,7 +7,7 @@ use game_server::{
     BrowserRoutePrefix, MatchId, ReconnectToken, SnapshotFrame, SnapshotReassembler, WELCOME_BYTES,
     Welcome,
 };
-use mmorpg_core::{EntityKind, TICK_HZ, ZoneCommand, ZoneId, ZoneSnapshot};
+use mmorpg_core::{EntityKind, EntityRef, TICK_HZ, ZoneCommand, ZoneId, ZoneSnapshot};
 use std::{collections::BTreeSet, error::Error, fmt, path::Path, time::Duration};
 use tokio::sync::Mutex;
 use url::Url;
@@ -280,6 +280,25 @@ impl ClientSession {
     /// One edge-triggered jump; the server ignores it unless grounded.
     pub fn send_jump(&mut self) -> Result<(), SessionError> {
         self.send_command(ZoneCommand::Jump)
+    }
+
+    /// Selects a unit, or clears the selection; the zone validates it.
+    pub fn send_select_target(&mut self, target: Option<EntityRef>) -> Result<(), SessionError> {
+        self.send_command(ZoneCommand::SelectTarget(target))
+    }
+
+    /// Starts (`true`) or stops auto-attacking the selected target.
+    pub fn send_attack(&mut self, start: bool) -> Result<(), SessionError> {
+        self.send_command(if start {
+            ZoneCommand::StartAttack
+        } else {
+            ZoneCommand::StopAttack
+        })
+    }
+
+    /// Asks a dead character to return to the graveyard.
+    pub fn send_release_spirit(&mut self) -> Result<(), SessionError> {
+        self.send_command(ZoneCommand::ReleaseSpirit)
     }
 
     fn send_command(&mut self, command: ZoneCommand) -> Result<(), SessionError> {

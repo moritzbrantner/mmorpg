@@ -1,8 +1,9 @@
-use mmorpg_client::session::{MovementInput, NetworkUpdate};
+use mmorpg_client::session::{NetworkUpdate, PlayerInput};
 use mmorpg_client::{
     ClientError, camera::OrbitCamera, graphics::WindowRenderer, presentation::Presentation,
     world::WorldScene,
 };
+use mmorpg_core::ZoneContent;
 use mmorpg_scenery::Scenery;
 use std::{
     collections::HashSet,
@@ -19,12 +20,14 @@ use winit::{
     window::{Window, WindowId},
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     runtime: Arc<tokio::runtime::Runtime>,
     player_id: u32,
     scenery: Scenery,
+    content: Arc<ZoneContent>,
     world: WorldScene,
-    input: watch::Sender<MovementInput>,
+    input: watch::Sender<PlayerInput>,
     updates: watch::Receiver<NetworkUpdate>,
     frames: Option<u32>,
 ) -> Result<(), ClientError> {
@@ -34,7 +37,8 @@ pub fn run(
         window: None,
         renderer: None,
         world,
-        presentation: Presentation::new(player_id, scenery, Instant::now()),
+        presentation: Presentation::new(player_id, scenery, content, Instant::now())?,
+        title: String::new(),
         connection_epoch: None,
         input,
         updates,
@@ -61,8 +65,10 @@ struct App {
     /// Static geometry uploaded when the window's renderer is created.
     world: WorldScene,
     presentation: Presentation,
+    /// The window title last set, so it changes only when its text does.
+    title: String,
     connection_epoch: Option<u32>,
-    input: watch::Sender<MovementInput>,
+    input: watch::Sender<PlayerInput>,
     updates: watch::Receiver<NetworkUpdate>,
     keys: HashSet<KeyCode>,
     camera: OrbitCamera,
@@ -82,7 +88,7 @@ const RIGHT_KEYS: [KeyCode; 3] = [KeyCode::KeyD, KeyCode::KeyE, KeyCode::ArrowRi
 
 /// Browser-style pixel scrolling: this many pixels count as one wheel line.
 const PIXELS_PER_WHEEL_LINE: f64 = 40.0;
-const CONTROL_HINTS: &str = "MMORPG — W/S move · A/D or Q/E strafe · Space jumps · drag to orbit · wheel zooms · Esc closes";
+const CONTROL_HINTS: &str = "W/S move · A/D or Q/E strafe · Space jumps · Tab target · F attack · drag to orbit · wheel zooms · Esc closes";
 
 impl App {
     fn stop(&self) {
@@ -109,11 +115,11 @@ impl App {
             held(&FORWARD_KEYS) || held(&BACKWARD_KEYS) || held(&LEFT_KEYS) || held(&RIGHT_KEYS);
         let facing = steering.then(|| self.camera.facing());
         self.input.send_if_modified(|input| {
-            let next = MovementInput {
+            let next = PlayerInput {
                 forward,
                 strafe,
                 facing: facing.unwrap_or(input.facing),
-                jumps: input.jumps,
+                ..*input
             };
             let changed = *input != next;
             *input = next;
@@ -124,6 +130,52 @@ impl App {
     fn jump(&self) {
         self.input
             .send_modify(|input| input.jumps = input.jumps.wrapping_add(1));
+    }
+
+    /// Tab, F and R are intents derived from the latest projection; the zone
+    /// decides what happens.
+    fn combat_key(&self, code: KeyCode) {
+        let latest = self.presentation.latest();
+        match code {
+            KeyCode::Tab => {
+                if let Some(target) = self.presentation.next_tab_target() {
+                    self.input.send_modify(|input| {
+                        input.target = Some(target);
+                        input.selections = input.selections.wrapping_add(1);
+                    });
+                }
+            }
+            KeyCode::KeyF => {
+                let start = !latest.is_some_and(|latest| latest.viewer.auto_attacking);
+                self.input.send_modify(|input| {
+                    input.attack = start;
+                    input.attack_requests = input.attack_requests.wrapping_add(1);
+                });
+            }
+            KeyCode::KeyR if latest.is_some_and(|latest| latest.viewer.dead) => {
+                self.input
+                    .send_modify(|input| input.releases = input.releases.wrapping_add(1));
+            }
+            _ => {}
+        }
+    }
+
+    /// Shows the connection state or the player's health and target.
+    fn show_title(&mut self, now: Instant) {
+        let title = if self.presentation.is_stalled(now) {
+            "MMORPG — connection stalled".to_owned()
+        } else {
+            match self.presentation.status() {
+                Some(status) => format!("MMORPG — {status} — {CONTROL_HINTS}"),
+                None => format!("MMORPG — {CONTROL_HINTS}"),
+            }
+        };
+        if title != self.title
+            && let Some(window) = &self.window
+        {
+            window.set_title(&title);
+            self.title = title;
+        }
     }
 }
 
@@ -215,6 +267,9 @@ impl ApplicationHandler for App {
                     {
                         self.jump();
                     }
+                    if event.state == ElementState::Pressed && !event.repeat {
+                        self.combat_key(code);
+                    }
                     if event.state == ElementState::Pressed {
                         self.keys.insert(code);
                     } else {
@@ -232,6 +287,7 @@ impl ApplicationHandler for App {
                         if let Some(window) = &self.window {
                             window.set_title("MMORPG — reconnecting to world");
                         }
+                        self.title.clear();
                     }
                     NetworkUpdate::Snapshot {
                         connection_epoch,
@@ -245,13 +301,7 @@ impl ApplicationHandler for App {
                             self.fail(event_loop, error);
                             return;
                         }
-                        if let Some(window) = &self.window {
-                            window.set_title(if self.presentation.is_stalled(now) {
-                                "MMORPG — connection stalled"
-                            } else {
-                                CONTROL_HINTS
-                            });
-                        }
+                        self.show_title(now);
                     }
                     NetworkUpdate::Failed(error) => {
                         self.fail(event_loop, error);

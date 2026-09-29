@@ -10,8 +10,9 @@
 //!
 //! This crate is a thin adapter: gameplay rules live in `mmorpg-core`, wire
 //! formats in `mmorpg-protocol`. The static scenery export lives in
-//! [`scenery`]. Everything testable is plain Rust in [`host`] and
-//! [`scenery`]; the `#[wasm_bindgen]` items below only translate types.
+//! [`scenery`], the content catalog (creature, NPC and area names by ID) in
+//! [`catalog`]. Everything testable is plain Rust in [`host`], [`scenery`]
+//! and [`catalog`]; the `#[wasm_bindgen]` items below only translate types.
 //!
 //! The workspace `unsafe_code = "forbid"` lint applies unchanged: the code
 //! `wasm-bindgen` 0.2.129 generates compiles under it, so this crate needs no
@@ -20,6 +21,7 @@
 //! [ADR 0002]: https://github.com/moritzbrantner/mmorpg/blob/main/docs/adr/0002-browser-embeds-zone-simulation.md
 #![forbid(unsafe_code)]
 
+pub mod catalog;
 pub mod host;
 pub mod scenery;
 
@@ -94,6 +96,13 @@ impl LocalZone {
 #[wasm_bindgen]
 pub fn scenery() -> String {
     scenery::hosted_scenery_json().to_owned()
+}
+
+/// The versioned JSON content catalog of the hosted content revision:
+/// creature templates, NPCs and areas by ID.
+#[wasm_bindgen(js_name = catalog)]
+pub fn content_catalog() -> String {
+    catalog::hosted_catalog_json().to_owned()
 }
 
 /// The ID of the named core area containing `(x, z)` in units, if any.

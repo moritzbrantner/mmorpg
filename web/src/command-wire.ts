@@ -3,15 +3,26 @@
  * `fixtures/protocol/commands-v2.hex` holds both encoders to the same bytes.
  * The session supplies player identity and sequence separately.
  */
+import { entityKindCode, isU32, type EntityRef } from "./entity-ref";
+
 export type Axis = -1 | 0 | 1;
 
 export type WorldCommand =
   | { kind: "move"; forward: Axis; strafe: Axis; facing: number }
-  | { kind: "jump" };
+  | { kind: "jump" }
+  /** Selects a unit, or clears the selection with `null`. */
+  | { kind: "select-target"; target: EntityRef | null }
+  | { kind: "start-attack" }
+  | { kind: "stop-attack" }
+  | { kind: "release-spirit" };
 
 const COMMAND_WIRE_VERSION = 2;
 const MOVE_TAG = 1;
 const JUMP_TAG = 2;
+const SELECT_TARGET_TAG = 3;
+const START_ATTACK_TAG = 4;
+const STOP_ATTACK_TAG = 5;
+const RELEASE_SPIRIT_TAG = 6;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
@@ -38,5 +49,29 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
     }
     case "jump":
       return Uint8Array.of(COMMAND_WIRE_VERSION, JUMP_TAG);
+    case "select-target": {
+      const payload = new Uint8Array(7);
+      const view = new DataView(payload.buffer);
+      view.setUint8(0, COMMAND_WIRE_VERSION);
+      view.setUint8(1, SELECT_TARGET_TAG);
+      if (command.target !== null) {
+        if (!isU32(command.target.id)) {
+          throw new Error("Target IDs must be u32.");
+        }
+        view.setUint8(2, entityKindCode(command.target.kind));
+        view.setUint32(3, command.target.id);
+      }
+      return payload;
+    }
+    case "start-attack":
+      return Uint8Array.of(COMMAND_WIRE_VERSION, START_ATTACK_TAG);
+    case "stop-attack":
+      return Uint8Array.of(COMMAND_WIRE_VERSION, STOP_ATTACK_TAG);
+    case "release-spirit":
+      return Uint8Array.of(COMMAND_WIRE_VERSION, RELEASE_SPIRIT_TAG);
+    default: {
+      const unsupported: never = command;
+      throw new Error(`Unsupported command ${String(unsupported)}.`);
+    }
   }
 }

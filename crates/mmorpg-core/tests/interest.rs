@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use mmorpg_core::{
-    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, EntityKind, EntitySnapshot,
-    INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE, MAX_VISIBLE_ENTITIES, SNAPSHOT_SCHEMA_VERSION,
-    ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation,
+    CanonicalPlayerCombat, CanonicalPlayerSnapshot, EntityFlags, EntityKind, EntitySnapshot,
+    INTEREST_RADIUS_UNITS, MAX_PLAYERS_PER_ZONE, MAX_VISIBLE_ENTITIES, ZoneCommand, ZoneId,
+    ZoneSimulation,
 };
 
 /// Interest radius; cell width equals it, so layouts below scale with it.
@@ -23,29 +25,27 @@ fn run(facing: u16) -> ZoneCommand {
 }
 
 fn zone_at(positions: &[[i32; 3]]) -> ZoneSimulation {
-    ZoneSimulation::from_snapshot(CanonicalZoneSnapshot {
-        definition: ZoneDefinition::default(),
-        schema_version: SNAPSHOT_SCHEMA_VERSION,
-        zone_id: ZoneId::new(7),
-        tick: 99,
-        players: positions
-            .iter()
-            .enumerate()
-            .map(|(slot, &position)| CanonicalPlayerSnapshot {
-                // Reverse IDs deliberately: spatial traversal must not change wire order.
-                player_id: u32::try_from(positions.len() - slot).unwrap(),
-                position,
-                velocity: [0; 3],
-                facing: 0,
-                forward: 0,
-                strafe: 0,
-                jump_pending: false,
-                last_sequence: 3,
-                spawn_slot: u16::try_from(slot).unwrap(),
-            })
-            .collect(),
-    })
-    .unwrap()
+    let empty = ZoneSimulation::new(ZoneId::new(7));
+    let mut canonical = empty.snapshot().unwrap();
+    canonical.tick = 99;
+    canonical.players = positions
+        .iter()
+        .enumerate()
+        .map(|(slot, &position)| CanonicalPlayerSnapshot {
+            // Reverse IDs deliberately: spatial traversal must not change wire order.
+            player_id: u32::try_from(positions.len() - slot).unwrap(),
+            position,
+            velocity: [0; 3],
+            facing: 0,
+            forward: 0,
+            strafe: 0,
+            jump_pending: false,
+            last_sequence: 3,
+            spawn_slot: u16::try_from(slot).unwrap(),
+            combat: CanonicalPlayerCombat::default(),
+        })
+        .collect();
+    ZoneSimulation::from_snapshot(canonical, Arc::clone(empty.content())).unwrap()
 }
 
 /// Exhaustive reference: every player within the inclusive XZ radius, sorted
@@ -76,25 +76,36 @@ fn assert_matches_exhaustive(zone: &ZoneSimulation) {
             .map(|candidate| EntitySnapshot {
                 kind: EntityKind::Player,
                 id: candidate.player_id,
+                appearance: 0,
                 position: candidate.position,
                 velocity: candidate
                     .velocity
                     .map(|component| component.clamp(-128, 127) as i8),
                 facing: candidate.facing,
+                level: 1,
+                health_percent: 100,
+                flags: EntityFlags::default(),
             })
             .collect();
         let actual = zone.snapshot_for_player(observer.player_id).unwrap();
+        assert_eq!(actual.entities, expected, "observer {}", observer.player_id);
         assert_eq!(
-            actual,
-            mmorpg_core::ZoneSnapshot {
-                content_revision: canonical.definition.revision(),
-                acknowledged_sequence: observer.last_sequence,
-                viewer_id: observer.player_id,
-                schema_version: canonical.schema_version,
-                zone_id: canonical.zone_id,
-                tick: canonical.tick,
-                entities: expected,
-            },
+            (
+                actual.content_revision,
+                actual.acknowledged_sequence,
+                actual.viewer_id,
+                actual.schema_version,
+                actual.zone_id,
+                actual.tick,
+            ),
+            (
+                canonical.content_revision,
+                observer.last_sequence,
+                observer.player_id,
+                canonical.schema_version,
+                canonical.zone_id,
+                canonical.tick,
+            ),
             "observer {}",
             observer.player_id
         );
@@ -133,7 +144,9 @@ fn visibility_tracks_movement_admission_removal_and_recovery() {
     ]);
     zone.apply_command(3, 4, run(NORTH_EAST)).unwrap();
     zone.apply_command(1, 4, run(SOUTH_WEST)).unwrap();
-    let mut restored = ZoneSimulation::from_snapshot(zone.snapshot().unwrap()).unwrap();
+    let mut restored =
+        ZoneSimulation::from_snapshot(zone.snapshot().unwrap(), Arc::clone(zone.content()))
+            .unwrap();
     for _ in 0..60 {
         zone.advance_tick().unwrap();
         restored.advance_tick().unwrap();
@@ -242,7 +255,9 @@ fn crossing_into_a_previously_unqueried_cell_becomes_visible_on_the_next_tick() 
     ]);
     zone.apply_command(3, 4, run(WEST)).unwrap();
     zone.apply_command(1, 4, run(EAST)).unwrap();
-    let mut recovered = ZoneSimulation::from_snapshot(zone.snapshot().unwrap()).unwrap();
+    let mut recovered =
+        ZoneSimulation::from_snapshot(zone.snapshot().unwrap(), Arc::clone(zone.content()))
+            .unwrap();
     for simulation in [&mut zone, &mut recovered] {
         for observer in [4, 2] {
             assert_eq!(
@@ -277,7 +292,9 @@ fn retained_memberships_write_only_for_crossings_across_deterministic_ticks() {
         [3 * R, 50, 3 * R],
         [6 * R, 50, 0],
     ]);
-    let recovered = ZoneSimulation::from_snapshot(zone.snapshot().unwrap()).unwrap();
+    let recovered =
+        ZoneSimulation::from_snapshot(zone.snapshot().unwrap(), Arc::clone(zone.content()))
+            .unwrap();
     assert_eq!(recovered.interest_maintenance_stats().full_rebuilds, 1);
     let initial = zone.interest_maintenance_stats();
     zone.advance_tick().unwrap();
@@ -287,7 +304,7 @@ fn retained_memberships_write_only_for_crossings_across_deterministic_ticks() {
     assert_eq!(stationary.bucket_inserts, initial.bucket_inserts);
     assert_eq!(stationary.bucket_removes, initial.bucket_removes);
     assert_eq!(stationary.bucket_moves, initial.bucket_moves);
-    assert_eq!(stationary.players_inspected - initial.players_inspected, 4);
+    assert_eq!(stationary.units_inspected - initial.units_inspected, 4);
 
     zone.apply_command(1, 4, run(EAST)).unwrap();
     zone.advance_tick().unwrap();
@@ -307,10 +324,11 @@ fn retained_memberships_write_only_for_crossings_across_deterministic_ticks() {
     assert_eq!(crossed.bucket_moves - same_cell.bucket_moves, 2);
     assert_eq!(crossed.bucket_inserts - same_cell.bucket_inserts, 2);
     assert_eq!(crossed.bucket_removes - same_cell.bucket_removes, 2);
-    assert_eq!(crossed.players_inspected - same_cell.players_inspected, 4);
+    assert_eq!(crossed.units_inspected - same_cell.units_inspected, 4);
 
     let checkpoint = zone.snapshot().unwrap();
-    let mut recovered = ZoneSimulation::from_snapshot(checkpoint.clone()).unwrap();
+    let mut recovered =
+        ZoneSimulation::from_snapshot(checkpoint.clone(), Arc::clone(zone.content())).unwrap();
     assert_eq!(recovered.snapshot().unwrap(), checkpoint);
     assert_matches_exhaustive(&recovered);
     for _ in 0..10 {

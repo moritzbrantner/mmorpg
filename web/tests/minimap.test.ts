@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { ENVIRONMENT } from "../src/world/environment";
 import { buildMinimapLayers, clampToRim, dispositionOf, minimapOffset, minimapRotation } from "../src/world/minimap";
+import type { EntityState } from "../src/replication";
 import { fixtureScenery } from "./support/scenery-fixture";
+import { NO_FLAGS, playerEntity } from "./support/snapshots";
 
 describe("minimap projection", () => {
   test("north-up maps north (−Z) up and east (+X) right", () => {
@@ -35,7 +37,14 @@ describe("minimap projection", () => {
     const [x, y] = clampToRim([30, 40], 10);
     expect(x).toBeCloseTo(6, 9);
     expect(y).toBeCloseTo(8, 9);
-    expect(dispositionOf({ kind: "player", entityId: 2, position: [0, 90, 0], velocity: [0, 0, 0], facing: 0 })).toBe("player");
+  });
+
+  test("dots take the unit's disposition: players, hostile or neutral creatures, friendly NPCs", () => {
+    const creature = (hostile: boolean): EntityState => ({ ...playerEntity(9, [0, 45, 0]), kind: "creature", appearance: 1, flags: { ...NO_FLAGS, hostile } });
+    expect(dispositionOf(playerEntity(2, [0, 90, 0]))).toBe("player");
+    expect(dispositionOf(creature(true))).toBe("hostile");
+    expect(dispositionOf(creature(false))).toBe("neutral");
+    expect(dispositionOf({ ...playerEntity(6, [0, 90, 0]), kind: "npc", appearance: 6 })).toBe("friendly");
   });
 });
 
