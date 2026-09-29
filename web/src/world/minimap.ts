@@ -1,4 +1,4 @@
-import type { EntityKind } from "../replication";
+import type { EntityState } from "../replication";
 import { mixColor, shadeColor, type EnvironmentStyle } from "./environment";
 import type { Color, Prop, Scenery } from "./scenery";
 import { groundBiomes } from "./terrain-mesh";
@@ -176,9 +176,12 @@ export const DOT_COLORS: Readonly<Record<Disposition, Color>> = {
   player: "#4ea8ff",
 };
 
-/** The dot colour class of a unit kind; creature and NPC kinds (step 7) add their dispositions here. */
-export function dispositionOf(kind: EntityKind): Disposition {
-  switch (kind) {
+/**
+ * The dot colour class of a projected unit. It reads the whole entity, so
+ * creature and NPC kinds (step 7) can colour by their flags (hostile or not).
+ */
+export function dispositionOf(entity: EntityState): Disposition {
+  switch (entity.kind) {
     case "player": return "player";
   }
 }

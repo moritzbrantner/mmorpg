@@ -1,23 +1,47 @@
 import type { RendererSceneNode } from "@moritzbrantner/three-d-renderer";
 import type { EntityKind, EntityState } from "../replication";
 import { UnitAnimator, poseFor, type LocomotionState } from "./character-animation";
-import { humanoidNodes, humanoidStance, type HumanoidLook, type UnitPlacement } from "./humanoid";
+import { OTHER_PLAYER_LOOK, humanoidNodes, humanoidStance, type HumanoidLook, type UnitPlacement } from "./humanoid";
 
 /**
- * Unit rendering by entity kind. A registry maps each projected entity kind
- * to a model; players are animated humanoids. Creature and NPC kinds (step 7)
- * plug in here with their own models keyed by kind and appearance, and the
- * render loop stays unchanged.
+ * Unit rendering by projected entity. A registry maps each entity kind to a
+ * model, and the model reads the whole projected entity, so it can pick a
+ * body by appearance (template ID) and stand on its own half height. Players
+ * are animated humanoids. Creature and NPC kinds (step 7) register their
+ * models here, and the render loop stays unchanged.
  */
 export type { UnitPlacement } from "./humanoid";
 
-/** How one visible unit looks. Projections carry no appearance yet, so other players share one look. */
+/** The local character's look. Projections carry no player appearance yet, so other players share one look. */
 export type UnitLook = HumanoidLook;
 
-/** Everything a unit model draws from in one frame. */
-export type UnitFrame = { id: string; placement: UnitPlacement; locomotion: LocomotionState; look: UnitLook };
+/** What every unit model may read besides the entity itself. */
+export type UnitContext = {
+  unitsPerMetre: number;
+  /** Half the height of the shared player body box, in units. */
+  playerHalfHeightUnits: number;
+  /** The player this projection is addressed to. */
+  viewerId: number;
+  viewerLook: UnitLook;
+};
 
-export type UnitModel = { nodes(frame: UnitFrame): RendererSceneNode[] };
+/** Everything a unit model draws from in one frame. */
+export type UnitFrame = {
+  id: string;
+  entity: EntityState;
+  placement: UnitPlacement;
+  locomotion: LocomotionState;
+  context: UnitContext;
+};
+
+export type UnitModel = {
+  /** Half the body height in units: a projection places the body centre this far above the feet. */
+  halfHeightUnits(entity: EntityState, context: UnitContext): number;
+  nodes(frame: UnitFrame): RendererSceneNode[];
+};
+
+/** Models by entity kind; adding a kind to `EntityKind` requires an entry here. */
+export type UnitModels = { readonly [kind in EntityKind]: UnitModel };
 
 const YAW_STEPS = 65_536;
 /** Presentation velocity arrives in units per tick. */
@@ -46,17 +70,27 @@ export function placeUnit(
   };
 }
 
-export const HUMANOID_MODEL: UnitModel = {
-  nodes: (frame) => humanoidNodes(frame.id, frame.placement, frame.look, poseFor(frame.locomotion, humanoidStance(frame.look))),
+/** Players: the viewer's own unit wears the local character's look, others the shared one. */
+export const PLAYER_MODEL: UnitModel = {
+  halfHeightUnits: (_entity, context) => context.playerHalfHeightUnits,
+  nodes: ({ id, entity, placement, locomotion, context }) => {
+    const look = entity.entityId === context.viewerId ? context.viewerLook : OTHER_PLAYER_LOOK;
+    return humanoidNodes(id, placement, look, poseFor(locomotion, humanoidStance(look)));
+  },
 };
 
-/** Models by entity kind; adding a kind to `EntityKind` requires an entry here. */
-export const UNIT_MODELS: { readonly [kind in EntityKind]: UnitModel } = {
-  player: HUMANOID_MODEL,
+export const UNIT_MODELS: UnitModels = {
+  player: PLAYER_MODEL,
 };
 
-export function unitNodes(kind: EntityKind, frame: UnitFrame): RendererSceneNode[] {
-  return UNIT_MODELS[kind].nodes(frame);
+/** The model that draws a projected entity. */
+export function unitModel(entity: Pick<EntityState, "kind">, models: UnitModels = UNIT_MODELS): UnitModel {
+  return models[entity.kind];
+}
+
+/** Where a unit stands: its model's half height below the projected body centre, raised by relief. */
+export function placeWithModel(model: UnitModel, entity: EntityState, context: UnitContext, reliefUnits: number): UnitPlacement {
+  return placeUnit(entity, model.halfHeightUnits(entity, context), reliefUnits, context.unitsPerMetre);
 }
 
 export function unitIdentity(entity: Pick<EntityState, "kind" | "entityId">): string {

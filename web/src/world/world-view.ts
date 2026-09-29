@@ -15,8 +15,7 @@ import { MovementOutbox, type MovementInput } from "./movement-outbox";
 import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput, type DragMode, type Vec3 } from "./orbit-camera";
 import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type SceneryScene } from "./scenery-nodes";
 import { SkyLayer } from "./sky";
-import { OTHER_PLAYER_LOOK } from "./humanoid";
-import { UnitAnimators, placeUnit, unitIdentity, unitNodes, type UnitLook } from "./unit-nodes";
+import { UnitAnimators, placeWithModel, unitIdentity, unitModel, type UnitContext, type UnitLook } from "./unit-nodes";
 
 /**
  * The in-world presentation: static scenery, animated units, the orbit
@@ -221,20 +220,23 @@ export class WorldView {
     this.#seconds += deltaSeconds;
     this.#orbit.update(deltaSeconds, !animate);
     const { unitsPerMetre, playerHalfExtents } = scenery.scenery;
+    const unitContext: UnitContext = { unitsPerMetre, playerHalfHeightUnits: playerHalfExtents[1], viewerId: projection.viewerId, viewerLook: look };
     const nodes: RendererSceneNode[] = [];
     const units: RendererSceneNode[] = [];
     const visible = new Set<string>();
     const others: MinimapUnit[] = [];
     let self: { focus: Vec3; x: number; z: number; facing: number } | null = null;
     for (const entity of source.sample()) {
-      const placement = placeUnit(entity, playerHalfExtents[1], scenery.reliefAt(entity.position[0], entity.position[2]), unitsPerMetre);
+      const model = unitModel(entity);
+      const placement = placeWithModel(model, entity, unitContext, scenery.reliefAt(entity.position[0], entity.position[2]));
       const isSelf = entity.kind === "player" && entity.entityId === projection.viewerId;
       const id = unitIdentity(entity);
       visible.add(id);
       const locomotion = this.#animators.locomotion(entity, placement, unitsPerMetre, deltaSeconds, !animate);
-      units.push(...unitNodes(entity.kind, { id, placement, locomotion, look: isSelf ? look : OTHER_PLAYER_LOOK }));
+      units.push(...model.nodes({ id, entity, placement, locomotion, context: unitContext }));
       if (isSelf) {
-        self = { focus: [placement.x, placement.feetY + playerHalfExtents[1] / unitsPerMetre, placement.z], x: placement.x, z: placement.z, facing: placement.yawRadians };
+        const centreY = placement.feetY + model.halfHeightUnits(entity, unitContext) / unitsPerMetre;
+        self = { focus: [placement.x, centreY, placement.z], x: placement.x, z: placement.z, facing: placement.yawRadians };
         this.#showArea(scenery.areaAt(entity.position[0], entity.position[2])?.name ?? ZONE_NAME);
       } else {
         others.push(this.#minimapUnit(entity, unitsPerMetre));
@@ -276,7 +278,7 @@ export class WorldView {
   }
 
   #minimapUnit(entity: EntityState, unitsPerMetre: number): MinimapUnit {
-    return { x: entity.position[0] / unitsPerMetre, z: entity.position[2] / unitsPerMetre, disposition: dispositionOf(entity.kind) };
+    return { x: entity.position[0] / unitsPerMetre, z: entity.position[2] / unitsPerMetre, disposition: dispositionOf(entity) };
   }
 
   /** The horizon's height on screen as a fraction from the top, for the CSS sky. */

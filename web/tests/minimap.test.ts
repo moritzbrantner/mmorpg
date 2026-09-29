@@ -35,7 +35,7 @@ describe("minimap projection", () => {
     const [x, y] = clampToRim([30, 40], 10);
     expect(x).toBeCloseTo(6, 9);
     expect(y).toBeCloseTo(8, 9);
-    expect(dispositionOf("player")).toBe("player");
+    expect(dispositionOf({ kind: "player", entityId: 2, position: [0, 90, 0], velocity: [0, 0, 0], facing: 0 })).toBe("player");
   });
 });
 
