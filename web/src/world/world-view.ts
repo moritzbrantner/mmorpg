@@ -171,6 +171,8 @@ export class WorldView {
   #occluders: Box[] = [];
   /** The viewer's projected unit as last drawn, for debug readouts. */
   #lastSelf: { x: number; z: number; facing: number } | null = null;
+  /** The projection the last frame drew, for debug readouts. */
+  #lastProjection: ZoneSnapshot | null = null;
   /** The first frame of a session picks a heading whose view is not inside a building. */
   #framePending = false;
 
@@ -238,6 +240,8 @@ export class WorldView {
     this.#shownArea = null;
     this.#flyTo = null;
     this.#framePending = true;
+    this.#lastSelf = null;
+    this.#lastProjection = null;
     this.#frameRate.reset();
     this.#sky.show(true);
   }
@@ -343,6 +347,7 @@ export class WorldView {
     if (!projection) {
       throw new Error("The world source has no projection for the joined player.");
     }
+    this.#lastProjection = projection;
     const animate = this.#animate;
     this.#seconds += deltaSeconds;
     const resolveAnchor = (entity: EntityRef): Anchor | null => this.#anchors.get(entityKey(entity)) ?? null;
@@ -545,6 +550,15 @@ export class WorldView {
         frame: this.#overlay.latest,
         self: this.#lastSelf,
       }),
+      /** The decoded projection the last frame drew: its tick, viewer and entities in units. */
+      projection: () => {
+        const projection = this.#lastProjection;
+        return projection && {
+          tick: Number(projection.tick),
+          viewerId: projection.viewerId,
+          entities: projection.entities.map(({ kind, entityId, position, facing }) => ({ kind, id: entityId, position: [...position], facing })),
+        };
+      },
     };
   }
 }
