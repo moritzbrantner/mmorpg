@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use physics_engine::RigidBody;
 
+use crate::ai::is_wander_point;
+use crate::content::within_content_range;
 use crate::creature::{CreatureState, Life, MAX_THREAT_ENTRIES};
 use crate::entity::body_id;
 use crate::rng::ZoneRng;
@@ -352,7 +354,19 @@ impl ZoneSimulation {
                 "snapshot creatures do not match the content spawns",
             ));
         }
-        let (_, template) = Self::creature_content(&content, record.creature_id)?;
+        let (spawn, template) = Self::creature_content(&content, record.creature_id)?;
+        // Bodies and corpses stay inside the world limits and wander points
+        // near their spawn, so AI arithmetic stays in range.
+        let wanders_off = matches!(
+            record.ai,
+            CreatureAi::Idle { destination: Some(to), .. }
+                if !is_wander_point(spawn.position, to, spawn.wander_radius)
+        );
+        if !record.position.into_iter().all(within_content_range) || wanders_off {
+            return Err(ZoneError::new(
+                "creature position or wander destination is out of range",
+            ));
+        }
         if !(template.min_level..=template.max_level).contains(&record.level)
             || record.health > template.max_health(record.level)
             || record.threat.len() > MAX_THREAT_ENTRIES

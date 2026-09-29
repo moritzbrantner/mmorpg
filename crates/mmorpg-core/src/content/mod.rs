@@ -187,7 +187,7 @@ impl ZoneDefinition {
     }
 }
 
-const fn within_content_range(value: i32) -> bool {
+pub(crate) const fn within_content_range(value: i32) -> bool {
     -MAX_CONTENT_COORDINATE_UNITS <= value && value <= MAX_CONTENT_COORDINATE_UNITS
 }
 

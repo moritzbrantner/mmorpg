@@ -34,11 +34,45 @@ use crate::{
     unit::CREATURE_REACH_UNITS,
 };
 
-/// Squared XZ distance.
+/// Squared XZ distance, saturating at `i64::MAX`. Only recovered player
+/// positions near opposite ends of the `i32` range get that far apart, and
+/// every radius test fails there as it should.
 pub(crate) fn distance_squared(from: [i32; 2], to: [i32; 2]) -> i64 {
     let dx = i64::from(to[0]) - i64::from(from[0]);
     let dz = i64::from(to[1]) - i64::from(from[1]);
-    dx * dx + dz * dz
+    dx.saturating_mul(dx).saturating_add(dz.saturating_mul(dz))
+}
+
+/// The XZ offset from `from` to `to` that steering follows. An offset beyond
+/// the `i32` range, which only a recovered extreme player position produces,
+/// is halved on both axes, which keeps its direction.
+fn offset(from: [i32; 2], to: [i32; 2]) -> (i32, i32) {
+    let dx = i64::from(to[0]) - i64::from(from[0]);
+    let dz = i64::from(to[1]) - i64::from(from[1]);
+    match (i32::try_from(dx), i32::try_from(dz)) {
+        (Ok(dx), Ok(dz)) => (dx, dz),
+        // |dx|, |dz| < 2^32, so each half fits.
+        _ => (
+            i32::try_from(dx / 2).unwrap_or(0),
+            i32::try_from(dz / 2).unwrap_or(0),
+        ),
+    }
+}
+
+/// Whether `to` is a wander point of a spawn at `home`: the direction table
+/// and its rounding place a point at most one unit beyond the radius.
+pub(crate) fn is_wander_point(home: [i32; 2], to: [i32; 2], radius: i32) -> bool {
+    distance_squared(home, to) <= (i64::from(radius) + 1).pow(2)
+}
+
+/// The point `distance` units from `home` along `yaw`.
+fn wander_point(home: [i32; 2], yaw: u16, distance: i32) -> [i32; 2] {
+    let (x, z) = trig::direction(yaw);
+    let offset = |unit| trig::checked_scale(distance, unit).unwrap_or(0);
+    [
+        home[0].saturating_add(offset(x)),
+        home[1].saturating_add(offset(z)),
+    ]
 }
 
 /// Velocity of at most `speed` along `(dx, dz)` without overshooting it.
@@ -161,7 +195,7 @@ impl ZoneSimulation {
             ),
             CreatureAi::Engaged => match chase {
                 Some((target, to)) => {
-                    let (dx, dz) = (to[0] - here[0], to[1] - here[1]);
+                    let (dx, dz) = offset(here, to);
                     (
                         chase_velocity(dx, dz, creature_reach(target)),
                         yaw_from_vector(dx, dz),
@@ -170,7 +204,7 @@ impl ZoneSimulation {
                 None => ([0, 0], None),
             },
             CreatureAi::Evading { ticks } => {
-                let (dx, dz) = (home[0] - here[0], home[1] - here[1]);
+                let (dx, dz) = offset(here, home);
                 let arrived =
                     distance_squared(here, home) <= i64::from(ARRIVAL_RADIUS_UNITS).pow(2);
                 if arrived || ticks >= EVADE_TIMEOUT_TICKS {
@@ -321,7 +355,7 @@ fn wander(
                 ([0, 0], None)
             } else {
                 *timer -= 1;
-                let (dx, dz) = (to[0] - here[0], to[1] - here[1]);
+                let (dx, dz) = offset(here, to);
                 (
                     steer(dx, dz, CREATURE_WALK_SPEED_UNITS_PER_TICK),
                     yaw_from_vector(dx, dz),
@@ -336,12 +370,10 @@ fn wander(
             // A random heading and distance around the spawn point.
             let yaw = u16::try_from(rng.below(1 << 16)).unwrap_or(0);
             let distance = i32::try_from(rng.inclusive(0, radius.unsigned_abs())).unwrap_or(0);
-            let (x, z) = trig::direction(yaw);
-            let offset = |unit| trig::checked_scale(distance, unit).unwrap_or(0);
-            let to = [home[0] + offset(x), home[1] + offset(z)];
+            let to = wander_point(home, yaw, distance);
             *destination = Some(to);
             *timer = WANDER_WALK_TIMEOUT_TICKS;
-            let (dx, dz) = (to[0] - here[0], to[1] - here[1]);
+            let (dx, dz) = offset(here, to);
             (
                 steer(dx, dz, CREATURE_WALK_SPEED_UNITS_PER_TICK),
                 yaw_from_vector(dx, dz),
@@ -361,6 +393,40 @@ mod tests {
         assert_eq!(steer(-300, 400, 19), [-11, 15]);
         assert_eq!(steer(3, 4, 19), [3, 4], "a short step lands on the target");
         assert_eq!(steer(1_000, 0, 24), [24, 0]);
+    }
+
+    #[test]
+    fn distances_and_offsets_never_overflow() {
+        let (low, high) = ([i32::MIN, i32::MIN], [i32::MAX, i32::MAX]);
+        assert_eq!(distance_squared(low, high), i64::MAX);
+        assert_eq!(distance_squared([i32::MIN, 0], [i32::MAX, 0]), i64::MAX);
+        assert_eq!(distance_squared([-3, 4], [0, 0]), 25);
+        assert_eq!(offset([5, -7], [2, 9]), (-3, 16));
+        assert_eq!(offset(low, high), (i32::MAX, i32::MAX));
+        assert_eq!(offset(high, low), (-i32::MAX, -i32::MAX));
+        assert_eq!(offset([i32::MAX, 0], [i32::MIN, 10]), (-i32::MAX, 5));
+    }
+
+    /// Recovery accepts every destination wandering can choose.
+    #[test]
+    fn every_wander_point_lies_within_the_recovery_bound() {
+        let home = [-31_000, 29_500];
+        for radius in [0, 1, 7, 600, crate::MAX_WANDER_RADIUS_UNITS] {
+            for yaw in 0..=u16::MAX {
+                for distance in [0, radius / 2, radius] {
+                    let to = wander_point(home, yaw, distance);
+                    assert!(
+                        is_wander_point(home, to, radius),
+                        "{radius} {yaw} {distance}"
+                    );
+                }
+            }
+            assert!(!is_wander_point(
+                home,
+                [home[0] + radius + 2, home[1]],
+                radius
+            ));
+        }
     }
 
     /// Against the plain rule "outside reach, get closer; near it, arrive
