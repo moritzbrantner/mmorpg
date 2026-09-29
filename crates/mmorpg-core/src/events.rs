@@ -30,6 +30,9 @@ pub enum ErrorCode {
     NotDead,
     /// The selected unit does not exist or is not visible.
     InvalidTarget,
+    /// More discrete intents arrived between two ticks than a player may
+    /// queue; the excess was dropped.
+    TooManyIntents,
 }
 
 /// One feedback event addressed to a player.

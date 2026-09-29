@@ -193,6 +193,19 @@ describe("WASM local zone combat intents", () => {
     expect(source.latestProjection()?.events).toEqual([{ kind: "error", code: "not-dead", target: null }]);
     expect(source.latestProjection()?.viewer.target).toBeNull();
   });
+
+  test("intents beyond the per-tick bound are reported, never a session error", () => {
+    const { source } = createLocalWorld(wasm);
+    source.join();
+    for (let press = 0; press < 20; press += 1) {
+      expect(() => source.sendCommand({ kind: "stop-attack" })).not.toThrow();
+    }
+    run(source, 1);
+    expect(source.latestProjection()?.events).toEqual([{ kind: "error", code: "too-many-intents", target: null }]);
+    source.sendCommand({ kind: "stop-attack" });
+    run(source, 1);
+    expect(source.latestProjection()?.events).toEqual([]);
+  });
 });
 
 /** The real WASM zone, but its projections lose their first byte until repaired. */

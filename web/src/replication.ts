@@ -53,7 +53,8 @@ export type ErrorCode =
   | "not-attackable"
   | "you-are-dead"
   | "not-dead"
-  | "invalid-target";
+  | "invalid-target"
+  | "too-many-intents";
 
 /** Feedback the viewer received in the projection's tick; cosmetic and lossy. */
 export type ZoneEvent =
@@ -95,6 +96,7 @@ const BUFFER_CAPACITY = 32;
 
 const ERROR_CODES: readonly ErrorCode[] = [
   "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target",
+  "too-many-intents",
 ];
 
 class Reader {

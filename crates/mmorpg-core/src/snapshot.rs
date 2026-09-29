@@ -72,6 +72,9 @@ pub struct CanonicalPlayerCombat {
     pub error_cooldown: u16,
     /// Queued intents in sequence order.
     pub intents: Vec<PlayerIntent>,
+    /// A later intent found the queue full and was dropped; the next tick
+    /// reports it. Only a full queue drops intents.
+    pub intents_dropped: bool,
     /// Events of the current tick.
     pub events: Vec<ZoneEvent>,
 }
@@ -89,6 +92,7 @@ impl Default for CanonicalPlayerCombat {
             calm_ticks: 0,
             error_cooldown: 0,
             intents: Vec::new(),
+            intents_dropped: false,
             events: Vec::new(),
         }
     }
@@ -174,6 +178,7 @@ impl ZoneSimulation {
                         calm_ticks: state.calm_ticks,
                         error_cooldown: state.error_cooldown,
                         intents: state.intents.clone(),
+                        intents_dropped: state.intents_dropped,
                         events: state.events.clone(),
                     },
                 })
@@ -297,6 +302,9 @@ impl ZoneSimulation {
         {
             return Err(ZoneError::new("player queues exceed their capacity"));
         }
+        if combat.intents_dropped && combat.intents.len() != MAX_PENDING_INTENTS {
+            return Err(ZoneError::new("only a full intent queue drops intents"));
+        }
         if combat.health == 0 && combat.auto_attack {
             return Err(ZoneError::new("a dead player cannot auto-attack"));
         }
@@ -326,6 +334,7 @@ impl ZoneSimulation {
                 calm_ticks: combat.calm_ticks,
                 error_cooldown: combat.error_cooldown,
                 intents: combat.intents,
+                intents_dropped: combat.intents_dropped,
                 events: combat.events,
             },
         );

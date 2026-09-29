@@ -77,6 +77,7 @@ const fn error_code(code: ErrorCode) -> u16 {
         ErrorCode::YouAreDead => 5,
         ErrorCode::NotDead => 6,
         ErrorCode::InvalidTarget => 7,
+        ErrorCode::TooManyIntents => 8,
     }
 }
 
@@ -89,6 +90,7 @@ fn decode_error_code(code: u16) -> Result<ErrorCode, ProtocolError> {
         5 => ErrorCode::YouAreDead,
         6 => ErrorCode::NotDead,
         7 => ErrorCode::InvalidTarget,
+        8 => ErrorCode::TooManyIntents,
         _ => return Err(ProtocolError::new("unknown error code")),
     })
 }
@@ -356,4 +358,33 @@ pub(crate) fn take<const N: usize>(
         .map_err(|_| ProtocolError::new("invalid payload width"))?;
     *offset = end;
     Ok(array)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_codes_have_stable_distinct_wire_values() {
+        let codes = [
+            ErrorCode::NoTarget,
+            ErrorCode::OutOfRange,
+            ErrorCode::TargetDead,
+            ErrorCode::NotAttackable,
+            ErrorCode::YouAreDead,
+            ErrorCode::NotDead,
+            ErrorCode::InvalidTarget,
+            ErrorCode::TooManyIntents,
+        ];
+        for (wire, code) in (1..).zip(codes) {
+            assert_eq!(error_code(code), wire, "{code:?}");
+            assert_eq!(decode_error_code(wire).unwrap(), code);
+        }
+        for unknown in [0, 9, u16::MAX] {
+            assert_eq!(
+                decode_error_code(unknown).unwrap_err().to_string(),
+                "unknown error code"
+            );
+        }
+    }
 }

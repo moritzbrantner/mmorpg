@@ -4,7 +4,9 @@ import type { ZoneEvent, ZoneSnapshot } from "../../src/replication";
 const FIXED_BYTES = 55;
 const EVENT_BYTES = 14;
 const ENTITY_BYTES = 21;
-const ERROR_CODES = ["no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target"];
+const ERROR_CODES = [
+  "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target", "too-many-intents",
+];
 
 function flagByte(flags: readonly boolean[]): number {
   return flags.reduce((byte, set, bit) => byte | (set ? 1 << bit : 0), 0);

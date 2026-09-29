@@ -14,6 +14,7 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "you-are-dead": "You are dead.",
   "not-dead": "You are not dead.",
   "invalid-target": "Invalid target.",
+  "too-many-intents": "Too many actions at once.",
 };
 
 /** A unit's display name: catalog names for creatures and NPCs, "you" for the viewer. */

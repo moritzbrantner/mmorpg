@@ -201,6 +201,7 @@ pub const fn error_code_name(code: ErrorCode) -> &'static str {
         ErrorCode::YouAreDead => "you_are_dead",
         ErrorCode::NotDead => "not_dead",
         ErrorCode::InvalidTarget => "invalid_target",
+        ErrorCode::TooManyIntents => "too_many_intents",
     }
 }
 
@@ -213,6 +214,7 @@ fn parse_error_code(name: &str) -> Option<ErrorCode> {
         "you_are_dead" => ErrorCode::YouAreDead,
         "not_dead" => ErrorCode::NotDead,
         "invalid_target" => ErrorCode::InvalidTarget,
+        "too_many_intents" => ErrorCode::TooManyIntents,
         _ => return None,
     })
 }
@@ -278,6 +280,7 @@ mod tests {
             ErrorCode::YouAreDead,
             ErrorCode::NotDead,
             ErrorCode::InvalidTarget,
+            ErrorCode::TooManyIntents,
         ] {
             let spec = EventSpec::Error(code);
             assert_eq!(EventSpec::try_from(spec.to_string()), Ok(spec));

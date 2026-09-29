@@ -120,6 +120,7 @@ describe("combat HUD text", () => {
       { kind: "died", entity: WOLF, killer: self },
       { kind: "died", entity: self, killer: WOLF },
       { kind: "error", code: "out-of-range", target: WOLF },
+      { kind: "error", code: "too-many-intents", target: null },
     ] satisfies ZoneEvent[]).map((event) => eventText(event, snapshot, catalog));
     expect(lines).toEqual([
       "You hit Timber Wolf for 7 (critical).",
@@ -130,6 +131,7 @@ describe("combat HUD text", () => {
       "Timber Wolf dies.",
       "You die.",
       "Out of range.",
+      "Too many actions at once.",
     ]);
   });
 });

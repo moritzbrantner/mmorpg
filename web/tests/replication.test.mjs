@@ -60,6 +60,18 @@ describe("Rust/browser snapshot contract", () => {
     expect(findEntity(decodeSnapshot(fixture), { kind: "creature", id: 7 })).toBeUndefined();
   });
 
+  test("decodes every error code of the Rust wire in order", () => {
+    const codes = [
+      "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target",
+      "too-many-intents",
+    ];
+    codes.forEach((code, index) => {
+      const bytes = fixture.slice();
+      bytes[EVENTS + 1 + 6 * 14 + 13] = index + 1;
+      expect(decodeSnapshot(bytes).events[6]).toEqual({ kind: "error", code, target: null });
+    });
+  });
+
   test("rejects legacy, canonical, truncated, excessive, malformed and trailing payloads", () => {
     for (let length = 0; length < fixture.length; length++) {
       expect(() => decodeSnapshot(fixture.slice(0, length))).toThrow();

@@ -22,7 +22,8 @@ use crate::{
 };
 
 /// Discrete intents (targeting, attacking, releasing) a player may queue
-/// between two ticks. More fail closed without consuming the sequence.
+/// between two ticks. Further intents are accepted and dropped, and the next
+/// tick reports [`crate::ErrorCode::TooManyIntents`] once.
 pub const MAX_PENDING_INTENTS: usize = 16;
 
 /// The engine sweeps motion, so any positive thickness stops a body; a thick
@@ -90,6 +91,8 @@ pub(crate) struct PlayerState {
     pub(crate) error_cooldown: u16,
     /// Discrete intents in sequence order, consumed by the next tick.
     pub(crate) intents: Vec<PlayerIntent>,
+    /// A well-formed intent arrived while `intents` was full and was dropped.
+    pub(crate) intents_dropped: bool,
     /// Events of the current tick.
     pub(crate) events: Vec<ZoneEvent>,
 }
@@ -112,6 +115,7 @@ impl PlayerState {
             calm_ticks: 0,
             error_cooldown: 0,
             intents: Vec::new(),
+            intents_dropped: false,
             events: Vec::new(),
         }
     }
@@ -301,7 +305,10 @@ impl ZoneSimulation {
 
     /// Validates a command and records it for the next tick. Movement is
     /// held intent; discrete intents queue in sequence order and resolve in
-    /// the tick. A malformed or stale command changes nothing.
+    /// the tick. A malformed or stale command changes nothing. A well-formed
+    /// intent beyond [`MAX_PENDING_INTENTS`] is a gameplay outcome, not an
+    /// error: it consumes its sequence, is dropped, and the next tick reports
+    /// it with an `Error` event.
     pub fn apply_command(
         &mut self,
         player_id: PlayerId,
@@ -341,10 +348,11 @@ impl ZoneSimulation {
             ZoneCommand::ReleaseSpirit => Some(PlayerIntent::ReleaseSpirit),
         };
         if let Some(intent) = intent {
-            if player.intents.len() >= MAX_PENDING_INTENTS {
-                return Err(ZoneError::new("too many pending intents"));
+            if player.intents.len() < MAX_PENDING_INTENTS {
+                player.intents.push(intent);
+            } else {
+                player.intents_dropped = true;
             }
-            player.intents.push(intent);
         }
         player.last_sequence = sequence;
         Ok(())
@@ -751,21 +759,75 @@ mod tests {
     }
 
     #[test]
-    fn pending_intents_are_bounded_and_fail_closed() {
+    fn excess_intents_are_dropped_and_reported_without_a_session_error() {
         let mut zone = ZoneSimulation::new(ZoneId::new(1));
         zone.add_player(1).unwrap();
         for sequence in 1..=u32::try_from(MAX_PENDING_INTENTS).unwrap() {
             zone.apply_command(1, sequence, ZoneCommand::StopAttack)
                 .unwrap();
         }
-        let error = zone
-            .apply_command(1, 100, ZoneCommand::StopAttack)
-            .unwrap_err();
-        assert_eq!(error.message(), "too many pending intents");
+        // A well-formed intent beyond the bound is an outcome, not an error.
+        zone.apply_command(1, 100, ZoneCommand::SelectTarget(None))
+            .unwrap();
+        zone.apply_command(1, 101, ZoneCommand::ReleaseSpirit)
+            .unwrap();
         let player = &zone.snapshot().unwrap().players[0];
-        assert_eq!(player.last_sequence, 16, "the sequence is not consumed");
+        assert_eq!(player.last_sequence, 101, "the sequences are consumed");
+        assert_eq!(
+            player.combat.intents,
+            [PlayerIntent::StopAttack; MAX_PENDING_INTENTS],
+            "the excess intents are dropped"
+        );
+        assert!(player.combat.intents_dropped);
+        assert_eq!(
+            zone.apply_command(1, 101, ZoneCommand::StopAttack)
+                .unwrap_err()
+                .message(),
+            "command sequence is stale"
+        );
+
         zone.advance_tick().unwrap();
-        zone.apply_command(1, 100, ZoneCommand::StopAttack).unwrap();
+        let player = &zone.snapshot().unwrap().players[0];
+        assert!(player.combat.intents.is_empty() && !player.combat.intents_dropped);
+        assert_eq!(
+            zone.snapshot_for_player(1).unwrap().events,
+            [ZoneEvent::Error {
+                code: crate::ErrorCode::TooManyIntents,
+                target: None,
+            }],
+            "the next tick reports the drop once"
+        );
+        zone.apply_command(1, 102, ZoneCommand::StopAttack).unwrap();
+        zone.advance_tick().unwrap();
+        assert!(zone.snapshot_for_player(1).unwrap().events.is_empty());
+    }
+
+    #[test]
+    fn a_dropped_intent_survives_recovery_and_needs_a_full_queue() {
+        let mut original = ZoneSimulation::new(ZoneId::new(1));
+        original.add_player(1).unwrap();
+        for sequence in 1..=u32::try_from(MAX_PENDING_INTENTS).unwrap() + 1 {
+            original
+                .apply_command(1, sequence, ZoneCommand::StopAttack)
+                .unwrap();
+        }
+        let checkpoint = original.snapshot().unwrap();
+        let mut recovered =
+            ZoneSimulation::from_snapshot(checkpoint.clone(), Arc::clone(original.content()))
+                .unwrap();
+        original.advance_tick().unwrap();
+        recovered.advance_tick().unwrap();
+        assert_eq!(recovered.snapshot().unwrap(), original.snapshot().unwrap());
+
+        let mut inconsistent = checkpoint;
+        inconsistent.players[0].combat.intents.pop();
+        assert_eq!(
+            ZoneSimulation::from_snapshot(inconsistent, Arc::clone(original.content()))
+                .err()
+                .unwrap()
+                .message(),
+            "only a full intent queue drops intents"
+        );
     }
 
     #[test]

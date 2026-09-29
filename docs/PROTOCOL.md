@@ -23,7 +23,7 @@ Tags 3–6 were added for targeting and combat. They are additive: tags 1 and 2 
 - `Jump` is edge-triggered. It is recorded as pending and evaluated during the next tick before physics steps: when a thin probe directly below the feet touches any body other than the character (ground, geometry or another unit), vertical velocity becomes 16 units/tick. The tick always consumes the pending jump, so a mid-air jump has no effect and is not buffered until landing.
 - `SelectTarget` carries an [entity reference](#entity-references): kind 1 player, 2 creature or 3 NPC with its ID, or kind 0 with ID 0 to clear the selection. `StartAttack` starts auto-attacking the selected target, `StopAttack` stops it, and `ReleaseSpirit` returns a dead player to the graveyard with half health.
 
-The four discrete intents are queued in sequence order (at most 16 per player between ticks) and resolved during the next tick in `(player id, sequence)` order, never inside `apply_command`. A well-formed intent that is not allowed right now, such as attacking without a target or out of range, or selecting a unit that is not visible, is accepted and answered with an `Error` [event](#events); it never closes the session. Only malformed payloads and stale, duplicate or excess sequences fail.
+The four discrete intents are queued in sequence order (at most 16 per player between ticks) and resolved during the next tick in `(player id, sequence)` order, never inside `apply_command`. A well-formed intent that is not allowed right now, such as attacking without a target or out of range, or selecting a unit that is not visible, is accepted and answered with an `Error` [event](#events); it never closes the session. An intent that finds the queue full is accepted the same way: it consumes its sequence, is dropped, and the next tick answers with one `too many intents` error. Only malformed payloads and stale or duplicate sequences fail.
 
 Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, known entity kinds, ID 0 for the absent reference, and only version 2. Version 1 (`SetMovement`) payloads are rejected.
 
@@ -80,7 +80,7 @@ The events are the viewer's feedback from the tick the snapshot describes (see [
 - Damage dealt and damage taken carry both units and the damage in `amount`.
 - Miss and evade carry both units and amount 0: a missed swing between the viewer and a unit, or the viewer's swing ignored by an evading creature.
 - Died carries the dead unit as target, its killer as source (or none) and amount 0.
-- Error carries no source, the unit the refused intent concerned as target (or none) and the error code in `amount`: 1 no target, 2 out of range, 3 target dead, 4 not attackable, 5 you are dead, 6 not dead, 7 invalid target.
+- Error carries no source, the unit the refused intent concerned as target (or none) and the error code in `amount`: 1 no target, 2 out of range, 3 target dead, 4 not attackable, 5 you are dead, 6 not dead, 7 invalid target, 8 too many intents (a full queue dropped an intent).
 
 Events are cosmetic: a lost datagram may lose them. Health and every other durable fact is repeated in every projection.
 
@@ -160,6 +160,7 @@ A player record starts with the 39 bytes of movement state and continues with it
 | 56 | 2 | Error cooldown (ticks until the next out-of-range error) |
 | 58 | 1 | Pending intent count, at most 16 |
 | 59 | 6 × intents | Intent code (1 select target, 2 start attack, 3 stop attack, 4 release spirit) and entity reference, which is none except for select target |
+| … | 1 | Intents dropped: 0 or 1; a full queue dropped a later intent, which the next tick reports |
 | … | 1 | Event count, at most 16 |
 | … | 14 × events | This tick's events, as in the player-visible scope |
 
@@ -186,7 +187,7 @@ A creature record:
 | … | 1 | Tapped: 0 or 1 |
 | … | 4 | Tapping player ID, 0 when untapped |
 
-The decoder rejects booleans other than 0 or 1, unknown codes, an alive creature with a death tick, AI fields that do not fit their state, an absent threat unit, an untapped creature with a tapper, excessive counts, truncation and trailing bytes. Core then validates the state against the content during recovery: player uniqueness, spawn slots, movement range, level and health bounds, queue sizes, that dead players do not auto-attack, that creature records match the content's spawns one-to-one in ID order with levels and health inside their template and state consistent with their life cycle (corpses and despawned creatures rest; only engaged creatures have threat, and threat tables hold only living players), and that player targets exist. Default engine configuration and pinned physics behavior are part of the continuation contract: recovering mid-run, mid-jump, with a pending jump, mid-chase, mid-swing, after a death or during an evade reproduces the continuation exactly.
+The decoder rejects booleans other than 0 or 1, unknown codes, an alive creature with a death tick, AI fields that do not fit their state, an absent threat unit, an untapped creature with a tapper, excessive counts, truncation and trailing bytes. Core then validates the state against the content during recovery: player uniqueness, spawn slots, movement range, level and health bounds, queue sizes, that only a full intent queue has dropped intents, that dead players do not auto-attack, that creature records match the content's spawns one-to-one in ID order with levels and health inside their template and state consistent with their life cycle (corpses and despawned creatures rest; only engaged creatures have threat, and threat tables hold only living players), and that player targets exist. Default engine configuration and pinned physics behavior are part of the continuation contract: recovering mid-run, mid-jump, with a pending jump, mid-chase, mid-swing, after a death or during an evade reproduces the continuation exactly.
 
 Canonical data is for trusted replay/recovery and server-side verification. It must never be passed to the browser renderer or substituted for a player projection.
 

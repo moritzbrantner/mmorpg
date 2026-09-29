@@ -106,6 +106,7 @@ fn encode_player(
         payload.push(code);
         encode_entity_ref(payload, target);
     }
+    payload.push(u8::from(combat.intents_dropped));
     payload.push(encode_u8_count(
         combat.events.len(),
         MAX_EVENTS_PER_PLAYER,
@@ -245,6 +246,7 @@ fn decode_player(
             _ => return Err(ProtocolError::new("malformed pending intent")),
         });
     }
+    let intents_dropped = read_bool(payload, offset)?;
     let event_count = decode_u8_count(
         payload,
         offset,
@@ -275,6 +277,7 @@ fn decode_player(
             calm_ticks,
             error_cooldown,
             intents,
+            intents_dropped,
             events,
         },
     })
@@ -401,6 +404,8 @@ mod tests {
                             PlayerIntent::StopAttack,
                             PlayerIntent::ReleaseSpirit,
                         ],
+                        // The decoder checks structure; core checks that only a full queue drops.
+                        intents_dropped: true,
                         events: vec![
                             ZoneEvent::DamageTaken {
                                 source: wolf,
@@ -546,6 +551,8 @@ mod tests {
         ];
         // The third intent (StartAttack) carries no target.
         cases.push((intents + 1 + 2 * 6 + 1, 2, "malformed pending intent"));
+        // The dropped-intent flag follows the five intents.
+        cases.push((intents + 1 + 5 * 6, 2, "boolean field must be 0 or 1"));
         for (offset, value, message) in cases {
             let mut invalid = encoded.clone();
             invalid[offset] = value;

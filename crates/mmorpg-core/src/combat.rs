@@ -30,12 +30,25 @@ impl ZoneSimulation {
     pub(crate) fn consume_intents(&mut self) -> Result<(), ZoneError> {
         let ids: Vec<_> = self.players.keys().copied().collect();
         for player_id in ids {
-            let intents = match self.players.get_mut(&player_id) {
-                Some(player) => std::mem::take(&mut player.intents),
+            let (intents, dropped) = match self.players.get_mut(&player_id) {
+                Some(player) => (
+                    std::mem::take(&mut player.intents),
+                    std::mem::take(&mut player.intents_dropped),
+                ),
                 None => continue,
             };
             for intent in intents {
                 self.apply_intent(player_id, intent)?;
+            }
+            // The dropped intents followed every queued one.
+            if dropped {
+                self.notify(
+                    player_id,
+                    ZoneEvent::Error {
+                        code: ErrorCode::TooManyIntents,
+                        target: None,
+                    },
+                );
             }
         }
         Ok(())
