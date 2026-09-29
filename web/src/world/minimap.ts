@@ -254,6 +254,12 @@ export class Minimap {
     this.#elements = elements;
     this.#layers = layers;
     this.#image = paintMinimapImage(layers);
+    for (const button of [elements.zoomIn, elements.zoomOut, elements.northUp]) {
+      // A mouse press would move keyboard focus onto the button, where the world ignores
+      // movement keys and Space presses the button again. Keep focus where it was;
+      // keyboard users still reach the buttons with Tab.
+      button.addEventListener("mousedown", (event) => event.preventDefault());
+    }
     elements.zoomIn.addEventListener("click", () => this.#setZoom(this.#zoom - 1));
     elements.zoomOut.addEventListener("click", () => this.#setZoom(this.#zoom + 1));
     elements.northUp.addEventListener("click", () => {

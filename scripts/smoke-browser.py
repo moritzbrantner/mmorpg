@@ -359,15 +359,29 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertEqual(stats["self"], spawn)
         self.page.evaluate("window.__valeDebug.follow()")
 
-        # Minimap zoom buttons step through their range.
+        # Minimap zoom buttons step through their range; clicking them leaves the keyboard
+        # with the world, so movement, jumps and F3 keep working without clicking the canvas.
         zoom_out = self.page.get_by_role("button", name="Zoom minimap out")
         for _ in range(4):
             if zoom_out.is_enabled():
                 zoom_out.click()
         expect(zoom_out).to_be_disabled()
-        self.page.get_by_role("button", name="Keep north up").click()
-        expect(self.page.get_by_role("button", name="Keep north up")).to_have_attribute("aria-pressed", "true")
-        self.page.locator("#world").focus()
+        north_up = self.page.get_by_role("button", name="Keep north up")
+        north_up.click()
+        expect(north_up).to_have_attribute("aria-pressed", "true")
+        self.page.keyboard.down("KeyW")
+        self.frames(12)
+        self.page.keyboard.up("KeyW")
+        self.frames(4)
+        ran = self.debug_stats()["self"]
+        self.assertNotEqual((ran["x"], ran["z"]), (spawn["x"], spawn["z"]), "W runs right after a minimap click")
+        self.page.keyboard.press("Space")
+        self.frames(2)
+        expect(north_up).to_have_attribute("aria-pressed", "true")
+        self.page.keyboard.press("F3")
+        expect(overlay).to_be_hidden()
+        self.page.keyboard.press("F3")
+        expect(overlay).to_be_visible()
 
         # A left drag looks around without turning the character; a right drag turns it.
         box = self.page.locator("#world").bounding_box()
@@ -377,12 +391,12 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.mouse.move(x + 200, y, steps=5)
         self.page.mouse.up()
         self.frames(8)
-        self.assertEqual(self.debug_stats()["self"]["facing"], spawn["facing"], "Left-drag orbit leaves the facing alone")
+        self.assertEqual(self.debug_stats()["self"]["facing"], ran["facing"], "Left-drag orbit leaves the facing alone")
         self.page.mouse.move(x, y)
         self.page.mouse.down(button="right")
         self.page.mouse.move(x + 200, y, steps=5)
         self.page.mouse.up(button="right")
-        self.assertTrue(self.wait_for_facing_change(spawn["facing"]), "Right-drag mouse-look turns the character")
+        self.assertTrue(self.wait_for_facing_change(ran["facing"]), "Right-drag mouse-look turns the character")
         self.page.screenshot(path=str(ARTIFACTS / "world-mouse-look.png"))
         self.page.keyboard.press("F3")
         expect(overlay).to_be_hidden()
