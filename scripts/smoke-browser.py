@@ -300,8 +300,9 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.keyboard.press("Escape")
         expect(note).to_contain_text("Start ")
 
-    def distinct_colours(self, png: bytes) -> int:
-        """Distinct RGB colours in a screenshot, counted in the page (no image library needed)."""
+    def colour_stats(self, png: bytes):
+        """Distinct RGB colours in a screenshot and the share of pixels that differ from the page
+        background, counted in the page (no image library needed)."""
         return self.page.evaluate("""async data => {
           const image = new Image();
           image.src = 'data:image/png;base64,' + data;
@@ -312,10 +313,29 @@ class BrowserAcceptance(unittest.TestCase):
           const context = canvas.getContext('2d');
           context.drawImage(image, 0, 0);
           const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          const background = getComputedStyle(document.body).backgroundColor.match(/\\d+/g).map(Number);
           const colours = new Set();
-          for (let i = 0; i < pixels.length; i += 4 * 5) colours.add((pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2]);
-          return colours.size;
+          let samples = 0;
+          let covered = 0;
+          for (let i = 0; i < pixels.length; i += 4 * 5) {
+            const rgb = [pixels[i], pixels[i + 1], pixels[i + 2]];
+            colours.add((rgb[0] << 16) | (rgb[1] << 8) | rgb[2]);
+            samples += 1;
+            if (rgb.some((channel, index) => Math.abs(channel - background[index]) > 3)) covered += 1;
+          }
+          return {distinct: colours.size, covered: covered / samples};
         }""", base64.b64encode(png).decode())
+
+    def canvas_colours(self, hide_canvas=False):
+        """Colour statistics of what the renderer drew in the world clip. The canvas is
+        transparent over the CSS sky, and the minimap, HUD and F3 overlay sit on top of it;
+        with those hidden, only rendered pixels differ from the plain page background."""
+        layers = "#sky, #debug-overlay, [data-world-ui]" + (", #world" if hide_canvas else "")
+        self.page.evaluate("layers => document.querySelectorAll(layers).forEach(e => { e.style.visibility = 'hidden'; })", layers)
+        try:
+            return self.colour_stats(self.world_view())
+        finally:
+            self.page.evaluate("layers => document.querySelectorAll(layers).forEach(e => { e.style.visibility = ''; })", layers)
 
     def debug_stats(self):
         return self.page.evaluate("window.__valeDebug.stats()")
@@ -333,15 +353,17 @@ class BrowserAcceptance(unittest.TestCase):
         minimap = self.page.get_by_role("complementary", name="Minimap")
         expect(minimap).to_be_visible()
         expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
+        # Control: without the canvas the measurement sees only the plain page background.
+        self.assertEqual(self.canvas_colours(hide_canvas=True), {"distinct": 1, "covered": 0})
         viewpoints = {}
         for name in ["hub", "woods", "hollow"]:
             self.page.evaluate("name => window.__valeDebug.flyTo(name)", name)
             self.frames(8)
-            view = self.world_view()
             self.page.screenshot(path=str(ARTIFACTS / f"viewpoint-{name}.png"))
-            colours = self.distinct_colours(view)
-            self.assertGreater(colours, 400, f"The {name} viewpoint must render a varied scene, not a uniform canvas")
-            viewpoints[name] = {"distinctColours": colours, "frame": self.debug_stats()["frame"]}
+            colours = self.canvas_colours()
+            self.assertGreater(colours["distinct"], 400, f"The {name} viewpoint must render a varied scene, not a uniform canvas")
+            self.assertGreater(colours["covered"], 0.5, f"The {name} viewpoint must draw most of the view, not leave the canvas empty")
+            viewpoints[name] = {"canvasColours": colours, "frame": self.debug_stats()["frame"]}
         self.frames(12)
         stats = self.debug_stats()
         overlay_stats = json.loads(overlay.get_attribute("data-stats"))
