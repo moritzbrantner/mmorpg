@@ -1,7 +1,7 @@
 use mmorpg_client::presentation::Presentation;
 use mmorpg_core::{
-    EntityFlags, EntityKind, EntitySnapshot, SNAPSHOT_SCHEMA_VERSION, ViewerState, ZoneId,
-    ZoneSnapshot, greyhaven_vale,
+    CreatureId, EntityFlags, EntityKind, EntityRef, EntitySnapshot, NpcId, SNAPSHOT_SCHEMA_VERSION,
+    ViewerState, ZoneId, ZoneSnapshot, greyhaven_vale,
 };
 use mmorpg_scenery::greyhaven_vale_scenery;
 use std::{
@@ -44,7 +44,7 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
 }
 
 fn presentation(now: Instant) -> Presentation {
-    Presentation::new(1, greyhaven_vale_scenery(), now)
+    Presentation::new(1, greyhaven_vale_scenery(), greyhaven_vale::content(), now).unwrap()
 }
 
 // Samples below move along the Hollow Road (x = 0), where relief is flat.
@@ -152,4 +152,129 @@ fn a_resumed_connection_discards_old_interpolation_even_when_ticks_regress() {
     assert!(presentation.players(now).is_empty());
     assert!(presentation.push(snapshot(2, [0, 50, 900]), now).unwrap());
     assert_eq!(presentation.camera_target(now), [0.0, 0.5, 9.0]);
+}
+
+fn creature(id: u32, template: u16, position: [i32; 3], flags: EntityFlags) -> EntitySnapshot {
+    EntitySnapshot {
+        kind: EntityKind::Creature,
+        id,
+        appearance: template,
+        position,
+        velocity: [0; 3],
+        facing: 0,
+        level: 2,
+        health_percent: if flags.dead { 0 } else { 43 },
+        flags,
+    }
+}
+
+#[test]
+fn creatures_and_npcs_render_by_size_disposition_and_state() {
+    let now = Instant::now();
+    let mut presentation = presentation(now);
+    let hostile = EntityFlags {
+        hostile: true,
+        attackable: true,
+        ..EntityFlags::default()
+    };
+    let mut snapshot = snapshot(1, [0, 90, -2_000]);
+    let wolf = EntityRef::Creature(CreatureId::new(108));
+    snapshot.viewer.target = Some(wolf);
+    snapshot.viewer.auto_attacking = true;
+    snapshot.viewer.in_combat = true;
+    snapshot.viewer.health = 38;
+    snapshot.entities.extend([
+        creature(108, 1, [0, 45, -1_800], hostile),
+        creature(
+            120,
+            2,
+            [300, 45, -2_000],
+            EntityFlags {
+                attackable: true,
+                ..EntityFlags::default()
+            },
+        ),
+        creature(
+            109,
+            1,
+            [-300, 45, -2_000],
+            EntityFlags {
+                dead: true,
+                hostile: true,
+                ..EntityFlags::default()
+            },
+        ),
+        EntitySnapshot {
+            kind: EntityKind::Npc,
+            id: 6,
+            appearance: 6,
+            position: [0, 90, -2_600],
+            velocity: [0; 3],
+            facing: 0,
+            level: 10,
+            health_percent: 100,
+            flags: EntityFlags::default(),
+        },
+    ]);
+    presentation.push(snapshot, now).unwrap();
+    let scene = presentation.scene(now);
+    // Player: body + nose; wolf: target marker + body + nose; boar: body +
+    // nose; corpse: one flat body; NPC: body + nose.
+    assert_eq!(scene.len(), 2 + 3 + 2 + 1 + 2);
+    let at = |x: f32, z: f32| {
+        scene
+            .iter()
+            .filter(|item| {
+                (item.position[0] - x).abs() < 1e-4 && (item.position[2] - z).abs() < 1e-4
+            })
+            .collect::<Vec<_>>()
+    };
+    let wolf_boxes = at(0.0, -18.0);
+    let marker = wolf_boxes[0];
+    assert!(marker.size[1] < 0.05, "the target marker is flat");
+    let wolf_body = wolf_boxes[1];
+    assert_eq!(
+        wolf_body.size,
+        [0.8, 0.9, 0.8],
+        "the template's collision box"
+    );
+    assert!(
+        wolf_body.color[0] > wolf_body.color[1] + 0.3,
+        "hostile is red-ish"
+    );
+    let boar_body = at(3.0, -20.0)[0];
+    assert_eq!(boar_body.size, [0.9, 0.9, 0.9]);
+    assert!(
+        boar_body.color[0] > 0.6 && boar_body.color[1] > 0.5,
+        "neutral is yellow-ish"
+    );
+    let corpse = at(-3.0, -20.0)[0];
+    assert!(corpse.size[1] < 0.2, "a corpse lies flat");
+    let guard = at(0.0, -26.0)[0];
+    assert_eq!(guard.size, [0.6, 1.8, 0.6]);
+    assert!(
+        guard.color[1] > guard.color[0] + 0.2,
+        "friendly is green-ish"
+    );
+
+    assert_eq!(
+        presentation.status().unwrap(),
+        "HP 38/50 · in combat · target Timber Wolf (L2, 43%) · attacking"
+    );
+    assert_eq!(
+        presentation.unit_name(EntityRef::Npc(NpcId::new(6))),
+        "Greyhaven Guard"
+    );
+    // Tab cycles through living attackable creatures, nearest first.
+    assert_eq!(
+        presentation.next_tab_target(),
+        Some(EntityRef::Creature(CreatureId::new(120)))
+    );
+}
+
+#[test]
+fn scenery_and_content_of_different_revisions_are_refused() {
+    let mut scenery = greyhaven_vale_scenery();
+    scenery.content_revision += 1;
+    assert!(Presentation::new(1, scenery, greyhaven_vale::content(), Instant::now()).is_err());
 }

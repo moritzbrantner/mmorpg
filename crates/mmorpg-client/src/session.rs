@@ -3,7 +3,7 @@ use crate::{
     ClientError,
     network::{ClientSession, SessionError},
 };
-use mmorpg_core::{TICK_HZ, ZoneSnapshot};
+use mmorpg_core::{EntityRef, TICK_HZ, ZoneSnapshot};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -14,15 +14,23 @@ const RESEND_INTERVAL: Duration = Duration::from_millis(50);
 /// Minimum spacing of facing-only moves: one server tick.
 const FACING_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / TICK_HZ as u64);
 
-/// Latest local intent published by the window. `jumps` counts Space presses:
-/// the session sends one `Jump` when it advances, so coalesced watch updates
-/// can merge presses but never replay them.
+/// Latest local input published by the window: held movement plus counted
+/// discrete presses. Each counter (`jumps`, `selections`, `attack_requests`,
+/// `releases`) makes the session send one command when it advances, so
+/// coalesced watch updates can merge presses but never replay them.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct MovementInput {
+pub struct PlayerInput {
     pub forward: i8,
     pub strafe: i8,
     pub facing: u16,
     pub jumps: u32,
+    /// The latest requested selection (`None` clears it).
+    pub target: Option<EntityRef>,
+    pub selections: u32,
+    /// Whether the latest attack request starts or stops auto-attack.
+    pub attack: bool,
+    pub attack_requests: u32,
+    pub releases: u32,
 }
 
 #[derive(Clone)]
@@ -38,15 +46,28 @@ pub enum NetworkUpdate {
     Failed(String),
 }
 
-/// Commands to send for one input observation, in order: a jump, then a move.
+/// Commands to send for one input observation, in order: a selection, an
+/// attack start or stop, a spirit release, a jump, then a move.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Outgoing {
+    select: Option<Option<EntityRef>>,
+    attack: Option<bool>,
+    release: bool,
     jump: bool,
     movement: Option<(i8, i8, u16)>,
 }
 
 impl Outgoing {
     fn deliver(self, session: &mut ClientSession) -> Result<(), SessionError> {
+        if let Some(target) = self.select {
+            session.send_select_target(target)?;
+        }
+        if let Some(start) = self.attack {
+            session.send_attack(start)?;
+        }
+        if self.release {
+            session.send_release_spirit()?;
+        }
         if self.jump {
             session.send_jump()?;
         }
@@ -57,6 +78,27 @@ impl Outgoing {
     }
 }
 
+/// Press counters already handled; a counter that moves on means one more
+/// command, however many presses it merged.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Presses {
+    jumps: u32,
+    selections: u32,
+    attack_requests: u32,
+    releases: u32,
+}
+
+impl Presses {
+    const fn of(input: PlayerInput) -> Self {
+        Self {
+            jumps: input.jumps,
+            selections: input.selections,
+            attack_requests: input.attack_requests,
+            releases: input.releases,
+        }
+    }
+}
+
 /// Decides what to send and tracks what was last sent: intent and jump changes
 /// go out immediately, facing-only changes (camera drags) at most once per
 /// server tick, and the heartbeat resends the current intent. It performs no
@@ -64,30 +106,31 @@ impl Outgoing {
 struct Outbox {
     sent: Option<(i8, i8, u16)>,
     sent_at: Instant,
-    jumps: u32,
+    presses: Presses,
 }
 
 impl Outbox {
-    fn new(input: MovementInput, now: Instant) -> Self {
+    fn new(input: PlayerInput, now: Instant) -> Self {
         Self {
             sent: None,
             sent_at: now,
-            jumps: input.jumps,
+            presses: Presses::of(input),
         }
     }
 
-    fn movement(&mut self, input: MovementInput, now: Instant) -> (i8, i8, u16) {
+    fn movement(&mut self, input: PlayerInput, now: Instant) -> (i8, i8, u16) {
         let movement = (input.forward, input.strafe, input.facing);
         self.sent = Some(movement);
         self.sent_at = now;
         movement
     }
 
-    /// Commands for a newly observed input: one `Jump` when `jumps` advanced,
-    /// however many presses it merged, then a `Move` when needed.
-    fn changes(&mut self, input: MovementInput, now: Instant) -> Outgoing {
-        let jump = input.jumps != self.jumps;
-        self.jumps = input.jumps;
+    /// Commands for a newly observed input: one command per advanced press
+    /// counter, however many presses it merged, then a `Move` when needed.
+    fn changes(&mut self, input: PlayerInput, now: Instant) -> Outgoing {
+        let handled = self.presses;
+        let pressed = Presses::of(input);
+        self.presses = pressed;
         let intent_changed = self
             .sent
             .is_none_or(|(forward, strafe, _)| (forward, strafe) != (input.forward, input.strafe));
@@ -97,28 +140,34 @@ impl Outbox {
         let facing_due =
             facing_changed && now.saturating_duration_since(self.sent_at) >= FACING_INTERVAL;
         let movement = (intent_changed || facing_due).then(|| self.movement(input, now));
-        Outgoing { jump, movement }
+        Outgoing {
+            select: (pressed.selections != handled.selections).then_some(input.target),
+            attack: (pressed.attack_requests != handled.attack_requests).then_some(input.attack),
+            release: pressed.releases != handled.releases,
+            jump: pressed.jumps != handled.jumps,
+            movement,
+        }
     }
 
-    /// Periodic resend of the current intent; a pending jump is left to
-    /// [`Outbox::changes`], so it is never sent twice.
-    fn heartbeat(&mut self, input: MovementInput, now: Instant) -> Outgoing {
+    /// Periodic resend of the current intent; pending presses are left to
+    /// [`Outbox::changes`], so none is ever sent twice.
+    fn heartbeat(&mut self, input: PlayerInput, now: Instant) -> Outgoing {
         Outgoing {
-            jump: false,
             movement: Some(self.movement(input, now)),
+            ..Outgoing::default()
         }
     }
 
     /// After resume only current input counts; presses during the outage are dropped.
-    fn resume(&mut self, input: MovementInput) {
-        self.jumps = input.jumps;
+    fn resume(&mut self, input: PlayerInput) {
+        self.presses = Presses::of(input);
         self.sent = None;
     }
 }
 
 pub async fn run_session(
     mut session: ClientSession,
-    mut input: watch::Receiver<MovementInput>,
+    mut input: watch::Receiver<PlayerInput>,
     updates: &watch::Sender<NetworkUpdate>,
     mut shutdown: oneshot::Receiver<()>,
 ) -> Result<(), ClientError> {
@@ -205,24 +254,25 @@ mod tests {
     const TICK: Duration = FACING_INTERVAL;
     const EAST: u16 = 16_384;
 
-    fn held(forward: i8, strafe: i8, facing: u16, jumps: u32) -> MovementInput {
-        MovementInput {
+    fn held(forward: i8, strafe: i8, facing: u16, jumps: u32) -> PlayerInput {
+        PlayerInput {
             forward,
             strafe,
             facing,
             jumps,
+            ..PlayerInput::default()
         }
     }
 
     fn only_move(forward: i8, strafe: i8, facing: u16) -> Outgoing {
         Outgoing {
-            jump: false,
             movement: Some((forward, strafe, facing)),
+            ..Outgoing::default()
         }
     }
 
     /// An outbox that has already sent `input` at `now`.
-    fn sent(input: MovementInput, now: Instant) -> Outbox {
+    fn sent(input: PlayerInput, now: Instant) -> Outbox {
         let mut outbox = Outbox::new(input, now);
         assert_eq!(
             outbox.changes(input, now),
@@ -235,13 +285,13 @@ mod tests {
     #[test]
     fn each_advance_of_the_press_counter_sends_exactly_one_jump() {
         let now = Instant::now();
-        let mut outbox = sent(MovementInput::default(), now);
+        let mut outbox = sent(PlayerInput::default(), now);
         let pressed = held(0, 0, 0, 1);
         assert_eq!(
             outbox.changes(pressed, now),
             Outgoing {
                 jump: true,
-                movement: None,
+                ..Outgoing::default()
             }
         );
         assert_eq!(
@@ -254,7 +304,7 @@ mod tests {
             outbox.changes(merged, now),
             Outgoing {
                 jump: true,
-                movement: None,
+                ..Outgoing::default()
             },
             "coalesced presses merge into one jump"
         );
@@ -264,6 +314,7 @@ mod tests {
             Outgoing {
                 jump: true,
                 movement: Some((1, 0, 0)),
+                ..Outgoing::default()
             },
             "a press with an intent change sends the jump, then the move"
         );
@@ -284,7 +335,7 @@ mod tests {
             outbox.changes(pressed, now + 2 * TICK),
             Outgoing {
                 jump: true,
-                movement: None,
+                ..Outgoing::default()
             },
             "the change branch still sends the pending jump exactly once"
         );
@@ -310,7 +361,7 @@ mod tests {
             outbox.changes(held(1, 0, EAST, 6), now),
             Outgoing {
                 jump: true,
-                movement: None,
+                ..Outgoing::default()
             },
             "a press after resume is sent"
         );
@@ -319,7 +370,7 @@ mod tests {
     #[test]
     fn intent_changes_are_sent_immediately() {
         let now = Instant::now();
-        let mut outbox = sent(MovementInput::default(), now);
+        let mut outbox = sent(PlayerInput::default(), now);
         assert_eq!(outbox.changes(held(1, 0, 0, 0), now), only_move(1, 0, 0));
         assert_eq!(outbox.changes(held(1, -1, 0, 0), now), only_move(1, -1, 0));
         assert_eq!(
@@ -374,6 +425,66 @@ mod tests {
         assert_eq!(
             outbox.changes(held(1, 0, 600, 0), start + 5 * TICK),
             only_move(1, 0, 600)
+        );
+    }
+
+    #[test]
+    fn selections_attacks_and_releases_are_sent_once_per_press_in_order() {
+        use mmorpg_core::CreatureId;
+        let now = Instant::now();
+        let mut outbox = sent(PlayerInput::default(), now);
+        let wolf = Some(EntityRef::Creature(CreatureId::new(108)));
+        let input = PlayerInput {
+            target: wolf,
+            selections: 2,
+            attack: true,
+            attack_requests: 1,
+            ..PlayerInput::default()
+        };
+        assert_eq!(
+            outbox.changes(input, now),
+            Outgoing {
+                select: Some(wolf),
+                attack: Some(true),
+                ..Outgoing::default()
+            },
+            "merged selections send the latest target once, then the attack"
+        );
+        assert_eq!(outbox.changes(input, now), Outgoing::default());
+        assert_eq!(
+            outbox.heartbeat(input, now + TICK),
+            only_move(0, 0, 0),
+            "the heartbeat never repeats a press"
+        );
+        let released = PlayerInput {
+            releases: 1,
+            ..input
+        };
+        assert_eq!(
+            outbox.changes(released, now),
+            Outgoing {
+                release: true,
+                ..Outgoing::default()
+            }
+        );
+        outbox.resume(PlayerInput {
+            selections: 9,
+            attack_requests: 9,
+            releases: 9,
+            ..released
+        });
+        assert_eq!(
+            outbox.changes(
+                PlayerInput {
+                    selections: 9,
+                    attack_requests: 9,
+                    releases: 9,
+                    ..released
+                },
+                now
+            ),
+            only_move(0, 0, 0),
+            "presses during an outage are dropped on resume"
         );
     }
 }

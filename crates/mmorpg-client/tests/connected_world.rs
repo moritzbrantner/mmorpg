@@ -5,7 +5,7 @@ use game_server::{
 use mmorpg_client::{
     ClientError,
     network::ClientSession,
-    session::{MovementInput, NetworkUpdate},
+    session::{NetworkUpdate, PlayerInput},
 };
 use mmorpg_core::{
     EntityFlags, EntityKind, EntitySnapshot, MAX_VISIBLE_ENTITIES, PLAYER_HALF_EXTENTS_UNITS,
@@ -512,12 +512,12 @@ async fn fragmented_projection_reaches_the_native_client() {
 }
 
 async fn verify_automatic_resume(session: ClientSession) -> Result<(), ClientError> {
-    use mmorpg_client::session::{MovementInput, NetworkUpdate, run_session};
+    use mmorpg_client::session::{NetworkUpdate, PlayerInput, run_session};
     use tokio::sync::{oneshot, watch};
     let player_id = session.player_id();
     let epoch = session.connection_epoch();
     session.disconnect();
-    let (_input, input) = watch::channel(MovementInput::default());
+    let (_input, input) = watch::channel(PlayerInput::default());
     let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown, stopped) = oneshot::channel();
     // JoinSet aborts its owned task on every early-return/panic path.
@@ -549,10 +549,10 @@ async fn verify_automatic_resume(session: ClientSession) -> Result<(), ClientErr
 }
 
 async fn verify_shutdown_during_resume(session: ClientSession) -> Result<(), ClientError> {
-    use mmorpg_client::session::{MovementInput, NetworkUpdate, run_session};
+    use mmorpg_client::session::{NetworkUpdate, PlayerInput, run_session};
     use tokio::sync::{oneshot, watch};
     session.disconnect();
-    let (_input, input) = watch::channel(MovementInput::default());
+    let (_input, input) = watch::channel(PlayerInput::default());
     let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown, stopped) = oneshot::channel();
     let mut tasks = tokio::task::JoinSet::new();
@@ -588,7 +588,7 @@ async fn verify_live_input(session: ClientSession) -> Result<(), ClientError> {
     let spawned = session.receive_snapshot().await?;
     assert!(is_at_rest(own(&spawned, player_id)));
     session.disconnect();
-    let (input, watched) = watch::channel(MovementInput::default());
+    let (input, watched) = watch::channel(PlayerInput::default());
     let (updates, mut receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown, stopped) = oneshot::channel();
     let mut tasks = tokio::task::JoinSet::new();
