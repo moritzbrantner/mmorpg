@@ -13,12 +13,12 @@ The runners own no rules. They drive the existing authorities and compare what t
 
 | Runner | Drives | Checks |
 | --- | --- | --- |
-| `bots` | `build_zone_host` → `game-server` `MatchHost`/`MatchRuntime` → `ZoneGameServerAdapter` → `mmorpg-core` physics and interest | Step outcomes and decoded player-scoped snapshots |
+| `bots` | `build_zone_host` → `game-server` `MatchHost`/`MatchRuntime` → `ZoneGameServerAdapter` → `mmorpg-core` physics, interest, combat and creature AI | Step outcomes and decoded player-scoped snapshots |
 | `control-plane` | `HostRegistry`, `ZoneDirectory`, `HandoffRegistry`, and `FencedZoneRuntime` for writes | Step outcomes and distributed-world invariants after every step |
 
 ## Bot scenarios
 
-A bot scenario advances one zone hosted with the shared Greyhaven Vale content; bots spawn on the hub plaza (slot 0 at (−1550, 1250), then 100 units apart along +X). Ticks are stepped explicitly with `MatchRuntime::advance_tick`. Each bot's snapshot bytes come from `MatchRuntime::snapshot_for` and are decoded with `mmorpg_protocol::decode_snapshot`; a snapshot for another zone, tick or viewer is an error. Reconnect tokens are deterministic per bot.
+A bot scenario advances one zone hosted with the shared Greyhaven Vale content, including its creatures and NPCs; bots spawn on the hub plaza (slot 0 at (−1550, 1250), then 100 units apart along +X). Ticks are stepped explicitly with `MatchRuntime::advance_tick`. Each bot's snapshot bytes come from `MatchRuntime::snapshot_for` and are decoded with `mmorpg_protocol::decode_snapshot`; a snapshot for another zone, tick or viewer is an error. Reconnect tokens are deterministic per bot.
 
 ```toml
 name = "two-bots-move"      # [A-Za-z0-9_-]
@@ -33,7 +33,7 @@ name = "alice"
 [[steps]]                   # applied at `tick`, before it advances to tick + 1
 tick = 0
 bot = "alice"
-action = "join"             # join | move | jump | disconnect | reconnect
+action = "join"             # join | move | jump | select_target | start_attack | stop_attack | release_spirit | disconnect | reconnect
 
 [[steps]]
 tick = 0
@@ -42,15 +42,22 @@ action = "move"
 forward = 1                 # move requires forward, strafe (i8; the zone accepts -1..=1)
 strafe = 0
 facing = 16384              # and facing (u16 yaw, 65536 per turn; 0 faces +Z, 16384 faces +X)
-seq = 5                     # optional (move and jump); default is the bot's next sequence
-connection_epoch = 1        # optional (move and jump); default is the bot's current epoch
+seq = 5                     # optional (commands); default is the bot's next sequence
+connection_epoch = 1        # optional (commands); default is the bot's current epoch
 expect = "applied"          # optional; default is the action's success tag
+
+[[steps]]
+tick = 1
+bot = "alice"
+action = "select_target"
+entity = "creature:108"     # select_target only: none | bot:<name> | creature:<id> | npc:<id>
 
 [[expect]]                  # checked against the snapshot decoded at `tick`
 kind = "sees"               # sees | not_sees | position | acknowledged | identity | visible_count | area
+                            # | health | target | event | unit
 bot = "alice"
 target = "bob"
-tick = 1                    # or by_tick = N (sees only), optionally with from_tick
+tick = 1                    # or by_tick = N (sees, event and unit), optionally with from_tick
 ```
 
 Step outcome tags are `joined`, `applied`, `ignored_stale`, `disconnected`, `resumed`, and `rejected:<kind>`. Rejection kinds come from `game-server`: `invalid_sequence`, `stale_connection`, `simulation`, `unknown_token`, `already_connected`, `reconnect_expired`, and others. The runner adds `no_session` and `not_connected`. A step whose outcome differs from its `expect` fails the scenario.
@@ -64,12 +71,18 @@ Step outcome tags are `joined`, `applied`, `ignored_stale`, `disconnected`, `res
 | `identity` | `tick` | shows the bot under the player ID from its first join |
 | `visible_count` | `count`, `tick` | contains exactly `count` players, including itself |
 | `area` | `area`, `tick`, optional `target` | shows the target (default: itself) inside the named core area (`greyhaven_vale::areas()`, the areas of the hosted vale content) |
+| `health` | `health`, `tick` | shows the bot's own exact health |
+| `target` | `entity`, `tick` | shows the bot's own target as `entity` (`none` for no selection) |
+| `event` | `event`, `tick` or `by_tick`, optional `entity` | carries a feedback event of that kind (`damage_dealt`, `damage_taken`, `miss`, `died`, `evade`, `error:<code>`) about `entity`: whom the bot hit, who hit it, who died, who evaded, or the target an error concerned |
+| `unit` | `entity` (not `none`), `state`, `tick` or `by_tick` | shows the unit `alive`, `dead` (a corpse or a dead player), `absent`, `in_combat`, `evading`, `targets_viewer` or `tapped_by_other` |
 
-A `jump` step submits the `Jump` command; like `move` it takes optional `seq` and `connection_epoch` overrides and no intent fields.
+Error codes are `no_target`, `out_of_range`, `target_dead`, `not_attackable`, `you_are_dead`, `not_dead` and `invalid_target`. Units are named `bot:<name>`, `creature:<id>` (the spawn ID of the vale content) or `npc:<id>`.
+
+A `jump`, `start_attack`, `stop_attack` or `release_spirit` step submits that bare command; `select_target` submits `SelectTarget` for its `entity`. Like `move`, every command takes optional `seq` and `connection_epoch` overrides. A well-formed command the zone refuses, such as attacking without a target, is still `applied`: the refusal arrives as an `error:<code>` event in the next snapshot. `select_target` of a bot that has not joined yet is `rejected:unknown_entity` and sends nothing.
 
 A disconnected bot receives no snapshot, so any expectation on it fails. Other bots keep seeing it until reconnect grace expires.
 
-Digest lines have the form `t=<tick> <bot> p<player> e<connection epoch> ack<sequence> (<x>,<y>,<z>) sees[<bots>] | …`.
+Digest lines have the form `t=<tick> <bot> p<player> e<connection epoch> ack<sequence> (<x>,<y>,<z>) sees[<bots>] | …`. A bot's own combat state follows while it is not unhurt and idle: `hp<health>/<max>`, `dead`, `target=<unit>`, `attacking` and `in_combat`, then `events[…]` with the tick's feedback (`dealt:<unit>:<amount>`, `taken:<unit>:<amount>`, a trailing `!` for critical hits, `miss:<source>><target>`, `died:<unit>`, `evade:<unit>`, `error:<code>`). Ticks where any bot's combat state changes or events arrive are always printed. JSON tick lines carry the same state in `health`, `max_health`, `dead`, `in_combat`, `auto_attacking`, `target` and `events`.
 
 ## Control-plane scenarios
 
@@ -119,7 +132,7 @@ MMORPG_SCENARIOS_UPDATE=1 cargo test -p mmorpg-scenarios --test scenarios --lock
 
 ## Limits
 
-- The bot runner covers one zone per scenario and the `Move` and `Jump` commands. `browser-local-session` scripts the browser demo's session (enter, camera-relative run and strafe, jump arc, area, leave, re-enter) through the hosted runtime. `mmorpg-wasm`'s host tests replay the same steps against the WASM local host and `MatchRuntime` and require byte-identical projections every tick while the player is joined (ticks 1–44 and 51–54). Leaving is modelled differently: the local host removes the unit at once, the hosted runtime after reconnect grace, so the away ticks are not compared. The scenario file and that test are separate copies of the steps; changing one needs the same change in the other.
+- The bot runner covers one zone per scenario and every command of wire version 2. `vale-wolf-hunt` walks a bot from the hub into Wolfrun Woods along trunk-grid lines: it kills Timber Wolf 108 (aggro, out-of-range and refused attacks, damage both ways, death and corpse), then dies to Timber Wolf 106, which evades home, and releases its spirit to the graveyard with half health. Its steps rely on the vale's deterministic creature levels and wander paths; content changes that move creatures need the scenario retuned. `browser-local-session` scripts the browser demo's session (enter, camera-relative run and strafe, jump arc, area, leave, re-enter) through the hosted runtime. `mmorpg-wasm`'s host tests replay the same steps against the WASM local host and `MatchRuntime` and require byte-identical projections every tick while the player is joined (ticks 1–44 and 51–54). Leaving is modelled differently: the local host removes the unit at once, the hosted runtime after reconnect grace, so the away ticks are not compared. The scenario file and that test are separate copies of the steps; changing one needs the same change in the other.
 - Scenarios run in process. Transport framing, datagram size limits, TLS and real reconnect timing are not covered. `scripts/smoke-native.py` and `mmorpg-client`'s loopback test still cover those.
 - A network mode against `mmorpg-zone-host` is not implemented. The reusable client session lives in `mmorpg-client`, which depends on wgpu and winit unconditionally.
 - The control-plane runner checks the in-memory reference model. It does not check a distributed deployment.
