@@ -5,8 +5,19 @@ Rust workspace + native wgpu client + non-authoritative browser demo (`web/`).
 
 ## Read first
 
-- `README.md` — authority map and current state.
-- `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/INTEREST_WORKLOADS.md`, `docs/NATIVE_CLIENT.md`, `docs/SCENARIOS.md`, `docs/adr/`.
+Read this entire file, `README.md` and `.conventions/index.md` for every task. Authority, distributed-world invariants, determinism and completion requirements below apply to every scope.
+
+Use the existing `coding-tooling inspect` task lookup (coding-tooling #272) to select declared links and focused commands from `.coding-tooling.json`:
+
+```sh
+coding-tooling inspect --target web/src/world/world-view.ts --task-kind presentation --json
+coding-tooling inspect --target crates/mmorpg-control-plane/src/lib.rs --json
+coding-tooling inspect --target web/src/command-wire.ts --json
+```
+
+Presentation lookup retains the browser's local-host authority decision and relevant avatar/character documentation; protocol adapters also retain wire compatibility and producer checks. Native gameplay and control-plane scopes retain their architecture/workload/scenario links. Related owners are declared references, not evidence that their validation ran.
+
+Lookup is read-only and does not replace the full completion gate or required native/WASM/browser acceptance below. If lookup is unavailable, partial or the relationship is undeclared, read `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/INTEREST_WORKLOADS.md`, `docs/NATIVE_CLIENT.md`, `docs/SCENARIOS.md` and `docs/adr/`, then use the full workspace commands. Native crate lookup retains the existing root workspace commands because the capability catalog models the Cargo workspace as one component. Scope is a navigation aid, never permission to weaken authority or completion.
 
 ## Layout
 
