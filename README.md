@@ -62,6 +62,7 @@ The workspace provides:
 - stale-command rejection and bounded per-zone player capacity;
 - canonical full-zone snapshots for replay/recovery that reference their immutable content by revision and fingerprint and fail closed on any content mismatch;
 - player-scoped interest snapshots with a spatial index for network publication;
+- [actual-zone physics adoption workloads](docs/PHYSICS_WORKLOADS.md), including unchanged canonical/projection bytes across the engine update;
 - [deterministic visibility workloads](docs/INTEREST_WORKLOADS.md) with wire parity and snapshot-size evidence;
 - an explicit `game-server::GameSimulation` adapter;
 - deterministic mapping from `ZoneId` to `game-server::MatchId`;
@@ -137,7 +138,7 @@ Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative du
 
 ## Pinned foundations
 
-- `physics-engine`: `1b98f84d409796b2a15b84f3fa4ed7f03a11f8bd`
+- `physics-engine`: `0baf3411419fc250273caec24d64654cb30c28ec`
 - `game-server`: `a3851dab9c1fb25dd31b465fb554ca475769caab`
 - `3d-lab` (`three-d-core`, `three-d-camera` and the browser `@moritzbrantner/three-d-renderer`, kept on one commit): `f484db8a3d2a7a555fa463eddf9c28790b240ce0`
 - reusable validation workflow: `45042e56be120b438096e774027637cac0280075`
