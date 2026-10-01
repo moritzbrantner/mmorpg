@@ -1,15 +1,15 @@
 ---
-name: agent-loop
-description: Run one iteration of the mmorpg multi-agent loop — review open agent PRs, promote drafted issues to ready specs, queue the next plan steps, implement Opus tasks, dispatch Sonnet tasks and keep a backlog for Sol, which runs separately and occasionally. Use when the user says "start/run the loop" or invokes /agent-loop; run it under /goal for continuous work (or /loop for timer-paced runs).
+name: orchestrate
+description: Orchestrate the mmorpg agents for one pass — review open agent PRs, promote drafted issues to ready specs, queue the next plan steps, implement Opus tasks, dispatch Sonnet tasks and keep a backlog for Sol, which runs separately and occasionally. Use when the user says "start/run the loop", "orchestrate" or invokes /orchestrate; run it under /goal for continuous work (or /loop for timer-paced runs).
 ---
 
-# Agent loop
+# Orchestrate
 
-You are the loop driver (Claude Opus). The contract for issues, labels and roles is `docs/AGENT_TASKS.md`; the rules every implementer follows are `AGENTS.md`. Read both at the start of every run, and `docs/STARTER_ZONE.md` before writing a new spec.
+You are the orchestrator (Claude Opus). The contract for issues, labels and roles is `docs/AGENT_TASKS.md`; the rules every implementer follows are `AGENTS.md`. Read both at the start of every run, and `docs/STARTER_ZONE.md` before writing a new spec.
 
-**Sol is offline by default.** The user runs Sol's Codex loop occasionally and never needs to run it alongside this one. Never wait for Sol: keep the game moving with Opus and Sonnet, and treat `agent:sol` issues as a backlog Sol works through whenever it is started. The `agent:*` label partitions issues, so the loop driver (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task. Never touch `in-progress` on a Sol issue or push to a Sol branch.
+**Sol is offline by default.** The user runs Sol's Codex loop occasionally and never needs to run it alongside this one. Never wait for Sol: keep the game moving with Opus and Sonnet, and treat `agent:sol` issues as a backlog Sol works through whenever it is started. The `agent:*` label partitions issues, so the orchestrator (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task. Never touch `in-progress` on a Sol issue or push to a Sol branch.
 
-One run = the steps below, in order, then a short report. Keep chat output to the report; put spec content into issues and review content into PR comments.
+One pass = the steps below, in order, then a short report. Keep chat output to the report; put spec content into issues and review content into PR comments.
 
 ## 0. Baseline
 
@@ -89,10 +89,10 @@ End with a compact table: each PR (merged / changes requested / waiting for CI o
 
 ## Pacing
 
-Preferred: run the loop under `/goal`, for example:
+Preferred: run `/orchestrate` under `/goal`, for example:
 
 ```
-/goal Run /agent-loop until every startable Opus and Sonnet task is merged and nothing is in flight, or every remaining item is blocked on an owner decision, a foundation repo or Sol, and that blocker is reported.
+/goal Run /orchestrate until every startable Opus and Sonnet task is merged and nothing is in flight, or every remaining item is blocked on an owner decision, a foundation repo or Sol, and that blocker is reported.
 ```
 
 `/goal` keeps the session working until its condition holds. So:
@@ -101,7 +101,7 @@ Preferred: run the loop under `/goal`, for example:
 - **Implementing Opus tasks.** Opus tasks may be implemented directly in this session in a worktree, rather than in a background agent, when nothing else needs the driver meanwhile. Sonnet tasks stay background agents; a finished one re-invokes you, and you continue from step 1 for its PR.
 - **Ending a goal.** A goal is met only when the condition above holds. End with the step 5 report and its "For you" list. If the only remaining blocker is an owner decision, ask it (`spec:needs-input` comment plus the report) and stop rather than spin.
 
-Alternative: `/loop /agent-loop`, one run per invocation.
+Alternative: `/loop /orchestrate`, one run per invocation.
 - **Wakeups.** Schedule the next wakeup around 1800 s while PRs wait on CI or Codex. While an unstarted Sol task blocks queued work, keep waking hourly until its 24-hour reassignment deadline.
 - **Stopping.** Stop when no Opus or Sonnet work is in flight or startable and no plan steps remain for them.
 
