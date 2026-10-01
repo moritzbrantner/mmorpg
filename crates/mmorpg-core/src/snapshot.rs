@@ -399,6 +399,11 @@ impl ZoneSimulation {
         if combat.health == 0 && combat.auto_attack {
             return Err(ZoneError::new("a dead player cannot auto-attack"));
         }
+        if combat.abilities.class.is_some() && self.content.ability_revision() == 0 {
+            return Err(ZoneError::new(
+                "a class player needs content that binds the ability catalog",
+            ));
+        }
         validate_player_abilities(&combat.abilities, combat.level, combat.health > 0)?;
         self.world
             .add_body(RigidBody::dynamic(

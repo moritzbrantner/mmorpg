@@ -291,7 +291,8 @@ impl ZoneContent {
     /// Binds the ability catalog and each creature template's ability to
     /// recovery identity without changing the simulation seed. Templates
     /// without a binding use no ability. Revision zero is reserved for
-    /// content that has never bound the ability catalog.
+    /// content that has never bound the ability catalog; its fingerprint
+    /// omits the catalog, so its zones refuse classes and abilities.
     pub fn with_creature_abilities(
         mut self,
         revision: u64,
