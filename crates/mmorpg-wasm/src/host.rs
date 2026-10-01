@@ -9,21 +9,28 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use mmorpg_core::{
-    PlayerId, ZoneDefinition, ZoneError, ZoneId, ZoneSimulation, greyhaven_vale_definition,
+    PlayerId, ZoneContent, ZoneDefinition, ZoneError, ZoneId, ZoneSimulation, greyhaven_vale,
 };
-use mmorpg_protocol::{ProtocolError, decode_command, encode_snapshot};
+use mmorpg_protocol::{ProtocolError, decode_command, pack_snapshot};
 
 /// The zone the local host simulates. It matches `mmorpg-zone-host`'s default
 /// `MMORPG_ZONE_IDS=1`, so local and network projections carry the same zone ID.
 pub const LOCAL_ZONE_ID: ZoneId = ZoneId::new(1);
 
 /// The content every host loads for [`LOCAL_ZONE_ID`]; `mmorpg-game-server`'s
-/// `build_zone_matches` installs the same definition (checked by tests).
+/// `build_zone_matches` installs the same content (checked by tests).
+#[must_use]
+pub fn hosted_content() -> Arc<ZoneContent> {
+    greyhaven_vale::content()
+}
+
+/// The collision definition of [`hosted_content`], which scenery derives from.
 #[must_use]
 pub fn hosted_definition() -> ZoneDefinition {
-    greyhaven_vale_definition()
+    hosted_content().definition().clone()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,7 +80,7 @@ pub struct LocalZoneHost {
 
 impl LocalZoneHost {
     pub fn new() -> Result<Self, LocalZoneError> {
-        let zone = ZoneSimulation::with_definition(LOCAL_ZONE_ID, hosted_definition())
+        let zone = ZoneSimulation::with_content(LOCAL_ZONE_ID, hosted_content())
             .map_err(LocalZoneError::Zone)?;
         Ok(Self {
             zone,
@@ -89,7 +96,7 @@ impl LocalZoneHost {
 
     #[must_use]
     pub fn content_revision(&self) -> u64 {
-        self.zone.definition().revision()
+        self.zone.content().revision()
     }
 
     #[must_use]
@@ -152,7 +159,8 @@ impl LocalZoneHost {
     }
 
     /// The encoded player-scoped projection addressed to `player_id`, the same
-    /// bytes a network host sends. Canonical state never leaves this type.
+    /// budget-packed bytes a network host sends. Canonical state never leaves
+    /// this type.
     pub fn projection(&self, player_id: PlayerId) -> Result<Vec<u8>, LocalZoneError> {
         if !self.last_sequences.contains_key(&player_id) {
             return Err(LocalZoneError::UnknownPlayer(player_id));
@@ -161,7 +169,9 @@ impl LocalZoneHost {
             .zone
             .snapshot_for_player(player_id)
             .map_err(LocalZoneError::Zone)?;
-        encode_snapshot(&snapshot).map_err(LocalZoneError::Command)
+        pack_snapshot(&snapshot)
+            .map(|packed| packed.payload)
+            .map_err(LocalZoneError::Command)
     }
 }
 
@@ -171,7 +181,7 @@ mod tests {
     use game_server::{
         CommandOutcome, MatchRuntime, RECONNECT_TOKEN_BYTES, ReconnectToken, RuntimeError,
     };
-    use mmorpg_core::{ZoneCommand, trig::YAW_QUARTER_TURN};
+    use mmorpg_core::{EntityKind, ZoneCommand, trig::YAW_QUARTER_TURN};
     use mmorpg_game_server::build_zone_matches;
     use mmorpg_protocol::{decode_snapshot, encode_command};
 
@@ -191,7 +201,7 @@ mod tests {
         snapshot
             .entities
             .iter()
-            .find(|entity| entity.id == player_id)
+            .find(|entity| entity.kind == EntityKind::Player && entity.id == player_id)
             .unwrap()
             .position
     }
@@ -203,10 +213,8 @@ mod tests {
         let host = LocalZoneHost::new().unwrap();
         assert_eq!(host.zone_id(), network.zone().zone_id());
         assert_eq!(&hosted_definition(), network.zone().definition());
-        assert_eq!(
-            host.content_revision(),
-            network.zone().definition().revision()
-        );
+        assert_eq!(hosted_content().as_ref(), network.zone().content().as_ref());
+        assert_eq!(host.content_revision(), network.zone().content().revision());
     }
 
     #[test]
@@ -286,6 +294,53 @@ mod tests {
                 local.current_tick()
             );
         }
+    }
+
+    /// Targeting and attack intents, including refused ones, produce the
+    /// same projection bytes (events included) on both hosts.
+    #[test]
+    fn combat_intents_project_identically_on_both_hosts() {
+        use mmorpg_core::{EntityRef, NpcId};
+        let mut local = LocalZoneHost::new().unwrap();
+        let (_, adapter) = build_zone_matches([LOCAL_ZONE_ID])
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let mut network = MatchRuntime::new(adapter, 120);
+        let lease = network
+            .admit(ReconnectToken([4; RECONNECT_TOKEN_BYTES]))
+            .unwrap();
+        let player = local.join().unwrap();
+        let commands = [
+            ZoneCommand::StartAttack,
+            ZoneCommand::SelectTarget(Some(EntityRef::Npc(NpcId::new(1)))),
+            ZoneCommand::StartAttack,
+            ZoneCommand::ReleaseSpirit,
+            ZoneCommand::SelectTarget(None),
+        ];
+        for (sequence, command) in (1..).zip(commands) {
+            let payload = encode_command(command);
+            assert_eq!(
+                network.submit_command(lease.player_id, lease.connection_epoch, sequence, &payload),
+                Ok(CommandOutcome::Applied)
+            );
+            assert_eq!(
+                local.submit(player, sequence, &payload),
+                Ok(SubmitOutcome::Applied)
+            );
+        }
+        for _ in 0..30 {
+            network.advance_tick().unwrap();
+            local.tick().unwrap();
+            assert_eq!(
+                network.snapshot_for(lease.player_id).unwrap().payload,
+                local.projection(player).unwrap()
+            );
+        }
+        let first = decode_snapshot(&local.projection(player).unwrap()).unwrap();
+        assert_eq!(first.viewer.target, None);
+        assert!(first.events.is_empty(), "events last one tick");
     }
 
     /// A step of `scenarios/bots/browser-local-session.toml`.
@@ -416,6 +471,7 @@ mod tests {
             snapshot
                 .entities
                 .iter()
+                .filter(|entity| entity.kind == EntityKind::Player)
                 .map(|entity| entity.id)
                 .collect::<Vec<_>>(),
             [second],

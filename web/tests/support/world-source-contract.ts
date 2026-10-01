@@ -69,7 +69,8 @@ export function worldSourceContract(
     const projection = source.latestProjection();
     expect(projection?.viewerId).toBe(player);
     // The refused entry left no unit behind in the world.
-    expect(projection?.entities.map((entity) => entity.entityId)).toEqual([player]);
+    const players = projection?.entities.filter((entity) => entity.kind === "player");
+    expect(players?.map((entity) => entity.entityId)).toEqual([player]);
     source.sendCommand({ kind: "jump" });
   });
 

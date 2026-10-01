@@ -3,9 +3,18 @@ import { encodeCommand } from "../src/command-wire";
 import { MAX_CATCH_UP_TICKS } from "../src/demo-clock";
 import { LocalZoneSource, type LocalZoneHandle } from "../src/world/local-zone-source";
 import { FACING_INTERVAL_MS, MovementOutbox, RESEND_INTERVAL_MS, type MovementInput } from "../src/world/movement-outbox";
-import { MAX_DISTANCE_METRES, MIN_DISTANCE_METRES, ORBIT_RADIANS_PER_PIXEL, OrbitCamera, heldIntent, movementInput } from "../src/world/orbit-camera";
+import {
+  GROUND_CLEARANCE_METRES,
+  MAX_DISTANCE_METRES,
+  MIN_DISTANCE_METRES,
+  ORBIT_RADIANS_PER_PIXEL,
+  OrbitCamera,
+  heldIntent,
+  movementInput,
+} from "../src/world/orbit-camera";
 import { FakeWorldSource } from "./support/fake-world-source";
 import { encodeTestSnapshot } from "./support/snapshot-encoder";
+import { playerEntity, testSnapshot } from "./support/snapshots";
 import { worldSourceContract } from "./support/world-source-contract";
 
 /** Records what `LocalZoneSource` asks of the WASM zone; returns well-formed projections. */
@@ -45,10 +54,10 @@ class RecordingZone implements LocalZoneHandle {
     if (!this.#players.has(player)) throw new Error("unknown player");
     if (this.corruptProjections) return new Uint8Array([3]);
     const viewer = this.viewerOverride ?? player;
-    return encodeTestSnapshot({
+    return encodeTestSnapshot(testSnapshot({
       zoneId: 1, tick: BigInt(this.ticks), contentRevision: 1n, acknowledgedSequence: 0, viewerId: viewer,
-      entities: [{ kind: "player", entityId: viewer, position: [this.ticks * 21, 90, 0], velocity: [21, 0, 0], facing: 0 }],
-    });
+      entities: [playerEntity(viewer, [this.ticks * 21, 90, 0], [21, 0, 0])],
+    }));
   }
 }
 
@@ -237,12 +246,56 @@ describe("camera-relative input", () => {
     const low = camera.view([0, 0, 0]);
     expect(low.eye[1]).toBeGreaterThan(low.target[1]);
     camera.zoom(1e3);
+    expect(camera.targetDistance).toBe(MIN_DISTANCE_METRES);
+    camera.update(0, true);
     expect(camera.distance).toBe(MIN_DISTANCE_METRES);
     camera.zoom(-1e3);
+    camera.update(0, true);
     expect(camera.distance).toBe(MAX_DISTANCE_METRES);
     camera.zoom(Number.NaN);
     camera.orbit(Number.NaN, 0);
+    camera.update(Number.NaN);
     expect(camera.distance).toBe(MAX_DISTANCE_METRES);
     expect(Number.isFinite(camera.facing())).toBe(true);
+  });
+
+  test("zoom eases toward its target and settles exactly", () => {
+    const camera = new OrbitCamera();
+    const start = camera.distance;
+    camera.zoom(3);
+    const target = camera.targetDistance;
+    expect(target).toBeLessThan(start);
+    expect(camera.distance).toBe(start);
+    camera.update(1 / 60);
+    expect(camera.distance).toBeLessThan(start);
+    expect(camera.distance).toBeGreaterThan(target);
+    for (let frame = 0; frame < 120; frame += 1) {
+      camera.update(1 / 60);
+    }
+    expect(camera.distance).toBe(target);
+  });
+
+  test("the eye never sinks below the ground under it; nothing else collides", () => {
+    const camera = new OrbitCamera();
+    const flat = camera.view([0, 1, 0], () => 0);
+    expect(flat).toEqual(camera.view([0, 1, 0]));
+    const hill = camera.view([0, 1, 0], () => 12);
+    expect(hill.eye[1]).toBeCloseTo(12 + GROUND_CLEARANCE_METRES, 9);
+    expect(hill.eye[0]).toBe(flat.eye[0]);
+    expect(hill.eye[2]).toBe(flat.eye[2]);
+    expect(hill.target).toEqual(flat.target);
+  });
+
+  test("left drag looks around freely; right drag turns the character with the view", () => {
+    const camera = new OrbitCamera();
+    camera.orbit(Math.PI / 2 / ORBIT_RADIANS_PER_PIXEL, 0);
+    const heading = camera.facing();
+    // Right drag: the character adopts the view even while standing.
+    expect(movementInput(new Set(), heading, 16_384, 0, "turn").facing).toBe(heading);
+    // Left drag: running keeps the character's own heading.
+    expect(movementInput(new Set(["KeyW"]), heading, 16_384, 0, "orbit")).toEqual({ forward: 1, strafe: 0, facing: 16_384, jumps: 0 });
+    camera.lookAlong(Math.PI);
+    expect(camera.facing()).toBe(32_768);
+    expect(camera.heading).toBeCloseTo(Math.PI, 12);
   });
 });

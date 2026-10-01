@@ -1,10 +1,12 @@
 #[path = "support/visibility_oracle.rs"]
 mod visibility_oracle;
 
+use std::sync::Arc;
+
 use mmorpg_core::{
-    CanonicalPlayerSnapshot, CanonicalZoneSnapshot, INTEREST_RADIUS_UNITS,
-    MAX_CONTENT_COORDINATE_UNITS, SNAPSHOT_SCHEMA_VERSION, ZoneCommand, ZoneDefinition, ZoneId,
-    ZoneSimulation, greyhaven_vale_definition,
+    CanonicalPlayerCombat, CanonicalPlayerSnapshot, INTEREST_RADIUS_UNITS,
+    MAX_CONTENT_COORDINATE_UNITS, ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation,
+    greyhaven_vale_definition,
 };
 use mmorpg_protocol::encode_snapshot;
 use visibility_oracle::exhaustive_projection;
@@ -43,28 +45,25 @@ fn assert_wire_parity(zone: &ZoneSimulation) {
 }
 
 fn zone_at(positions: &[[i32; 3]], definition: ZoneDefinition) -> ZoneSimulation {
-    ZoneSimulation::from_snapshot(CanonicalZoneSnapshot {
-        definition,
-        schema_version: SNAPSHOT_SCHEMA_VERSION,
-        zone_id: ZoneId::new(9),
-        tick: 0,
-        players: positions
-            .iter()
-            .enumerate()
-            .map(|(index, &position)| CanonicalPlayerSnapshot {
-                player_id: u32::try_from(positions.len() - index).unwrap(),
-                position,
-                velocity: [0; 3],
-                facing: 0,
-                forward: 0,
-                strafe: 0,
-                jump_pending: false,
-                last_sequence: 3,
-                spawn_slot: u16::try_from(index).unwrap(),
-            })
-            .collect(),
-    })
-    .unwrap()
+    let empty = ZoneSimulation::with_definition(ZoneId::new(9), definition).unwrap();
+    let mut canonical = empty.snapshot().unwrap();
+    canonical.players = positions
+        .iter()
+        .enumerate()
+        .map(|(index, &position)| CanonicalPlayerSnapshot {
+            player_id: u32::try_from(positions.len() - index).unwrap(),
+            position,
+            velocity: [0; 3],
+            facing: 0,
+            forward: 0,
+            strafe: 0,
+            jump_pending: false,
+            last_sequence: 3,
+            spawn_slot: u16::try_from(index).unwrap(),
+            combat: CanonicalPlayerCombat::default(),
+        })
+        .collect();
+    ZoneSimulation::from_snapshot(canonical, Arc::clone(empty.content())).unwrap()
 }
 
 #[test]
@@ -92,7 +91,8 @@ fn multi_tick_membership_transitions_match_exhaustive_wire_output() {
         assert_wire_parity(&zone);
         if tick == 6 {
             let checkpoint = zone.snapshot().unwrap();
-            zone = ZoneSimulation::from_snapshot(checkpoint.clone()).unwrap();
+            zone = ZoneSimulation::from_snapshot(checkpoint.clone(), Arc::clone(zone.content()))
+                .unwrap();
             assert_eq!(zone.snapshot().unwrap(), checkpoint);
             assert_wire_parity(&zone);
         }

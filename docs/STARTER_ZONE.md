@@ -51,7 +51,19 @@ The browser demo runs the same `ZoneSimulation` through a WASM build as a local,
 
 The road network connects the hub to each subzone. Spawn density targets about 60 creatures zone-wide, with 5–15 relevant to a player at any time.
 
-Map north is −Z (the Redbrand cliffs); yaw 0 faces +Z. Content revision 2 (`mmorpg_core::greyhaven_vale`) implements this layout: new characters spawn on a 32 × 16 grid, 1 m apart, on the collider-free hub plaza; roads are open corridors with no collider within 2 m of a centre line; the five subzones are named areas with disjoint bounds. `mmorpg-scenery` derives the visuals from those colliders.
+Map north is −Z (the Redbrand cliffs); yaw 0 faces +Z. Content revision 3 (`mmorpg_core::greyhaven_vale`) implements this layout: new characters spawn on a 32 × 16 grid, 1 m apart, on the collider-free hub plaza; roads are open corridors with no collider within 2 m of a centre line; the five subzones are named areas with disjoint bounds. `mmorpg-scenery` derives the visuals from those colliders. Revision 3 added the creatures and NPCs: 59 spawns of the seven templates below (14 Timber Wolves and 6 Young Boars in Wolfrun Woods, 6 Grain Rats and 10 Field Marauders at Millbrook Farm, 8 Mirefin Lurkers at Stillwater Lake, 14 Redbrand Bandits and Garrick Redbrand in Redbrand Hollow), the hub's quest givers, innkeeper, spirit healer and four gate guards, and the graveyard.
+
+| Template | Family | Level | Health (+ per level) | Damage | Swing (ticks) | Behaviour |
+| --- | --- | --- | --- | --- | ---: | --- |
+| Timber Wolf | Wolf | 1–2 | 42 (+14) | 2–4 (+1 per level) | 60 | aggressive |
+| Young Boar | Boar | 1–2 | 48 (+14) | 2–4 | 66 | neutral |
+| Grain Rat | Vermin | 1 | 30 | 1–3 | 48 | neutral |
+| Field Marauder | Marauder | 2–3 | 60 (+16) | 3–6 | 66 | aggressive |
+| Mirefin Lurker | Mirefin | 3 | 70 | 3–6 | 60 | aggressive |
+| Redbrand Bandit | Redbrand | 3–5 | 75 (+16) | 4–7 | 66 | aggressive |
+| Garrick Redbrand | Redbrand | 5 elite | 420 | 8–14 | 72 | aggressive, 5 min respawn |
+
+Creatures respawn 60 s after death unless noted and wander within 6 m of their spawn point. These numbers are a starting point for tuning.
 
 ## Systems
 
@@ -103,10 +115,19 @@ There is a 1.5 s global cooldown. Casts have a cast time, and moving or being st
 ### Player-scoped projection
 
 - Header, then a **self** section: exact health/resource/xp/level/target/cast/GCD/cooldowns/auras.
-- **Entities**: nearest relevant units within the interest radius (45 m), capped by count in `(distance, kind, id)` priority, and always including the player's current target. The current cap remains 64 entities with 16-byte records and a 1,077-byte MMO projection budget; see [PROTOCOL.md](PROTOCOL.md#datagram-byte-budget). `game-server` now fragments oversized session frames, while a future MMO wire change must revise the projection budget and records for additional fields. Each planned record carries kind, id, template/appearance, position, velocity, facing, level, health percent, flags (dead, in combat, hostile, tapped by other, quest marker, casting), target and cast progress.
+- **Entities**: nearest relevant units within the interest radius (45 m), capped by count in `(distance, kind, id)` priority, and always including the player's current target. Relevance keeps at most 64 units; records are 21 bytes, and budget-driven packing writes as many as fit one datagram (a 1,077-byte budget: 48 records without events, 38 beside a full event section); see [PROTOCOL.md](PROTOCOL.md#datagram-byte-budget). `game-server` now fragments oversized session frames, while a future MMO wire change must revise the projection budget for additional sections. Each record carries kind, id, template/appearance, position, velocity, facing, level, health percent and flags (dead, in combat, hostile, attackable, tapped by other, evading, targets the viewer); later steps add quest-marker and casting flags and cast progress. Instead of a per-entity target, a target section carries the viewer's target-of-target.
 - **Events**: bounded feedback such as damage/heal/miss, XP, loot, quest updates, level-up and errors ("Out of range", "Not enough mana"). They are cosmetic and may be lost.
 - **Sheet**: money, inventory, equipment and quest log. It is included when changed and periodically every 10 ticks, so loss self-heals within about 330 ms.
 - **Names**: player display names are sent in a periodic section. Creature and NPC names come from content by template ID.
+
+### Presentation
+
+Presentation never feeds back into gameplay; it reads projections and the Rust scenery export and sends intent.
+
+- **Scenery export** (`mmorpg-wasm`, format `mmorpg.scenery` v2): the terrain grid (4 m, ±200 m), a far ring of the same relief (20 m, ±600 m), a prop kind table with compact per-prop records (kind, feet anchor on the relief, yaw, scale, body box), every structure's exact collider box, roads, water and areas. `mmorpg-scenery` stays presentation-only; hosts never link it.
+- **Browser world** (step 12a): terrain meshes per colour with soft biome transitions and grass tones; roads, plaza, field and shore as smooth surfaces; hazed far ranges above a 50 m snow line; procedural low-poly models for every prop kind merged per chunk, colour and cull class, with walls at body height on their colliders; a translucent lake; a CSS sky behind a transparent canvas; animated humanoids with class gear through a unit model registry keyed by entity kind, whose models read the whole projected entity and place feet by their own body height; a camera that stays above the ground, eases its zoom and turns the character on a right drag; a circular minimap; and an F3 overlay with node counts and renderer work.
+- **Waiting for 3d-lab**: fog, sky, sun and lighting control (#84) replace the baked distance-haze bands and let the day cycle change lighting instead of only CSS sky colours; vertex colours, emissive materials and instancing (#82) replace per-colour batches, colour-only glows (lamps, waystone runes, the staff orb) and duplicated tree and grass geometry. `EnvironmentStyle` and the batching module are the seams; the 3d-lab pin is not bumped for this step.
+- **Later presentation** (step 12b): creature and NPC models in the same registry, spell effects, selection circles and nameplates, and native client parity (step 13).
 
 ## Implementation plan
 
@@ -116,14 +137,14 @@ Each step is one issue and one PR, validated by the full gate from `AGENTS.md`. 
 2. **Design contract**: this document, ADR 0002, roadmap section and tracking issues.
 3. **Snapshot fragmentation in game-server** (#18): oversized player snapshots are split into bounded datagram fragments and reassembled by clients. This removes the connection-closing cliff before projections grow. Bump the pin here.
 4. **Movement v3** (#19): facing, camera-relative movement, backpedal, jump, run speed, integer trig; command wire v2, snapshot v3 with entity kinds and facing. Native and browser decoders updated.
-5. **Greyhaven Vale content** (#20): larger zone definition (content revision 2) with colliders, the player spawn grid, road corridors and named subzones; the `mmorpg-scenery` crate (props, relief, water); interest radius, projection cap and byte-budget test. Native client renders scenery, and the browser's WASM `scenery()` export maps it. Creature spawn tables move to step 7 and NPC placement tables to steps 9 (vendor) and 10 (quest givers); each is a new content revision.
+5. **Greyhaven Vale content** (#20): larger zone definition (content revision 2) with colliders, the player spawn grid, road corridors and named subzones; the `mmorpg-scenery` crate (props, relief, water); interest radius, projection cap and byte-budget test. Native client renders scenery, and the browser's WASM `scenery()` export maps it. Creature spawn tables and NPC placement moved to step 7 (content revision 3); steps 9 (vendor) and 10 (quest givers) give the placed NPCs their behaviour, each with a new content revision.
 6. **Browser runs the shared simulation** (#21): `mmorpg-wasm` local host, build pipeline and Pages workflow. The web demo sends commands and renders decoded projections plus Rust scenery, and its duplicated illustrative rules are removed. *Landed before step 5* with a `scenery()` export that was a blockout of the hosted outpost's core colliders; step 5 mapped `mmorpg-scenery` and the vale's areas into the same versioned export without touching the browser render loop. World progress saves were removed until step 15.
-7. **Units, combat and creature AI** (#22): creature spawn tables, creatures, targeting, auto-attack, death/respawn, regen, threat/leash/assist, zone RNG, events; browser target frame, nameplates, combat text.
+7. **Units, combat and creature AI** (#22), in two pull requests. *7a*: `ZoneContent` with content identity, creature spawn tables and NPC posts, creatures, targeting, auto-attack, death/respawn, regen, threat/leash/assist, zone RNG, events, snapshot v5, the WASM content catalog and minimal browser and native presentation (placeholder bodies, Tab/F/R, text status). *7b*: browser target frame, nameplates, combat text.
 8. **Classes and abilities** (#23): resources, GCD, cooldowns, casts, auras, the ability kit above; action bar and cast bars.
 9. **Progression, loot, inventory, equipment, vendor** (#24): XP/levels, loot windows, bags, character pane, vendor NPC placement and window.
 10. **Quests** (#25): quest-giver NPC placement, definitions, NPC dialog, log, tracker, markers, chain and boss.
 11. **Starter-zone workload evidence** (#26): deterministic multi-player combat workload with work counters and a snapshot-byte ratchet (BENCH-016).
-12. **World presentation** (#27): terrain relief, instanced vegetation, water, sky, fog and day/night (3d-lab renderer extensions), procedural animated character and creature models, spell effects, selection circles, minimap.
+12. **World presentation** (#27): terrain relief, instanced vegetation, water, sky, fog and day/night (3d-lab renderer extensions), procedural animated character and creature models, spell effects, selection circles, minimap. *Part A landed for the browser* with the pinned renderer (see [Presentation](#presentation)); part B adds creature models, effects and the 3d-lab #82/#84 features.
 13. **Native client parity** (#28): units, health bars, targeting, abilities, orbit camera and HUD over the same projections.
 14. **Browser online mode** (#29): a WebTransport session to a local zone host for real multiplayer from browser tabs; Pages stays offline.
 15. **Character persistence for the demo** (#30): a durable character record (class, level, XP, inventory, equipment, quests) behind core command/query APIs; browser save slots persist it.

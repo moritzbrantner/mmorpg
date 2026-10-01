@@ -176,6 +176,79 @@ area = "Nowhere"
 }
 
 #[test]
+fn combat_expectations_read_the_decoded_projection() {
+    // Guard NPC 8 stands at the west gate, inside the hub bots' interest radius.
+    let report = run_bots(
+        r#"
+name = "wrong-combat"
+zone = 1
+ticks = 2
+[[bots]]
+name = "alice"
+[[steps]]
+tick = 0
+bot = "alice"
+action = "join"
+[[steps]]
+tick = 0
+bot = "alice"
+action = "select_target"
+entity = "npc:8"
+[[steps]]
+tick = 0
+bot = "alice"
+action = "start_attack"
+[[expect]]
+kind = "event"
+bot = "alice"
+event = "error:not_attackable"
+entity = "npc:8"
+tick = 1
+[[expect]]
+kind = "target"
+bot = "alice"
+entity = "npc:8"
+tick = 1
+[[expect]]
+kind = "health"
+bot = "alice"
+health = 49
+tick = 1
+[[expect]]
+kind = "unit"
+bot = "alice"
+entity = "npc:8"
+state = "dead"
+tick = 1
+[[expect]]
+kind = "event"
+bot = "alice"
+event = "died"
+tick = 2
+"#,
+    )
+    .unwrap();
+    let text = report.to_text();
+    assert_eq!(report.failures(), 3, "{text}");
+    assert!(
+        text.contains("select_target -> applied seq=1 epoch=1 entity=npc:8"),
+        "{text}"
+    );
+    assert!(text.contains("start_attack -> applied seq=2"), "{text}");
+    assert!(
+        text.contains("expect alice event error:not_attackable npc:8 ok"),
+        "{text}"
+    );
+    assert!(text.contains("expect alice target npc:8 ok"), "{text}");
+    assert!(text.contains("FAIL got health=50/50"), "{text}");
+    assert!(
+        text.contains("FAIL got L10 hp100% (-2900,90,1500) []"),
+        "{text}"
+    );
+    assert!(text.contains("FAIL got events[]"), "{text}");
+}
+
+#[test]
 fn unexpected_control_plane_outcomes_fail_the_scenario() {
     let report = run_control_plane(
         r#"
@@ -232,11 +305,39 @@ fn invalid_scenarios_are_rejected_at_load() {
         ),
         (
             "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"disconnect\"\nseq = 2",
-            "apply only to move and jump",
+            "apply only to commands",
         ),
         (
             "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"area\"\nbot = \"a\"\ntick = 1",
             "missing its required field",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"select_target\"",
+            "entity is required for select_target",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"start_attack\"\nentity = \"creature:1\"",
+            "entity is required for select_target",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"select_target\"\nentity = \"wolf:1\"",
+            "must be none, bot:<name>, creature:<id> or npc:<id>",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"select_target\"\nentity = \"bot:b\"",
+            "unknown bot b",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"unit\"\nbot = \"a\"\nentity = \"none\"\nstate = \"alive\"\ntick = 1",
+            "missing its required field",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"event\"\nbot = \"a\"\nevent = \"error:typo\"\ntick = 1",
+            "must be damage_dealt",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"health\"\nbot = \"a\"\nhealth = 50\nby_tick = 1",
+            "by_tick only for sees, event and unit",
         ),
     ] {
         let error = bots::load(text).unwrap_err();

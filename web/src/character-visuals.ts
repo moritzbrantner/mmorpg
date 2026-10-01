@@ -9,6 +9,8 @@ export type CharacterVisualProfile = {
   shoulderSpan: number;
   armRadius: number;
   headRadius: number;
+  /** Hip width relative to shoulder width; the in-world humanoid reads its build from it. */
+  hipRatio: number;
   bodyColor: `#${string}`;
   chestColor: `#${string}`;
   shoulderColor: `#${string}`;
@@ -18,7 +20,7 @@ export type CharacterVisualProfile = {
 };
 
 const CLASS_VISUALS: Record<CharacterClassId, Omit<CharacterVisualProfile,
-  "bodyRadius" | "bodyHeight" | "chestSize" | "shoulderSpan" | "armRadius" | "headRadius">> = {
+  "bodyRadius" | "bodyHeight" | "chestSize" | "shoulderSpan" | "armRadius" | "headRadius" | "hipRatio">> = {
   warden: {
     bodyColor: "#718d84",
     chestColor: "#58746b",
@@ -46,7 +48,7 @@ const CLASS_VISUALS: Record<CharacterClassId, Omit<CharacterVisualProfile,
 };
 
 const SEX_FRAME: Record<CharacterSex, Pick<CharacterVisualProfile,
-  "bodyRadius" | "bodyHeight" | "chestSize" | "shoulderSpan" | "armRadius" | "headRadius">> = {
+  "bodyRadius" | "bodyHeight" | "chestSize" | "shoulderSpan" | "armRadius" | "headRadius" | "hipRatio">> = {
   male: {
     bodyRadius: 0.48,
     bodyHeight: 1.7,
@@ -54,6 +56,7 @@ const SEX_FRAME: Record<CharacterSex, Pick<CharacterVisualProfile,
     shoulderSpan: 0.52,
     armRadius: 0.16,
     headRadius: 0.34,
+    hipRatio: 0.72,
   },
   female: {
     bodyRadius: 0.44,
@@ -62,6 +65,7 @@ const SEX_FRAME: Record<CharacterSex, Pick<CharacterVisualProfile,
     shoulderSpan: 0.47,
     armRadius: 0.15,
     headRadius: 0.33,
+    hipRatio: 0.94,
   },
 };
 

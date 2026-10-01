@@ -1,6 +1,6 @@
 # Run the native multiplayer slice
 
-The native client is a Rust executable using wgpu and winit. It connects to the existing zone host over TLS/WebTransport. It renders Greyhaven Vale from `mmorpg-scenery` (a relief terrain mesh with biome colours, the lake surface and prop blockouts whose structure boxes are the server's exact colliders) and interpolated player snapshots. Position and collision outcomes come from the server; units are drawn at their physics position plus the shared presentation relief under them.
+The native client is a Rust executable using wgpu and winit. It connects to the existing zone host over TLS/WebTransport. It renders Greyhaven Vale from `mmorpg-scenery` (a relief terrain mesh with biome colours, the lake surface and prop blockouts whose structure boxes are the server's exact colliders) and interpolated snapshots of players, creatures and NPCs. Position and collision outcomes come from the server; units are drawn at their physics position plus the shared presentation relief under them.
 
 ## Prerequisites
 
@@ -45,11 +45,16 @@ Controls:
 | W / S (or ↑ / ↓) | Run forward / backpedal |
 | A / D, Q / E (or ← / →) | Strafe left / right |
 | Space | Jump (only from the ground) |
+| Tab | Select the nearest living attackable creature; press again to cycle outward |
+| F | Start auto-attacking the target, or stop |
+| R | Release your spirit while dead |
 | Left or right mouse drag | Orbit the camera around your character |
 | Mouse wheel | Zoom the camera |
 | Escape | Close |
 
-The third-person camera orbits your gold avatar; other players are blue. Each body shows a small dark nose on its facing side. While a movement key is held, your character turns to face the camera's direction, so W always runs away from the camera; releasing the keys leaves the character facing where it last moved. Running and strafing move at 6.3 m/s, backpedalling is slower. Losing focus clears held movement. Movement is sent on change and retransmitted at 20 Hz so a lost key-release datagram is corrected; each Space press sends one jump and is never replayed after a reconnect. There is no local movement prediction yet, so input response includes network and interpolation delay.
+The third-person camera orbits your gold avatar; other players are blue. Each body shows a small dark nose on its facing side. While a movement key is held, your character turns to face the camera's direction, so W always runs away from the camera; releasing the keys leaves the character facing where it last moved. Running and strafing move at 6.3 m/s, backpedalling is slower. Losing focus clears held movement. Movement is sent on change and retransmitted at 20 Hz so a lost key-release datagram is corrected; each Space, Tab, F or R press sends one command and is never replayed after a reconnect.
+
+Creatures and NPCs are placeholder boxes sized by their collision boxes, with the same facing nose: hostile creatures red-ish, neutral ones yellow-ish, friendly NPCs green (guards darker), creatures tapped by another player grey. Corpses lie flat and darkened, and a gold marker stands under your target. The window title shows your health, combat state, target (name from the zone content, level and health percent) and whether you are attacking, or that R releases your spirit. Targeting and attacking are intents: the zone validates range and target and reports refusals as events. There is no local movement prediction yet, so input response includes network and interpolation delay.
 
 The default endpoint is `https://localhost:4433/game/matches/zone-1`. For another configured zone:
 
@@ -73,9 +78,9 @@ A rejected, expired, incompatible, or incomplete resume ends the session with an
 
 - This is a connected gameplay/graphics slice, not a production account system. Sessions are anonymous; account/character binding, persistent resume across application launches, and live zone handoff are pending.
 - The host remains standalone; do not run competing hosts for one zone without the planned distributed lease integration.
-- Scenery is a coloured blockout (boxes for trunks and canopies, walls and roof slabs), not final art; full presentation parity is issue #28. Combat, inventory and NPC gameplay are not implemented.
-- The shared transport fragments oversized session snapshots and the client reassembles them per connection. The current v4 MMO projection policy still caps visibility at 64 entities and 1,077 bytes; additional projected sections require a separate protocol and budget change.
-- The built-in Greyhaven Vale (content revision 2) and snapshot v4 change the standalone host's initial simulation state. Recovery bundles captured with the former outpost cannot be silently reused; arrange an explicit migration or fresh development state.
+- Scenery and units are a coloured blockout (boxes for trunks and canopies, walls, roof slabs, creatures and NPCs), not final art; full presentation parity is issue #28. Combat feedback is limited to the window title: target frames, nameplates and combat text come with #22's browser step and #28. Classes, inventory and NPC interaction are not implemented.
+- The shared transport fragments oversized session snapshots and the client reassembles them per connection. The current v5 MMO projection policy still keeps at most 64 relevant units and packs as many 21-byte records as fit 1,077 bytes (48 without events); additional projected sections require a separate protocol and budget change.
+- The built-in Greyhaven Vale (content revision 3, with creatures and NPCs) and snapshot v5 change the standalone host's initial simulation state. Recovery bundles captured with earlier content or snapshot versions cannot be silently reused; arrange an explicit migration or fresh development state.
 - Linux is the exercised desktop platform in this change. Windows/macOS builds and installers remain unverified.
 
 ## Validation

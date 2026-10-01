@@ -1,0 +1,293 @@
+{
+  "schemaVersion": 1,
+  "id": "medieval-character-materials",
+  "recipeVersion": "1",
+  "model": "pbr-metallic-roughness",
+  "factorEncoding": "unorm8",
+  "colorSpace": "srgb",
+  "palettes": [
+    {
+      "id": "burgundy",
+      "label": "Burgundy and ochre",
+      "materials": [
+        {
+          "id": "cloth-primary",
+          "baseColorSrgb8": [
+            116,
+            34,
+            48,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 205,
+          "doubleSided": false
+        },
+        {
+          "id": "cloth-secondary",
+          "baseColorSrgb8": [
+            191,
+            154,
+            79,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 195,
+          "doubleSided": false
+        },
+        {
+          "id": "skin",
+          "baseColorSrgb8": [
+            202,
+            160,
+            124,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 190,
+          "doubleSided": false
+        },
+        {
+          "id": "leather",
+          "baseColorSrgb8": [
+            91,
+            58,
+            36,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 215,
+          "doubleSided": false
+        },
+        {
+          "id": "wood",
+          "baseColorSrgb8": [
+            111,
+            76,
+            45,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 225,
+          "doubleSided": false
+        },
+        {
+          "id": "steel",
+          "baseColorSrgb8": [
+            154,
+            163,
+            176,
+            255
+          ],
+          "metallic": 215,
+          "roughness": 92,
+          "doubleSided": false
+        },
+        {
+          "id": "string",
+          "baseColorSrgb8": [
+            205,
+            190,
+            160,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 245,
+          "doubleSided": true
+        }
+      ]
+    },
+    {
+      "id": "azure",
+      "label": "Azure and silver",
+      "materials": [
+        {
+          "id": "cloth-primary",
+          "baseColorSrgb8": [
+            43,
+            78,
+            132,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 205,
+          "doubleSided": false
+        },
+        {
+          "id": "cloth-secondary",
+          "baseColorSrgb8": [
+            210,
+            211,
+            215,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 195,
+          "doubleSided": false
+        },
+        {
+          "id": "skin",
+          "baseColorSrgb8": [
+            202,
+            160,
+            124,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 190,
+          "doubleSided": false
+        },
+        {
+          "id": "leather",
+          "baseColorSrgb8": [
+            91,
+            58,
+            36,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 215,
+          "doubleSided": false
+        },
+        {
+          "id": "wood",
+          "baseColorSrgb8": [
+            111,
+            76,
+            45,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 225,
+          "doubleSided": false
+        },
+        {
+          "id": "steel",
+          "baseColorSrgb8": [
+            154,
+            163,
+            176,
+            255
+          ],
+          "metallic": 215,
+          "roughness": 92,
+          "doubleSided": false
+        },
+        {
+          "id": "string",
+          "baseColorSrgb8": [
+            205,
+            190,
+            160,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 245,
+          "doubleSided": true
+        }
+      ]
+    },
+    {
+      "id": "neutral",
+      "label": "Neutral field colors",
+      "materials": [
+        {
+          "id": "cloth-primary",
+          "baseColorSrgb8": [
+            89,
+            86,
+            77,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 205,
+          "doubleSided": false
+        },
+        {
+          "id": "cloth-secondary",
+          "baseColorSrgb8": [
+            151,
+            128,
+            92,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 195,
+          "doubleSided": false
+        },
+        {
+          "id": "skin",
+          "baseColorSrgb8": [
+            202,
+            160,
+            124,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 190,
+          "doubleSided": false
+        },
+        {
+          "id": "leather",
+          "baseColorSrgb8": [
+            91,
+            58,
+            36,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 215,
+          "doubleSided": false
+        },
+        {
+          "id": "wood",
+          "baseColorSrgb8": [
+            111,
+            76,
+            45,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 225,
+          "doubleSided": false
+        },
+        {
+          "id": "steel",
+          "baseColorSrgb8": [
+            154,
+            163,
+            176,
+            255
+          ],
+          "metallic": 215,
+          "roughness": 92,
+          "doubleSided": false
+        },
+        {
+          "id": "string",
+          "baseColorSrgb8": [
+            205,
+            190,
+            160,
+            255
+          ],
+          "metallic": 0,
+          "roughness": 245,
+          "doubleSided": true
+        }
+      ]
+    }
+  ],
+  "bindings": {
+    "archer": {
+      "left-leg": "leather",
+      "right-leg": "leather",
+      "torso": "cloth-primary",
+      "head": "skin",
+      "left-arm": "skin",
+      "right-arm": "skin",
+      "bow-stave": "wood",
+      "bow-string": "string",
+      "quiver": "leather"
+    }
+  }
+}

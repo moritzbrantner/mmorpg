@@ -8,10 +8,10 @@ use mmorpg_client::{
     graphics::render_offscreen,
     network::ClientSession,
     presentation::Presentation,
-    session::{MovementInput, NetworkUpdate, run_session},
+    session::{NetworkUpdate, PlayerInput, run_session},
     world::WorldScene,
 };
-use mmorpg_core::ZoneId;
+use mmorpg_core::{ZoneId, greyhaven_vale};
 use mmorpg_scenery::greyhaven_vale_scenery;
 use std::{
     path::PathBuf,
@@ -70,13 +70,15 @@ impl Options {
 fn main() -> Result<(), ClientError> {
     let Some(options) = Options::parse(std::env::args().skip(1))? else {
         println!(
-            "mmorpg-client [--url https://host:4433/game/matches/zone-1] [--zone 1] [--certificate cert.pem] [--smoke] [--frames N]\nW/S move, A/D or Q/E strafe, Space jumps; drag a mouse button to orbit, wheel zooms. Escape closes. --smoke connects and verifies an offscreen GPU frame.\nWithout --certificate, system certificate trust is used."
+            "mmorpg-client [--url https://host:4433/game/matches/zone-1] [--zone 1] [--certificate cert.pem] [--smoke] [--frames N]\nW/S move, A/D or Q/E strafe, Space jumps; Tab targets the nearest creature, F attacks, R releases a dead spirit; drag a mouse button to orbit, wheel zooms. Escape closes. --smoke connects and verifies an offscreen GPU frame.\nWithout --certificate, system certificate trust is used."
         );
         return Ok(());
     };
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
-    // Scenery derives from the shared core content revision the host runs.
+    // Scenery derives from the shared core content revision the host runs;
+    // the content names and sizes its units.
     let scenery = greyhaven_vale_scenery();
+    let content = greyhaven_vale::content();
     let world = WorldScene::new(&scenery);
     let mut session = runtime.block_on(ClientSession::connect(
         &options.url,
@@ -92,7 +94,7 @@ fn main() -> Result<(), ClientError> {
             let snapshot = session.reconnect().await?;
             let connection_epoch = session.connection_epoch();
             let tick = snapshot.tick;
-            let mut presentation = Presentation::new(player_id, scenery, Instant::now());
+            let mut presentation = Presentation::new(player_id, scenery, content, Instant::now())?;
             presentation.push(snapshot, Instant::now())?;
             let now = Instant::now();
             let view = OrbitCamera::default().view(presentation.camera_target(now));
@@ -101,7 +103,7 @@ fn main() -> Result<(), ClientError> {
             Ok(())
         });
     }
-    let (input_sender, input_receiver) = watch::channel(MovementInput::default());
+    let (input_sender, input_receiver) = watch::channel(PlayerInput::default());
     let (update_sender, update_receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let mut task = runtime.spawn(async move {
@@ -116,6 +118,7 @@ fn main() -> Result<(), ClientError> {
         Arc::clone(&runtime),
         player_id,
         scenery,
+        content,
         world,
         input_sender,
         update_receiver,

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use mmorpg_core::{
     MAX_CONTENT_COORDINATE_UNITS, MAX_PLAYERS_PER_ZONE, PLAYER_HALF_EXTENTS_UNITS, SpawnGrid,
     StaticCollider, ZoneCommand, ZoneDefinition, ZoneId, ZoneSimulation,
@@ -61,10 +63,12 @@ fn recovery_continues_airborne_motion_and_collision_identically() {
     let mut snapshot = zone.snapshot().unwrap();
     snapshot.players[0].position = [0, 400, 0];
     snapshot.players[0].velocity = [0, -7, 0];
-    let mut original = ZoneSimulation::from_snapshot(snapshot).unwrap();
+    let mut original = ZoneSimulation::from_snapshot(snapshot, Arc::clone(zone.content())).unwrap();
     original.advance_tick().unwrap();
     assert!(original.snapshot().unwrap().players[0].velocity[1] < -7);
-    let mut restored = ZoneSimulation::from_snapshot(original.snapshot().unwrap()).unwrap();
+    let mut restored =
+        ZoneSimulation::from_snapshot(original.snapshot().unwrap(), Arc::clone(original.content()))
+            .unwrap();
     for _ in 0..50 {
         original.advance_tick().unwrap();
         restored.advance_tick().unwrap();
@@ -195,7 +199,9 @@ fn world_limits_hold_bodies_in_the_compact_range_on_unenclosed_content() {
         ]
     );
     // Recovery installs the same limits.
-    let mut restored = ZoneSimulation::from_snapshot(open.snapshot().unwrap()).unwrap();
+    let mut restored =
+        ZoneSimulation::from_snapshot(open.snapshot().unwrap(), Arc::clone(open.content()))
+            .unwrap();
     open.advance_tick().unwrap();
     restored.advance_tick().unwrap();
     assert_eq!(restored.snapshot().unwrap(), open.snapshot().unwrap());
@@ -294,7 +300,8 @@ fn exhausted_tick_does_not_move_physics() {
     zone.apply_command(1, 1, run(EAST)).unwrap();
     let mut snapshot = zone.snapshot().unwrap();
     snapshot.tick = u64::MAX;
-    let mut zone = ZoneSimulation::from_snapshot(snapshot.clone()).unwrap();
+    let mut zone =
+        ZoneSimulation::from_snapshot(snapshot.clone(), Arc::clone(zone.content())).unwrap();
     assert!(zone.advance_tick().is_err());
     assert_eq!(zone.snapshot().unwrap(), snapshot);
 }

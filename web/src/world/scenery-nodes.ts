@@ -1,165 +1,215 @@
-import type { IndexedMeshGeometry, RendererSceneNode } from "@moritzbrantner/three-d-renderer";
-import type { Color, Prop, Scenery } from "./scenery";
+import type { Matrix4Values, RendererSceneNode } from "@moritzbrantner/three-d-renderer";
+import { ENVIRONMENT, type EnvironmentStyle } from "./environment";
+import { SceneBatcher, batchVisible, type StaticBatch } from "./mesh-batching";
+import type { Vec3 } from "./mesh-builder";
+import { appendPropModels, type AnimatedMesh, type AnimatedParts, type ModelContext } from "./prop-models";
+import type { Prop, PropKind, Scenery } from "./scenery";
+import { appendLakeBeds, appendPatches, appendRoads, appendTerrain, terrainSurfaceY, waterNodes } from "./terrain-mesh";
 
 /**
- * Static renderer nodes for a decoded scenery, built once per content
- * revision: one terrain mesh per biome (the pinned renderer has no vertex
- * colours), props merged into one mesh per colour, and a disc per water body.
- * The node count stays small however many props the scenery carries.
+ * The static world of one scenery value, built once per content revision:
+ * terrain and far-ring meshes per colour, road ribbons, the lake, and every
+ * prop's procedural model merged into batches per (40 m chunk, colour, cull
+ * class). A few animated parts (windmill sails, campfire flames, reeds) stay
+ * separate nodes whose transforms change every frame.
  */
-type Point = [number, number, number];
+export type SceneryScene = {
+  batches: readonly StaticBatch[];
+  water: readonly RendererSceneNode[];
+  animated: AnimatedParts;
+  stats: SceneryStats;
+  /** The rendered terrain height in metres at `(x, z)` metres. */
+  surfaceY(x: number, z: number): number;
+};
 
-const YAW_STEPS = 65_536;
-const WATER_COLOR: Color = "#3f6f86";
-const WATER_THICKNESS_METRES = 0.04;
+export type SceneryStats = {
+  staticNodes: number;
+  staticVertices: number;
+  staticTriangles: number;
+  props: Partial<Record<PropKind, number>>;
+};
+
+const HUB_KINDS: ReadonlySet<PropKind> = new Set(["keep", "inn", "smithy", "house", "well", "waystone"]);
 
 function resourcePrefix(scenery: Scenery): string {
   return `scenery:${scenery.source}:${scenery.contentRevision}`;
 }
 
-function terrainNodes(scenery: Scenery): RendererSceneNode[] {
+/** Centroid of the samples of a named biome, in metres. */
+function biomeCentroid(scenery: Scenery, name: string): readonly [number, number] | null {
+  const id = scenery.biomes.find((biome) => biome.name === name)?.id;
   const { terrain, unitsPerMetre } = scenery;
-  const metres = (units: number) => units / unitsPerMetre;
-  const meshes = new Map<number, { positions: Point[]; indices: number[]; local: Map<number, number> }>();
-  const vertex = (mesh: { positions: Point[]; local: Map<number, number> }, sample: number): number => {
-    const existing = mesh.local.get(sample);
-    if (existing !== undefined) {
-      return existing;
+  let sumX = 0;
+  let sumZ = 0;
+  let count = 0;
+  terrain.biomes.forEach((biome, index) => {
+    if (biome === id) {
+      sumX += terrain.originXz[0] + (index % terrain.columns) * terrain.step;
+      sumZ += terrain.originXz[1] + Math.floor(index / terrain.columns) * terrain.step;
+      count += 1;
     }
-    const column = sample % terrain.columns;
-    const row = Math.floor(sample / terrain.columns);
-    const index = mesh.positions.length;
-    mesh.positions.push([
-      metres(terrain.originXz[0] + column * terrain.step),
-      metres(terrain.heights[sample] ?? 0),
-      metres(terrain.originXz[1] + row * terrain.step),
-    ]);
-    mesh.local.set(sample, index);
-    return index;
-  };
-  for (let row = 0; row + 1 < terrain.rows; row += 1) {
-    for (let column = 0; column + 1 < terrain.columns; column += 1) {
-      const s00 = row * terrain.columns + column;
-      // A cell takes the biome of its minimum corner.
-      const biome = terrain.biomes[s00] ?? 0;
-      let mesh = meshes.get(biome);
-      if (!mesh) {
-        mesh = { positions: [], indices: [], local: new Map() };
-        meshes.set(biome, mesh);
+  });
+  return count === 0 ? null : [sumX / count / unitsPerMetre, sumZ / count / unitsPerMetre];
+}
+
+function nearestRoadPoint(scenery: Scenery, x: number, z: number): readonly [number, number] | null {
+  let best: [number, number] | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const metres = (units: number) => units / scenery.unitsPerMetre;
+  for (const road of scenery.roads) {
+    for (let index = 0; index + 1 < road.points.length; index += 1) {
+      const [ax, az] = road.points[index]!.map(metres) as [number, number];
+      const [bx, bz] = road.points[index + 1]!.map(metres) as [number, number];
+      const dx = bx - ax;
+      const dz = bz - az;
+      const lengthSquared = dx * dx + dz * dz;
+      const t = lengthSquared === 0 ? 0 : Math.min(1, Math.max(0, ((x - ax) * dx + (z - az) * dz) / lengthSquared));
+      const px = ax + dx * t;
+      const pz = az + dz * t;
+      const distance = Math.hypot(px - x, pz - z);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = [px, pz];
       }
-      const i00 = vertex(mesh, s00);
-      const i10 = vertex(mesh, s00 + 1);
-      const i01 = vertex(mesh, s00 + terrain.columns);
-      const i11 = vertex(mesh, s00 + terrain.columns + 1);
-      // Counter-clockwise seen from above, so faces point up.
-      mesh.indices.push(i00, i01, i10, i10, i01, i11);
     }
   }
-  const colors = new Map(scenery.biomes.map((biome) => [biome.id, biome.color]));
-  return [...meshes.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([biome, mesh]) => ({
-      id: `terrain-${biome}`,
-      geometry: {
-        kind: "mesh",
-        resourceKey: `${resourcePrefix(scenery)}:terrain:${biome}`,
-        positions: mesh.positions,
-        indices: mesh.indices,
-      },
-      color: colors.get(biome) ?? "#808080",
-      transform: { translation: [0, 0, 0] },
-    }));
+  return best;
 }
 
-/** Six outward faces: normal axis, then two tangent axes whose cross product is the normal. */
-const BOX_FACES: readonly (readonly [Point, Point, Point])[] = [
-  [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-  [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
-  [[0, 1, 0], [0, 0, 1], [1, 0, 0]],
-  [[0, -1, 0], [1, 0, 0], [0, 0, 1]],
-  [[0, 0, 1], [1, 0, 0], [0, 1, 0]],
-  [[0, 0, -1], [0, 1, 0], [1, 0, 0]],
-];
-
-/** Appends one yaw-rotated box in metres: 24 vertices with per-face normals. */
-export function appendBox(
-  mesh: { positions: Point[]; normals: Point[]; indices: number[] },
-  centre: Point,
-  halfExtents: Point,
-  yaw: number,
-): void {
-  const radians = (yaw / YAW_STEPS) * 2 * Math.PI;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  // Yaw turns local +Z toward +X: world = (x cos + z sin, y, -x sin + z cos).
-  const rotate = ([x, y, z]: Point): Point => [x * cos + z * sin, y, -x * sin + z * cos];
-  for (const [normal, u, v] of BOX_FACES) {
-    const base = mesh.positions.length;
-    for (const [su, sv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
-      const local: Point = [0, 1, 2].map((axis) =>
-        (normal[axis]! + u[axis]! * su + v[axis]! * sv) * halfExtents[axis]!) as Point;
-      const world = rotate(local);
-      mesh.positions.push([centre[0] + world[0], centre[1] + world[1], centre[2] + world[2]]);
-      mesh.normals.push(rotate(normal));
-    }
-    mesh.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
-  }
-}
-
-function propNodes(scenery: Scenery): RendererSceneNode[] {
-  const metres = (units: number) => units / scenery.unitsPerMetre;
-  const byColor = new Map<Color, { positions: Point[]; normals: Point[]; indices: number[] }>();
-  const add = (prop: Prop) => {
-    switch (prop.kind) {
-      case "block": {
-        let mesh = byColor.get(prop.color);
-        if (!mesh) {
-          mesh = { positions: [], normals: [], indices: [] };
-          byColor.set(prop.color, mesh);
-        }
-        appendBox(
-          mesh,
-          [metres(prop.position[0]), metres(prop.position[1]), metres(prop.position[2])],
-          [metres(prop.halfExtents[0]), metres(prop.halfExtents[1]), metres(prop.halfExtents[2])],
-          prop.yaw,
-        );
-        return;
-      }
-      default: {
-        const unsupported: never = prop.kind;
-        throw new Error(`Unsupported prop kind ${String(unsupported)}.`);
-      }
-    }
-  };
-  scenery.props.forEach(add);
-  return [...byColor.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([color, mesh]) => {
-      const geometry: IndexedMeshGeometry = {
-        kind: "mesh",
-        resourceKey: `${resourcePrefix(scenery)}:props:${color}`,
-        positions: mesh.positions,
-        normals: mesh.normals,
-        indices: mesh.indices,
-      };
-      return { id: `props-${color.slice(1)}`, geometry, color, transform: { translation: [0, 0, 0] } };
-    });
-}
-
-function waterNodes(scenery: Scenery): RendererSceneNode[] {
-  const metres = (units: number) => units / scenery.unitsPerMetre;
-  return scenery.water.map((water, index) => ({
-    id: `water-${index}`,
-    geometry: { kind: "cylinder", radius: 1, height: WATER_THICKNESS_METRES },
-    color: WATER_COLOR,
-    opacity: 0.82,
-    transform: {
-      translation: [metres(water.centerXz[0]), metres(water.surfaceY) - WATER_THICKNESS_METRES / 2, metres(water.centerXz[1])],
-      scale: [metres(water.radiiXz[0]), 1, metres(water.radiiXz[1])],
+export function buildSceneryScene(scenery: Scenery, style: EnvironmentStyle = ENVIRONMENT): SceneryScene {
+  const prefix = resourcePrefix(scenery);
+  const batcher = new SceneBatcher(prefix);
+  const { unitsPerMetre, terrain } = scenery;
+  const surfaceY = (x: number, z: number) => terrainSurfaceY(terrain, unitsPerMetre, x, z);
+  appendTerrain(batcher, scenery, style);
+  appendPatches(batcher, scenery, style);
+  appendRoads(batcher, scenery, style);
+  appendLakeBeds(batcher, scenery, style);
+  const plaza = biomeCentroid(scenery, "plaza") ?? [0, 0];
+  const metres = (prop: Prop): readonly [number, number] => [prop.position[0] / unitsPerMetre, prop.position[2] / unitsPerMetre];
+  const gatePosts = scenery.props.filter((prop) => prop.kind === "gate-post").map(metres);
+  const animated: AnimatedParts = { sails: [], flames: [], reeds: [] };
+  const context: ModelContext = {
+    batcher,
+    style,
+    unitsPerMetre,
+    surface: surfaceY,
+    doorTarget(prop) {
+      const [x, z] = metres(prop);
+      return HUB_KINDS.has(prop.kind) ? plaza : nearestRoadPoint(scenery, x, z) ?? plaza;
     },
-  }));
+    gatePartner(prop) {
+      const [x, z] = metres(prop);
+      let best: readonly [number, number] | null = null;
+      let bestDistance = 7;
+      for (const other of gatePosts) {
+        const distance = Math.hypot(other[0] - x, other[1] - z);
+        if (distance > 0.01 && distance < bestDistance) {
+          best = other;
+          bestDistance = distance;
+        }
+      }
+      return best;
+    },
+    animated,
+  };
+  const { byKind } = appendPropModels(context, scenery.props);
+  const batches = batcher.batches();
+  return {
+    batches,
+    water: waterNodes(scenery, style, prefix),
+    animated,
+    stats: {
+      staticNodes: batches.length,
+      staticVertices: batches.reduce((sum, batch) => sum + batch.node.geometry.positions.length, 0),
+      staticTriangles: batches.reduce((sum, batch) => sum + batch.node.geometry.indices.length / 3, 0),
+      props: byKind,
+    },
+    surfaceY,
+  };
 }
 
-export function buildSceneryNodes(scenery: Scenery): RendererSceneNode[] {
-  return [...terrainNodes(scenery), ...propNodes(scenery), ...waterNodes(scenery)];
+type Quaternion = [number, number, number, number];
+
+function yawQuaternion(yaw: number): Quaternion {
+  return [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)];
 }
+
+/** Rotation about Y by `yaw`, then about the (turned) Z axis by `roll`. */
+export function yawRollQuaternion(yaw: number, roll: number): Quaternion {
+  const sy = Math.sin(yaw / 2);
+  const wy = Math.cos(yaw / 2);
+  const sz = Math.sin(roll / 2);
+  const wz = Math.cos(roll / 2);
+  return [sy * sz, sy * wz, wy * sz, wy * wz];
+}
+
+type AnimatedNode = Omit<RendererSceneNode, "transform" | "modelMatrix">;
+
+function meshNode(mesh: AnimatedMesh, prefix: string): AnimatedNode {
+  return {
+    id: mesh.id,
+    geometry: { kind: "mesh", resourceKey: `${prefix}:${mesh.id}`, positions: mesh.positions, normals: mesh.normals, indices: mesh.indices },
+    color: mesh.color,
+  };
+}
+
+/** Cosmetic animation input; without motion every part holds its rest pose. */
+export type SceneryMotion = { seconds: number; animate: boolean };
+
+/** Per-frame renderer nodes: static batches (far detail hidden), water and animated parts. */
+export class SceneryFrame {
+  readonly #scene: SceneryScene;
+  readonly #visible: RendererSceneNode[];
+  readonly #hidden: RendererSceneNode[];
+  readonly #animated: AnimatedNode[][];
+
+  constructor(scene: SceneryScene, prefix: string) {
+    this.#scene = scene;
+    this.#visible = scene.batches.map((batch) => batch.node);
+    this.#hidden = scene.batches.map((batch) => ({ ...batch.node, visible: false }));
+    const { sails, flames, reeds } = scene.animated;
+    this.#animated = [...sails, ...flames, ...reeds].map((part) => part.mesh.map((mesh) => meshNode(mesh, prefix)));
+  }
+
+  nodes(eye: Vec3, motion: SceneryMotion): { nodes: RendererSceneNode[]; visibleBatches: number } {
+    const nodes: RendererSceneNode[] = [];
+    let visibleBatches = 0;
+    this.#scene.batches.forEach((batch, index) => {
+      const visible = batchVisible(batch, eye[0], eye[2]);
+      visibleBatches += visible ? 1 : 0;
+      nodes.push(visible ? this.#visible[index]! : this.#hidden[index]!);
+    });
+    nodes.push(...this.#scene.water);
+    const t = motion.animate ? motion.seconds : 0;
+    const { sails, flames, reeds } = this.#scene.animated;
+    let part = 0;
+    const partNodes = () => this.#animated[part++] ?? [];
+    for (const sail of sails) {
+      const rotationQuaternion = yawRollQuaternion(sail.axisYaw, t * 0.45);
+      for (const node of partNodes()) {
+        nodes.push({ ...node, transform: { translation: [...sail.hub], rotationQuaternion } });
+      }
+    }
+    for (const flame of flames) {
+      const flicker: [number, number, number] = motion.animate
+        ? [1 + 0.1 * Math.sin(t * 9.1 + flame.seed), 1 + 0.18 * Math.sin(t * 7.3 + flame.seed * 2) * Math.sin(t * 3.1), 1 + 0.1 * Math.cos(t * 8.3)]
+        : [1, 1, 1];
+      for (const node of partNodes()) {
+        nodes.push({ ...node, transform: { translation: [...flame.base], scale: flicker, rotationQuaternion: yawQuaternion(t * 0.7) } });
+      }
+    }
+    for (const reed of reeds) {
+      const kx = motion.animate ? 0.045 * Math.sin(t * 1.1 + reed.phase) : 0;
+      const kz = motion.animate ? 0.035 * Math.sin(t * 0.83 + reed.phase * 1.7) : 0;
+      // Column-major shear about the ground: x += kx (y - ground), z += kz (y - ground).
+      const modelMatrix: Matrix4Values = [1, 0, 0, 0, kx, 1, kz, 0, 0, 0, 1, 0, -kx * reed.groundY, 0, -kz * reed.groundY, 1];
+      for (const node of partNodes()) {
+        nodes.push({ ...node, modelMatrix });
+      }
+    }
+    return { nodes, visibleBatches };
+  }
+}
+
+export { resourcePrefix as sceneryResourcePrefix };

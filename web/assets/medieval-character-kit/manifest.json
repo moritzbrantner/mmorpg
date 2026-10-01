@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "medieval-character-kit",
+  "recipeVersion": "1",
+  "coordinateSystem": "right-handed-y-up",
+  "unit": "millimeter",
+  "consumerScaleToMeters": "0.001",
+  "assets": [
+    {
+      "id": "medieval.archer",
+      "fileName": "archer.obj",
+      "label": "Archer",
+      "mediaType": "model/obj",
+      "sha256": "ea0d8f199050ae3b64aa628d290c5d46561831f07e7ca6db0186616acdbb133d",
+      "byteLength": 8440,
+      "vertexCount": 178,
+      "triangleCount": 320,
+      "bounds": {
+        "min": [
+          "-370",
+          "0",
+          "-340"
+        ],
+        "max": [
+          "568",
+          "1760",
+          "180"
+        ]
+      },
+      "parts": [
+        "left-leg",
+        "right-leg",
+        "torso",
+        "head",
+        "left-arm",
+        "right-arm",
+        "bow-stave",
+        "bow-string",
+        "quiver"
+      ]
+    }
+  ]
+}

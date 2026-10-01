@@ -1,6 +1,7 @@
 import type { WorldCommand } from "../../src/command-wire";
 import type { EntityState, ZoneSnapshot } from "../../src/replication";
 import type { WorldSource } from "../../src/world/world-source";
+import { playerEntity, testSnapshot } from "./snapshots";
 
 /** An in-memory world that honours the `WorldSource` contract without any rules. */
 export class FakeWorldSource implements WorldSource {
@@ -49,9 +50,9 @@ export class FakeWorldSource implements WorldSource {
   #publish(): void {
     const player = this.#player;
     if (player === null) return;
-    this.#latest = {
+    this.#latest = testSnapshot({
       zoneId: 1, tick: this.#tick, contentRevision: 1n, acknowledgedSequence: 0, viewerId: player,
-      entities: [{ kind: "player", entityId: player, position: [0, 90, 0], velocity: [0, 0, 0], facing: 0 }],
-    };
+      entities: [playerEntity(player, [0, 90, 0])],
+    });
   }
 }

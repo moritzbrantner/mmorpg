@@ -12,12 +12,15 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
 - [x] Browser demo runs the shared simulation as a local WASM zone host.
 - Replace placeholder characters with provenance-backed humanoid assets and start consuming the shared environment-asset pipeline ([#39](https://github.com/moritzbrantner/mmorpg/issues/39); upstream [asset-tooling#104](https://github.com/moritzbrantner/asset-tooling/issues/104), [#105](https://github.com/moritzbrantner/asset-tooling/issues/105), [#106](https://github.com/moritzbrantner/asset-tooling/issues/106)).
 - Adopt shared `input-bindings` and `settings` foundations for gameplay controls, binding UI and precise player/device preferences ([#41](https://github.com/moritzbrantner/mmorpg/issues/41); upstream [input-bindings#53](https://github.com/moritzbrantner/input-bindings/issues/53), [settings#20](https://github.com/moritzbrantner/settings/issues/20)).
-- Units, combat and creature AI.
+- [x] Units, combat and creature AI: core, protocol and minimal presentation (step 7a).
+- Combat presentation in the browser: target frame, nameplates, combat text (step 7b).
 - Classes and abilities.
 - Progression, loot, inventory, equipment and vendors.
 - Quests and the Redbrand Hollow chain.
 - Starter-zone workload evidence.
 - World presentation: relief, vegetation, water, sky, animated models, effects.
+  - [x] Part A (browser): biome terrain and far ranges, procedural props and vegetation in static batches, lake, CSS sky, animated humanoids with class gear, camera polish, minimap, F3 statistics.
+  - Part B: creature and NPC models, spell effects, selection circles, and fog, instancing, vertex colours and lighting once 3d-lab #82 and #84 are pinned.
 - Native client parity.
 - Browser online mode against a local zone host.
 - Durable character record for demo saves.

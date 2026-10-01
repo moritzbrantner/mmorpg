@@ -275,13 +275,150 @@ button { font: inherit; }
 .topbar {
   top: 1rem;
   left: 1rem;
-  right: 1rem;
-  padding: .9rem 1rem;
+  padding: .45rem .5rem .45rem .9rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  border-radius: .85rem;
+  gap: 1rem;
+  border-radius: .75rem;
 }
+
+.topbar .eyebrow { margin: 0; }
+
+/* The sky behind the transparent world canvas; custom properties come from the sky layer. */
+.sky {
+  --sky-zenith: #3f78c4;
+  --sky-upper: #78a9dd;
+  --sky-horizon: #cfe0ea;
+  --sky-ground: #b8c9c8;
+  --horizon: 45%;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(
+    to bottom,
+    var(--sky-zenith) 0%,
+    var(--sky-upper) calc(var(--horizon) * .62),
+    var(--sky-horizon) calc(var(--horizon) - .5%),
+    var(--sky-ground) calc(var(--horizon) + 1.5%),
+    var(--sky-ground) 100%
+  );
+}
+
+.sky-clouds {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--horizon) - 48%);
+  height: 42%;
+  opacity: .75;
+  background-image:
+    radial-gradient(ellipse 160px 34px at 12% 62%, rgb(255 255 255 / 55%), transparent 70%),
+    radial-gradient(ellipse 120px 26px at 18% 55%, rgb(255 255 255 / 45%), transparent 70%),
+    radial-gradient(ellipse 220px 40px at 47% 75%, rgb(255 255 255 / 45%), transparent 70%),
+    radial-gradient(ellipse 140px 30px at 71% 48%, rgb(255 255 255 / 50%), transparent 70%),
+    radial-gradient(ellipse 190px 36px at 88% 70%, rgb(255 255 255 / 40%), transparent 70%);
+  background-size: 1400px 100%;
+  background-repeat: repeat-x;
+  animation: cloud-drift 480s linear infinite;
+}
+
+@keyframes cloud-drift {
+  from { background-position-x: 0; }
+  to { background-position-x: 1400px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sky-clouds { animation: none; }
+}
+
+#world[data-drag="orbit"] { cursor: grabbing; }
+#world[data-drag="turn"] { cursor: none; }
+
+.minimap {
+  position: fixed;
+  z-index: 2;
+  top: 1rem;
+  right: 1.1rem;
+  width: 11rem;
+  display: grid;
+  justify-items: center;
+  gap: .35rem;
+}
+
+.minimap-zone {
+  max-width: 100%;
+  margin: 0;
+  padding: .22rem .75rem;
+  overflow: hidden;
+  border: 1px solid rgb(218 195 129 / 35%);
+  border-radius: 999px;
+  background: rgb(9 14 20 / 78%);
+  color: #f1e3b3;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: .82rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+
+.minimap-frame {
+  position: relative;
+  width: 11rem;
+  height: 11rem;
+  border-radius: 50%;
+  border: 3px solid #b39658;
+  background: #1c2620;
+  box-shadow: 0 0 0 2px rgb(38 28 14 / 85%), 0 10px 26px rgb(0 0 0 / 35%), inset 0 0 18px rgb(0 0 0 / 55%);
+}
+
+.minimap-frame canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 50%;
+}
+
+.minimap-button {
+  position: absolute;
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border: 1px solid #b39658;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #4d4636, #1f1b14);
+  color: #f1e3b3;
+  font-size: .9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.minimap-button:disabled { opacity: .45; cursor: default; }
+.minimap-button:focus-visible { outline: 2px solid #f5de97; outline-offset: 2px; }
+.minimap-north { top: -.2rem; left: -.2rem; font-family: Georgia, serif; font-size: .72rem; font-weight: 700; }
+.minimap-north[aria-pressed="true"] { background: radial-gradient(circle at 35% 30%, #8a7440, #3b301b); }
+.minimap-zoom-in { right: -.35rem; bottom: 1.35rem; }
+.minimap-zoom-out { right: .9rem; bottom: -.35rem; }
+
+.debug-overlay {
+  position: fixed;
+  z-index: 3;
+  top: 4.8rem;
+  left: 1rem;
+  min-width: 15rem;
+  padding: .6rem .75rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: .5rem;
+  background: rgb(6 10 14 / 82%);
+  color: #d8e6dc;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  pointer-events: none;
+}
+
+.debug-overlay dl { display: grid; grid-template-columns: auto auto; gap: .1rem .9rem; margin: 0; }
+.debug-overlay dt { color: #8fb39a; }
+.debug-overlay dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 
 .eyebrow {
   margin: 0 0 .2rem;
@@ -356,7 +493,10 @@ kbd {
   .equipment-item { padding: .42rem; }
   .equipment-item strong { font-size: .68rem; }
   .character-stage-fallback { left: 50%; top: 43%; transform: translate(-50%, -50%) scale(.72); }
-  .topbar { top: .65rem; left: .65rem; right: .65rem; }
+  .topbar { top: .65rem; left: .65rem; }
+  .topbar .eyebrow { display: none; }
+  .minimap { top: .65rem; right: .65rem; width: 8.5rem; }
+  .minimap-frame { width: 8.5rem; height: 8.5rem; }
   .hud { left: .65rem; bottom: .65rem; max-width: calc(100vw - 1.3rem); }
 }
 

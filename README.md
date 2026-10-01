@@ -60,8 +60,9 @@ The workspace provides:
 - a deterministic zone simulation that uses the pinned `physics-engine`;
 - validated immutable collision content, gravity, and velocity-preserving physical recovery;
 - stale-command rejection and bounded per-zone player capacity;
-- canonical full-zone snapshots for replay/recovery;
+- canonical full-zone snapshots for replay/recovery that reference their immutable content by revision and fingerprint and fail closed on any content mismatch;
 - player-scoped interest snapshots with a spatial index for network publication;
+- [actual-zone physics adoption workloads](docs/PHYSICS_WORKLOADS.md), including unchanged canonical/projection bytes across the engine update;
 - [deterministic visibility workloads](docs/INTEREST_WORKLOADS.md) with wire parity and snapshot-size evidence;
 - an explicit `game-server::GameSimulation` adapter;
 - deterministic mapping from `ZoneId` to `game-server::MatchId`;
@@ -73,18 +74,20 @@ The workspace provides:
 - a deliberately single-player GitHub Pages tech demo that runs the shared zone simulation as a local WASM zone host and renders its player-scoped projections with the pinned `3d-lab` renderer;
 - local browser-demo character creation with Warden, Ranger, and Arcanist starter classes, male/female presentation variants, stable per-character local identities, and per-character appearance saves;
 - facing-relative movement (run, strafe, backpedal) and grounded jumps driven by a const-generated integer trigonometry table;
-- the Greyhaven Vale starter-zone content revision (hub, woods, farm, lake and hollow colliders, a validated spawn plaza, open road corridors and named areas), hosted by the zone host and the browser's WASM local host, and rendered by both clients from presentation-only `mmorpg-scenery` (props, relief terrain, water);
-- strict Rust/browser snapshot v4 and command v2 compatibility tests (compact priority-ordered records, facing, viewer identity, golden command bytes) and bounded client interpolation;
-- player projections capped by deterministic relevance priority and a measured single-datagram byte budget;
+- units, targeting, auto-attack with an integer hit table, death, corpses, respawn, release spirit, out-of-combat regeneration and tapping, driven by queued intents whose refusals are feedback events, never session errors;
+- deterministic creature AI (wander, aggro through the interest index, family assist, chase, leash and evade) with a canonical zone RNG, and recovery continuation proven tick by tick mid-chase, mid-swing, after a death and during an evade;
+- the Greyhaven Vale starter-zone content revision (hub, woods, farm, lake and hollow colliders, a validated spawn plaza, open road corridors, named areas, 59 creature spawns of seven templates, nine NPCs and a graveyard), hosted by the zone host and the browser's WASM local host, and rendered by both clients from presentation-only `mmorpg-scenery` (props, relief terrain, water) plus placeholder creature and NPC bodies;
+- strict Rust/browser snapshot v5 and command v2 compatibility tests (self, target and event sections, compact priority-ordered unit records, facing, viewer identity, golden command bytes) and bounded client interpolation;
+- player projections capped by deterministic relevance priority and packed by section priority into a measured single-datagram byte budget;
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
-- [headless deterministic scenario runners](docs/SCENARIOS.md) for scripted bots against the real zone host path and for control-plane lease/handoff sequences with invariant checks after every step;
+- [headless deterministic scenario runners](docs/SCENARIOS.md) for scripted bots against the real zone host path, including a Wolfrun Woods hunt that fights, dies and releases its spirit, and for control-plane lease/handoff sequences with invariant checks after every step;
 - architecture and roadmap documents that keep future persistence and orchestration choices replaceable.
 
 The control-plane implementation in this slice is a **reference model**, not yet a production distributed consensus system. Host registration is placement eligibility only: a missed heartbeat blocks new assignment to that host but does not revoke an already-issued zone lease. Existing lease deadlines and fencing epochs remain the authority boundary. The model exists to make ownership, liveness-sensitive placement, epoch fencing and handoff idempotence executable before choosing storage or orchestration infrastructure.
 
 ## Native multiplayer client
 
-The native client uses **wgpu 30.0.1 + winit 0.30.13**, shared Rust world geometry, and the existing WebTransport protocol. W/S run and backpedal, A/D or Q/E strafe relative to a third-person orbit camera (drag to orbit, wheel to zoom), and Space jumps; the client only sends intent and the GPU renders interpolated player-visible snapshots with each character's facing. Multiple client processes can join the same zone.
+The native client uses **wgpu 30.0.1 + winit 0.30.13**, shared Rust world geometry, and the existing WebTransport protocol. W/S run and backpedal, A/D or Q/E strafe relative to a third-person orbit camera (drag to orbit, wheel to zoom), Space jumps, Tab selects the nearest creature, F toggles auto-attack and R releases a dead spirit; the client only sends intent and the GPU renders interpolated player-visible snapshots of players, creatures and NPCs with their facing. The window title shows health and target. Multiple client processes can join the same zone.
 
 ```sh
 python3 scripts/smoke-native.py --window
@@ -102,17 +105,19 @@ Start the complete local native development environment with:
 
 ## Browser tech demo
 
-`web/` is the GitHub Pages client. It runs the shared Rust zone simulation in the page as a **local single-player zone host** ([ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md)): the `mmorpg-wasm` crate compiles `mmorpg-core` and `mmorpg-protocol` to WebAssembly and builds the same `ZoneSimulation` and content revision as `mmorpg-zone-host` (zone 1, Greyhaven Vale). There is one implementation of the movement rules; the browser owns none.
+`web/` is the GitHub Pages client. It runs the shared Rust zone simulation in the page as a **local single-player zone host** ([ADR 0002](docs/adr/0002-browser-embeds-zone-simulation.md)): the `mmorpg-wasm` crate compiles `mmorpg-core` and `mmorpg-protocol` to WebAssembly and builds the same `ZoneSimulation` and content revision as `mmorpg-zone-host` (zone 1, Greyhaven Vale). There is one implementation of the movement and combat rules; the browser owns none.
 
 - **Enter World** joins the local zone and spawns the selected character; **Characters** (or Escape) leaves it and removes the unit. The next entry is a new player at the spawn. A projection the strict decoder rejects fails closed: entry is refused, or the page leaves the world, and the reason appears under **Enter World**.
-- W/S run and backpedal, A/D (or Q/E) strafe relative to the orbit camera, Space jumps; drag the world to orbit and use the wheel to zoom. The page encodes command wire v2 with strictly increasing sequences and resends the current intent like the native client.
+- W/S run and backpedal, A/D (or Q/E) strafe relative to the orbit camera, Space jumps. A left drag looks around without turning the character, a right drag turns the character with the view (mouse-look), and the wheel zooms smoothly; the camera stays above the ground but collides with nothing else. F3 toggles frame rate, node counts and the renderer's work observations. The page encodes command wire v2 with strictly increasing sequences and resends the current intent like the native client.
 - A `WorldSource` seam (`web/src/world/`) advances fixed 30 Hz ticks from a bounded accumulator and hands presentation only encoded player-scoped projections, decoded by the same `web/src/replication.ts` an online source would use. Canonical state never reaches rendering. An online WebTransport source (#29) plugs into the same seam.
-- The world is drawn from a versioned `scenery()` export of the WASM module, which maps the same `mmorpg-scenery` Greyhaven Vale the native client draws: relief terrain in biome colours, one box per prop standing on the relief (structures are their exact core colliders) and the lake. It is a blockout, not final art. Units stand at their physics position plus the shared relief, and the HUD names the current core area.
+- The world is drawn from a versioned `scenery()` export of the WASM module (format v2), which maps the same `mmorpg-scenery` Greyhaven Vale the native client draws. The browser builds it as a stylised low-poly valley: relief terrain in biome tones with smooth roads, plaza and shore, snow-capped distant ranges hazed toward the sky, procedural models for every prop (keep, timber-framed houses, palisade, windmill, camp, cliffs, oak, pine and birch trees, grass, flowers, reeds …) merged into a few hundred static batches, a translucent lake, and a CSS sky behind a transparent canvas. Structures' walls are their exact core colliders. Players are animated humanoids with class gear; other players share a neutral look because projections carry no appearance yet. A circular minimap shows the subzone name, roads, water, buildings and units.
+- It is procedural presentation, not authored art: there are no textures, vertex colours, fog, dynamic lighting or day/night lighting yet, and haze and glows are baked into colours until the pinned renderer gains them (3d-lab #82, #84). Creature and NPC models and combat effects are not in this build yet. Units stand at their physics position plus the shared relief.
+- Creatures and NPCs are placeholder bodies coloured by disposition (hostile, neutral, friendly), which their minimap dots share; corpses lie flat. Tab selects the nearest living creature, F or a right click (a right drag still turns) toggles auto-attack and R releases a dead spirit. The HUD text shows health, target and the latest combat feedback, with names from the module's versioned `catalog()` export. Target frames, nameplates and combat text follow in step 7b of #22.
 - It has no fencing, leases, handoff, shared world or persistence authority. World position and progress are **not saved**: a durable character record is issue #30. Character roster and appearance stay in browser storage.
 
 Building the page requires the Rust toolchain from `rust-toolchain.toml` (with the `wasm32-unknown-unknown` target) and the `wasm-bindgen` CLI at the crate's exact version: `cargo install wasm-bindgen-cli --version =0.2.129 --locked`. `bun test` and `bun run build` compile the module first; the generated bindings are ignored build output.
 
-The standalone host, the native client and the browser's WASM local host share the Rust Greyhaven Vale content (`mmorpg_core::greyhaven_vale`). Snapshot schema/wire version 4 carries compact, priority-ordered entity records within a one-datagram byte budget, and command wire version 2 carries `Move`/`Jump`; v3 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
+The standalone host, the native client and the browser's WASM local host share the Rust Greyhaven Vale content (`mmorpg_core::greyhaven_vale`). Snapshot schema/wire version 5 carries the viewer's own state, its target's target, bounded feedback events and compact, priority-ordered unit records within a one-datagram byte budget, and command wire version 2 carries `Move`, `Jump`, `SelectTarget`, `StartAttack`, `StopAttack` and `ReleaseSpirit`; v4 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
 
 ## Scaling model
 
@@ -133,7 +138,7 @@ Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative du
 
 ## Pinned foundations
 
-- `physics-engine`: `1b98f84d409796b2a15b84f3fa4ed7f03a11f8bd`
+- `physics-engine`: `0baf3411419fc250273caec24d64654cb30c28ec`
 - `game-server`: `a3851dab9c1fb25dd31b465fb554ca475769caab`
 - `3d-lab` (`three-d-core`, `three-d-camera` and the browser `@moritzbrantner/three-d-renderer`, kept on one commit): `f484db8a3d2a7a555fa463eddf9c28790b240ce0`
 - reusable validation workflow: `45042e56be120b438096e774027637cac0280075`
@@ -161,7 +166,7 @@ bun test
 bun run build
 ```
 
-Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v4.hex` and `fixtures/protocol/commands-v2.hex`.
+Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v5.hex` and `fixtures/protocol/commands-v2.hex`.
 
 ## Run a standalone zone host
 

@@ -6,14 +6,15 @@ use std::collections::BTreeMap;
 use mmorpg_core::greyhaven_vale::{self, PLAYABLE_BOUNDS, SPAWN_GRID, SPAWN_PLAZA, ids};
 use mmorpg_core::{Area, MAX_PLAYERS_PER_ZONE, StaticCollider, greyhaven_vale_definition};
 use mmorpg_scenery::{
-    Biome, LAKE_BED_COLOR, MOUNTAIN_PEAK_UNITS, PLAZA_COLOR, PropKind, ROAD_COLOR, Rect,
-    SNOW_COLOR, Scenery, TERRAIN_EXTENT_UNITS, WALKABLE_RELIEF_UNITS, greyhaven_vale_scenery,
-    visual_kind,
+    Biome, FAR_PEAK_UNITS, FAR_TERRAIN_EXTENT_UNITS, LAKE_BED_COLOR, MOUNTAIN_PEAK_UNITS,
+    PLAZA_COLOR, PropKind, ROAD_COLOR, Rect, SNOW_COLOR, SNOW_LINE_UNITS, Scenery,
+    TERRAIN_EXTENT_UNITS, WALKABLE_RELIEF_UNITS, greyhaven_vale_scenery, visual_kind,
 };
 
 /// Recorded from this revision; any change to content, placement or relief
-/// must update it deliberately.
-const STABLE_HASH: u64 = 0x678c_e308_d7a7_50bd;
+/// must update it deliberately. Revision 3 added creatures and NPCs only; the
+/// derived scenery is unchanged apart from the revision it carries.
+const STABLE_HASH: u64 = 0x8495_49d6_874e_b332;
 
 fn is_terrain(collider: &StaticCollider) -> bool {
     collider.id == ids::GROUND || ids::BOUNDARY_WALLS.contains(&collider.id)
@@ -243,7 +244,7 @@ fn terrain_grid_samples_relief_and_biomes() {
         let row = usize::try_from((z + TERRAIN_EXTENT_UNITS) / 200).unwrap();
         grid.vertex(column, row).unwrap().1
     };
-    // Road dirt, the plaza, the lake bed, meadows and snow on the highest vertex.
+    // Road dirt, the plaza, the lake bed, meadows, then rock and far snow on the peaks.
     assert_eq!(color(0, -3_000), ROAD_COLOR);
     assert_eq!(color(0, 8_000), ROAD_COLOR);
     assert_eq!(color(1_000, 1_600), PLAZA_COLOR);
@@ -259,10 +260,17 @@ fn terrain_grid_samples_relief_and_biomes() {
             "green: {meadow:?}"
         );
     }
+    // The near mountains stay below the snow line; the distant ranges carry it.
     let highest = (0..grid.heights.len())
         .max_by_key(|&index| grid.heights[index])
         .unwrap();
-    assert_eq!(grid.colors[highest], SNOW_COLOR);
+    assert!(grid.heights[highest] < SNOW_LINE_UNITS);
+    assert_eq!(grid.biomes[highest], Biome::Rock);
+    let far = scenery.far_terrain_grid(2_000);
+    let highest = (0..far.heights.len())
+        .max_by_key(|&index| far.heights[index])
+        .unwrap();
+    assert_eq!(far.colors[highest], SNOW_COLOR);
 }
 
 #[test]
@@ -314,10 +322,12 @@ fn terrain_biomes_name_every_vertex_colour() {
             assert!(offsets.iter().all(|offset| offset.abs() <= 8), "{biome:?}");
         }
     }
+    let far = scenery.far_terrain_grid(2_000);
     let beyond: Vec<_> = grid
         .biomes
         .iter()
         .zip(&grid.heights)
+        .chain(far.biomes.iter().zip(&far.heights))
         .filter(|(biome, _)| {
             matches!(
                 biome,
@@ -325,11 +335,13 @@ fn terrain_biomes_name_every_vertex_colour() {
             )
         })
         .collect();
-    assert!(beyond.iter().any(|(biome, _)| **biome == Biome::Snow));
+    for band in [Biome::Foothills, Biome::Highland, Biome::Rock, Biome::Snow] {
+        assert!(beyond.iter().any(|(biome, _)| **biome == band), "{band:?}");
+    }
     assert!(
         beyond
             .iter()
-            .all(|(biome, height)| **biome != Biome::Snow || **height >= 2_800)
+            .all(|(biome, height)| (**biome == Biome::Snow) == (**height >= SNOW_LINE_UNITS))
     );
 }
 
@@ -383,4 +395,65 @@ fn prop_counts_stay_within_their_budgets() {
     assert_eq!(count(PropKind::Keep), 1);
     assert_eq!(count(PropKind::House), 4);
     assert!(scenery.props.len() <= 6_000, "{}", scenery.props.len());
+}
+
+#[test]
+fn prop_kind_names_are_unique_and_cover_every_placed_kind() {
+    let mut names: Vec<_> = PropKind::ALL.iter().map(|kind| kind.name()).collect();
+    assert!(names.iter().all(|name| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+    }));
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), PropKind::ALL.len(), "names are unique");
+    let scenery = greyhaven_vale_scenery();
+    for prop in &scenery.props {
+        assert!(PropKind::ALL.contains(&prop.kind), "{:?}", prop.kind);
+    }
+}
+
+#[test]
+fn the_far_ring_continues_the_same_relief_into_distant_ranges() {
+    let scenery = greyhaven_vale_scenery();
+    let far = scenery.far_terrain_grid(2_000);
+    assert_eq!((far.columns, far.rows), (61, 61));
+    assert_eq!(
+        far.origin,
+        [-FAR_TERRAIN_EXTENT_UNITS, -FAR_TERRAIN_EXTENT_UNITS]
+    );
+    let near = scenery.terrain_grid(2_000);
+    let offset =
+        usize::try_from((FAR_TERRAIN_EXTENT_UNITS - TERRAIN_EXTENT_UNITS) / 2_000).unwrap();
+    let mut peak = i32::MIN;
+    for row in 0..far.rows {
+        for column in 0..far.columns {
+            let (vertex, color) = far.vertex(column, row).unwrap();
+            assert_eq!(vertex[1], scenery.height_at(vertex[0], vertex[2]));
+            assert!((-WALKABLE_RELIEF_UNITS..=FAR_PEAK_UNITS).contains(&vertex[1]));
+            if let (Some(inner_column), Some(inner_row)) =
+                (column.checked_sub(offset), row.checked_sub(offset))
+                && let Some(inner) = near.vertex(inner_column, inner_row)
+            {
+                assert_eq!(
+                    (vertex, color),
+                    inner,
+                    "the far ring samples the same relief"
+                );
+            }
+            peak = peak.max(vertex[1]);
+        }
+    }
+    assert!(
+        peak > 8_000,
+        "distant ranges tower over the near mountains: {peak}"
+    );
+    // No cliff at the terrain grid's edge: the ranges start from nothing.
+    for z in (-TERRAIN_EXTENT_UNITS..=TERRAIN_EXTENT_UNITS).step_by(500) {
+        let edge = scenery.height_at(TERRAIN_EXTENT_UNITS, z);
+        let beyond = scenery.height_at(TERRAIN_EXTENT_UNITS + 100, z);
+        assert!((beyond - edge).abs() <= 200, "z {z}: {edge} -> {beyond}");
+    }
 }
