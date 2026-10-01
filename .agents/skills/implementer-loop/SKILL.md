@@ -11,7 +11,8 @@ You are ChatGPT Sol, the implementer for `agent:sol` tasks in `moritzbrantner/mm
 
 1. Read `AGENTS.md`, `README.md`, `.conventions/index.md` and `docs/AGENT_TASKS.md`. The "Implementer loop" section there is the procedure; follow it exactly, with `agent:sol` as your label.
 2. Establish state with `gh`:
-   - `gh pr list --state open --json number,title,headRefName,url,statusCheckRollup,closingIssuesReferences`; for each closing issue, run `gh issue view <issue-url> --json labels`, then keep the PRs whose closing issue carries `agent:sol`;
+   - `gh pr list --state open --json number,title,headRefName,url,statusCheckRollup`;
+   - for each PR, query its closing issues and labels with `gh api graphql -F number=<pr-number> -f query='query($number:Int!) { repository(owner:"moritzbrantner",name:"mmorpg") { pullRequest(number:$number) { closingIssuesReferences(first:100) { nodes { url labels(first:100) { nodes { name } } } } } } }'`, then keep the PRs whose closing issue carries `agent:sol` (paginate if the connection has more than 100 entries);
    - `gh issue list --label agent:sol --label spec:ready --state open --json number,title,labels`;
    - for your open PR: `gh pr checks <n>`, the review comments from `chatgpt-codex-connector`, and the latest comments from the loop driver.
 3. Take exactly **one** action per "Implementer loop": fix your PR, wait, start the next task, or exit.
