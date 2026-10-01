@@ -30,6 +30,9 @@ test("a claim is one fenced command, never a local reward or repeated dispatch",
   expect(state.claimIntent()).toBeNull();
   expect(queued(projection())).toEqual({ kind: "loot", creatureId: 108, diedAt: 10n });
   expect(queued(projection())).toBeNull();
+  expect(state.canClaim).toBe(false);
+  expect(state.claimIntent()).toBeNull();
+  expect(state.feedback).toContain("Waiting");
   expect(state.sheet).toEqual(sheet());
   expect(state.copper).toBe(0);
   state.update({ ...projection(13n), acknowledgedSequence: 6 });

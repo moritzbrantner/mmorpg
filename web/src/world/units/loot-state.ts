@@ -103,7 +103,10 @@ export class LootState {
     this.#pending = pending;
     this.#feedback = "Claim sent. Waiting for the zone.";
     return (current) => {
-      if (this.#pending !== pending || pending.sent || identity(current) !== joined
+      if (pending.sent) {
+        return null;
+      }
+      if (this.#pending !== pending || identity(current) !== joined
         || current.tick < this.#tick || current.tick < pending.tick || !sameClaim(eligibleSheet(current), pending.sheet)) {
         if (this.#pending === pending) {
           this.#pending = null;
