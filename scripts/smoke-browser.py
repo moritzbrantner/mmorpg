@@ -109,6 +109,9 @@ class BrowserAcceptance(unittest.TestCase):
         self.enter_button().click()
         expect(self.page.locator("#character-select")).to_be_hidden()
         expect(self.page.locator(".hud")).to_be_visible()
+        expect(self.page.get_by_role("progressbar", name="Level 1 · 0 / 100 XP")).to_be_visible()
+        self.assertEqual(self.page.locator("#experience-bar").evaluate("bar => [bar.max, bar.value]"), [100, 0])
+        expect(self.page.locator("#progression-feedback")).to_have_text("")
         self.page.locator("#world").focus()
         self.frames(4)
 

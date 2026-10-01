@@ -450,6 +450,14 @@ button { font: inherit; }
   color: #cbd6cd;
 }
 
+#experience-bar {
+  display: block;
+  width: 100%;
+  height: .65rem;
+  margin-top: .3rem;
+  accent-color: #a388dc;
+}
+
 .hud p + p {
   margin-top: .35rem;
   color: #f2f6f2;

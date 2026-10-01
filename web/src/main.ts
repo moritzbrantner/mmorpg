@@ -180,6 +180,9 @@ const worldView = new WorldView(renderer, camera, {
   objective: requireElement<HTMLElement>("#objective"),
   unitStatus: requireElement<HTMLElement>("#unit-status"),
   combatFeedback: requireElement<HTMLElement>("#combat-feedback"),
+  experienceBar: requireElement<HTMLProgressElement>("#experience-bar"),
+  experienceStatus: requireElement<HTMLElement>("#experience-status"),
+  progressionFeedback: requireElement<HTMLElement>("#progression-feedback"),
 });
 // Debug-only hooks (camera viewpoints, stats) for screenshots; `?debug` enables them.
 if (new URLSearchParams(window.location.search).has("debug")) {
