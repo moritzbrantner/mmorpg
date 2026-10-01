@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use physics_engine::{Aabb, RigidBody, Vec3i, World, WorldConfig};
+use physics_engine::{Aabb, RigidBody, StepStats, Vec3i, World, WorldConfig};
 
 use crate::creature::CreatureState;
 use crate::entity::{WORLD_LIMIT_BODY_BASE, body_id};
@@ -135,6 +135,7 @@ pub struct ZoneSimulation {
     pub(crate) creatures: BTreeMap<CreatureId, CreatureState>,
     pub(crate) interest: InterestIndex,
     pub(crate) interest_work: InterestMaintenanceStats,
+    last_physics_step_stats: Option<StepStats>,
 }
 
 impl ZoneSimulation {
@@ -217,6 +218,7 @@ impl ZoneSimulation {
             creatures: BTreeMap::new(),
             interest,
             interest_work: InterestMaintenanceStats::default(),
+            last_physics_step_stats: None,
         })
     }
 
@@ -250,6 +252,14 @@ impl ZoneSimulation {
     #[must_use]
     pub const fn interest_maintenance_stats(&self) -> InterestMaintenanceStats {
         self.interest_work
+    }
+
+    /// Engine-owned diagnostics from the latest completed physics call.
+    /// Absent before stepping, after recovery, or when a tick attempt fails before
+    /// completing physics. Never part of canonical recovery or player projections.
+    #[must_use]
+    pub const fn last_physics_step_stats(&self) -> Option<StepStats> {
+        self.last_physics_step_stats
     }
 
     pub fn add_player(&mut self, player_id: PlayerId) -> Result<(), ZoneError> {
@@ -374,6 +384,7 @@ impl ZoneSimulation {
     /// Events of the previous tick are cleared first, so each player's queue
     /// holds exactly this tick's events until the next tick starts.
     pub fn advance_tick(&mut self) -> Result<(), ZoneError> {
+        self.last_physics_step_stats = None;
         let now = self
             .tick
             .checked_add(1)
@@ -384,7 +395,7 @@ impl ZoneSimulation {
         self.consume_intents()?;
         self.decide_creatures()?;
         self.drive_players()?;
-        self.world.step(1).map_err(physics_error)?;
+        self.last_physics_step_stats = Some(self.world.step(1).map_err(physics_error)?.stats);
         // A jump intent is consumed by the tick that evaluated it, grounded or not.
         for player in self.players.values_mut() {
             player.jump_pending = false;

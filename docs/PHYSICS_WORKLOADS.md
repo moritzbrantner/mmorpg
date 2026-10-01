@@ -39,3 +39,72 @@ Quiet and supported cases improve in this local comparison. Sparse and crowded c
 Upstream `docs/translational-maintenance.md` records physics-call phase/work/capacity evidence and its independent exhaustive rebuild oracle. Upstream work fences require zero staging, bounds, queries and map reconstruction on unchanged quiet ticks, and zero body-map reconstruction on active successful ticks. Vector capacity is not process RSS or allocator overhead; the consumer does not claim a measured memory reduction from this dependency update.
 
 Fingerprint: Rust 1.98.1, `x86_64-unknown-linux-gnu`, release profile, empty `RUSTFLAGS`, workload v1, three trials, identical inputs and horizons, committed dependency locks on each side; Linux, AMD Ryzen 7 5700X. Local workspace debug verification disables debug symbols/incremental caches to limit disposable disk use; timing comparisons use the same release configuration. Resolved conventions sourceRevision: `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
+
+## October 1 engine adoption
+
+Consumer baseline `676fab2632c209bdaffc9ac0cdce376acb32f484` pins
+`0baf3411419fc250273caec24d64654cb30c28ec`; this slice adopts
+`1d62f70e3588b80e51746ed7d05bb8bbd0bfbfdb`. The lock update also follows
+upstream's rust-kernels revision and SHA-256 dependency. MMORPG still uses the
+translational `World`. Upstream #252/#255/#256's parked/contact wake changes belong
+to other solver paths and do not establish MMORPG sleep/wake or f64 adoption.
+
+The existing workload now aggregates engine-owned `StepStats.work` through
+`ZoneSimulation::last_physics_step_stats()`. These latest-call diagnostics reset
+on construction/recovery and at the start of a tick attempt; they never enter
+canonical state or player projections. Work is accumulated immediately around
+primary-zone ticks, so a reconstruction cannot erase earlier measurements. The
+fixed cache metric is peak vector payload, not RSS or full-world memory.
+
+[Raw observations and trace SHA-256 evidence](physics-adoption-work-2026-10-01.json)
+cover nine trials per workload per pin, each completing 120 ticks. Both release
+binaries were prebuilt. Two alternating-order blocks plus a third block were run;
+the third candidate output and candidate trace capture were repeated after truncated
+files, as recorded in the fingerprint. All 24 complete canonical/projection binary
+traces match byte for byte. Across every trial, publication bytes, recovery checks,
+interest maintenance, query counts and staged-body counts match. No scenario or
+protocol golden was regenerated. Successful steps reconstruct zero body maps on
+both pins.
+
+Baseline fixed preparation is derived from each engine report's
+`(body_count - dynamic_bodies) * broad_phase_queries`: that implementation prepares
+every fixed body per actual query. This includes fixed NPCs, unlike counting only
+content colliders. Candidate preparations and reuse are direct upstream counters.
+Baseline capacity-growth/reuse counters are unavailable and are not invented.
+
+| Workload | Fixed preparations before | After | Reused | Before tick ms | After tick ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| quiet-128 | 6 | 6 | 0 | 1.360 | 1.402 |
+| quiet-512 | 6 | 6 | 0 | 7.669 | 7.358 |
+| sparse-512-k1 | 1,440 | 6 | 1,434 | 27.922 | 28.608 |
+| sparse-512-k8 | 1,440 | 6 | 1,434 | 27.767 | 26.912 |
+| supported-512 | 68,292 | 252 | 68,040 | 54.947 | 50.700 |
+| crowded-64 | 2,310 | 6 | 2,304 | 3.432 | 3.471 |
+| mutation-recovery-32 | 1,440 | 12 | 1,428 | 0.869 | 0.845 |
+| vale-units-16 | 111,186 | 261 | 110,925 | 18.077 | 17.723 |
+
+Values include bootstrap and measure 120 ticks; timings are advisory medians.
+Supported-512 avoids 99.63% of fixed preparations; Vale units avoid 99.77%.
+Mutation/recovery prepares 12 fixed bounds because the deliberate teleport creates
+a new world; the tick-60 shadow recovery is outside the measured primary world.
+Quiet calls already avoid preparation after bootstrap. All-N active staging,
+dynamic-bound preparation, sorting and game-owned scans remain. The candidate
+retains 28,224 bytes of fixed-cache payload for supported-512 and 29,232 for Vale
+units, including nine fixed NPCs. Warmed equal-capacity calls avoid staging and
+broad-phase growth; the focused consumer test verifies reuse plus cold-cache recovery
+with unchanged canonical continuation.
+
+Validation: workspace format, Clippy, all-feature tests and build; core/protocol/WASM
+wasm32 build; all bot and control-plane scenarios; native host/client GPU smoke;
+148 Bun tests, TypeScript/Vite production build and all nine real Chromium smoke
+journeys. Native smoke rendered 2,320 colors and resumed connection epoch 2.
+The first release WASM build emitted an empty object file; a rebuild and subsequent
+default build/tests passed without source or gate changes. Chromium 143.0.7499.4
+headless shell came from the official Chrome-for-Testing mirror because the
+Playwright CDN returned unavailable HTML. Native GPU uses Mesa software Vulkan.
+
+Fingerprint: Rust 1.98.1, x86_64-unknown-linux-gnu, release/default features and empty
+RUSTFLAGS, workload v1, committed locks; shared Linux AMD EPYC 9V74 workspace.
+Debug checks disable debug symbols/incremental caches. Installed conventions were
+retained unchanged; live central policy was inspected at `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
+This completes another semantics-preserving adoption slice, not MMORPG #46's solver migration.
