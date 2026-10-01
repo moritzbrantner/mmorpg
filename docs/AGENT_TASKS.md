@@ -7,7 +7,7 @@ How work reaches the coding agents. A task is one GitHub issue that one agent tu
 | Agent | Does |
 | --- | --- |
 | Claude Opus | Runs the loop (`/agent-loop`). Turns drafts into ready specs, writes new specs from `docs/STARTER_ZONE.md` and the roadmap, reviews PRs against their spec and merges them. Implements critical-path and cross-cutting core work itself (`agent:opus`). |
-| ChatGPT Sol | Implements `agent:sol` tasks via the Codex `implementer-loop` skill. Runs occasionally, separately from `/agent-loop`, and works through a backlog of up to three tasks that nothing else waits on. |
+| ChatGPT Sol | Implements narrow, technically deep `agent:sol` tasks via the Codex `implementer-loop` skill. The spec should settle architecture, authority, formats and scope so Sol can spend depth on correctness rather than redesigning adjacent systems. Runs occasionally, separately from `/agent-loop`, through a backlog of up to three tasks that nothing else waits on. |
 | Claude Sonnet | Implements `agent:sonnet` tasks: presentation, UI, docs, mechanical follow-ups. |
 | GitHub Actions | The full deterministic gate on every PR (`validate.yml`, `pages.yml`; Chromium only with the `browser-evidence` label). |
 | Codex review | Reviews each PR automatically when it is opened or marked ready; `@codex review` re-triggers it. |
@@ -49,7 +49,8 @@ An implementer never merges, never edits issue bodies, never writes specs and ne
 - One PR. Big enough to deliver a whole plan step (or its core half or its presentation half), small enough that one agent finishes it in one session.
 - Split only along the core/presentation seam: the presentation task starts after the core task merges.
 - At most one bump per format version (command, snapshot, canonical) per task.
-- Pick the implementer by the table above: critical-path authority/protocol work → `agent:opus`; independent core/server work that nothing waits on → `agent:sol`; presentation-only → `agent:sonnet`.
+- Pick the implementer by the table above: ambiguous, cross-cutting or critical-path authority/protocol work → `agent:opus`; narrow but technically deep work with settled decisions, strong deterministic acceptance and no downstream waiters → `agent:sol`; presentation/UI/docs and mechanical follow-ups → `agent:sonnet`.
+- For `agent:sol`, keep breadth narrow even when implementation depth is high: pin the important decisions, name explicit out-of-scope boundaries, and do not rely on the implementer to decompose or redesign neighboring systems.
 
 **Body:** use these sections in this order (the "Agent task" issue template has them):
 
