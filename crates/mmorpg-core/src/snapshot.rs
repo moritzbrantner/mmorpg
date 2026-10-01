@@ -637,18 +637,29 @@ fn validate_auras(auras: &[Aura]) -> Result<(), ZoneError> {
         let Some(spec) = aura.spec() else {
             return Err(ZoneError::new("aura names an ability without an aura"));
         };
-        let fixed_amount = match ability_by_id(aura.ability).map(|ability| ability.effect) {
+        // Fixed amounts must match; variable ones lie in 1..= the largest
+        // amount any player level reaches (an absorb only shrinks).
+        let top = crate::progression::MAX_PLAYER_LEVEL;
+        let valid_amount = match ability_by_id(aura.ability).map(|ability| ability.effect) {
             Some(
                 crate::AbilityEffect::Snare { percent, .. }
                 | crate::AbilityEffect::Haste { percent, .. },
-            ) => Some(percent),
-            _ if matches!(spec.kind, AuraKind::Root | AuraKind::Stun) => Some(0),
-            _ => None,
+            ) => aura.amount == percent,
+            Some(
+                crate::AbilityEffect::DamageOverTime {
+                    base, per_level, ..
+                }
+                | crate::AbilityEffect::Absorb {
+                    base, per_level, ..
+                },
+            ) => (1..=crate::ability::scaled(base, per_level, top)).contains(&aura.amount),
+            Some(crate::AbilityEffect::HealOverTime { percent, .. }) => {
+                let most = crate::unit::percent_of(player_max_health(top), u32::from(percent));
+                aura.amount > 0 && u32::from(aura.amount) <= most
+            }
+            _ => matches!(spec.kind, AuraKind::Root | AuraKind::Stun) && aura.amount == 0,
         };
-        if aura.remaining == 0
-            || aura.remaining > spec.duration
-            || fixed_amount.is_some_and(|amount| amount != aura.amount)
-        {
+        if aura.remaining == 0 || aura.remaining > spec.duration || !valid_amount {
             return Err(ZoneError::new("aura state is out of range"));
         }
         if auras[..index]

@@ -666,6 +666,42 @@ fn a_bandit_bandages_itself_only_below_half_health() {
 }
 
 #[test]
+fn recovery_rejects_aura_amounts_no_player_level_reaches() {
+    let mut fight = Fight::with_class(wolf_at(3_000), 4, 2);
+    fight.use_ability(ids::ARCANE_BARRIER);
+    fight.tick();
+    let checkpoint = fight.zone.snapshot().unwrap();
+    let content = Arc::clone(fight.zone.content());
+    let restore = |ability: AbilityId, remaining: u16, amount: u16| {
+        let mut state = checkpoint.clone();
+        let aura = &mut state.players[0].combat.abilities.auras[0];
+        (aura.ability, aura.remaining, aura.amount) = (ability, remaining, amount);
+        ZoneSimulation::from_snapshot(state, Arc::clone(&content)).map(|_| ())
+    };
+    // Arcane Barrier at level 10: 20 + 8 × 9 = 92; an empty shield is gone.
+    assert_eq!(checkpoint.players[0].combat.abilities.auras[0].amount, 44);
+    assert!(restore(ids::ARCANE_BARRIER, 599, 92).is_ok());
+    // Serpent Sting at level 10: 30 + 4 × 9 = 66; Rallying Cry: 30 % of 185 = 56.
+    assert!(restore(ids::SERPENT_STING, 449, 66).is_ok());
+    assert!(restore(ids::RALLYING_CRY, 299, 56).is_ok());
+    for (ability, remaining, amount) in [
+        (ids::ARCANE_BARRIER, 599, 93),
+        (ids::ARCANE_BARRIER, 599, u16::MAX),
+        (ids::ARCANE_BARRIER, 599, 0),
+        (ids::SERPENT_STING, 449, 67),
+        (ids::RALLYING_CRY, 299, 57),
+        (ids::RALLYING_CRY, 299, 0),
+        (ids::FROST_NOVA, 179, 1),
+    ] {
+        assert_eq!(
+            restore(ability, remaining, amount).unwrap_err().message(),
+            "aura state is out of range",
+            "{ability:?} {amount}"
+        );
+    }
+}
+
+#[test]
 fn a_departing_target_ends_a_creature_cast_and_recovery_stays_valid() {
     let content = classes::arena(
         vec![classes::lurker(500, [1, 1])],
