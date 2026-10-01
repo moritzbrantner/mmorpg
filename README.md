@@ -136,7 +136,7 @@ The initial `MAX_PLAYERS_PER_ZONE` is a safety bound, not a performance claim. C
 ## Persistence
 
 The [starter progression rules](docs/PROGRESSION.md) define the shared XP curve
-and level-difference kill rewards. The zone awards and projects durable XP; browser XP feedback remains #76.
+and level-difference kill rewards. The zone awards and projects durable XP; the browser displays its XP bar and level-up feedback from that state.
 
 Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative durable state; queries read it. Do not introduce event sourcing by default. Zone hot loops must not synchronously depend on a distributed database. Durable character/world persistence and zone checkpoint storage are separate upcoming boundaries.
 

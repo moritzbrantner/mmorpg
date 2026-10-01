@@ -64,8 +64,22 @@ identity remains separate; no persistence I/O occurs during awards.
 
 Snapshot schema/wire version 6 carries canonical player XP and exact self
 XP/threshold in every projection, so lost cosmetic events cannot erase progress.
-The browser decoder accepts this state; the XP bar and level-up feedback remain
-#76. Public API tests kill two level-1 wolves to reach level 2, restore at 50 XP,
+The browser decoder accepts this state; the XP bar and level-up feedback display
+it through #76. Public API tests kill two level-1 wolves to reach level 2, restore at 50 XP,
 continue identically, reject invalid restored XP and cover tapper eligibility.
 The Greyhaven wolf-hunt scenario checks XP after its kill, death, reconnect and
 spirit release. Earlier snapshots fail closed; see PROTOCOL.md for migration.
+
+## Browser feedback (#76)
+
+The accessible native HTML progress bar displays received current-level XP and
+threshold exactly. At the cap it shows a completed bar with “Maximum level”.
+It defines no XP curve or grant operation. Level increases between accepted
+self snapshots show “You reached level N!” for three seconds, even if
+intermediate snapshots or cosmetic events were lost. Initial/restored session
+levels produce no false celebration, stale snapshots cannot rewind the display
+or refresh feedback, and entering a new session resets prior presentation.
+
+Focused presentation fixtures cover exact XP, skipped levels without events,
+stale/duplicate ticks, feedback expiry, cap and reset. Real Chromium checks the
+labelled bar and initial authoritative values whenever a game session opens.
