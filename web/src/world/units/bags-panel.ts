@@ -60,6 +60,10 @@ export class BagsPanel {
     this.#render();
   }
 
+  get open(): boolean {
+    return !this.#elements.panel.hidden;
+  }
+
   toggle(): void {
     if (!this.#elements.panel.hidden) {
       this.close();

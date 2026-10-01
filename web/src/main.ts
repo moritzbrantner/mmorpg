@@ -44,6 +44,7 @@ import { loadLocalWorld } from "./world/wasm-runtime";
 import { characterLook } from "./world/humanoid";
 import { WorldView, webGpuProjection } from "./world/world-view";
 import { attackToggle, nextTabTarget } from "./world/units/targeting";
+import { GameControls, type GameAction } from "./input/game-controls";
 import "./character-selection-layout.css";
 import "./character-creation.css";
 
@@ -101,7 +102,6 @@ type RotationQuaternion = [number, number, number, number];
 type LocalPoint = (x: number, y: number, z: number) => [number, number, number];
 
 let lastTime = performance.now();
-const keys = new Set<string>();
 let rosterStorageHealthy = true;
 let characters: CharacterPreview[] = [PREVIEW_CHARACTER, ...loadCreatedRoster()];
 let entryState: EntryState = initialEntryState(PREVIEW_CHARACTER);
@@ -204,6 +204,14 @@ const worldView = new WorldView(renderer, camera, {
     feedback: requireElement<HTMLElement>("#bag-feedback"),
   },
 });
+const controls = new GameControls({
+  screen: () =>
+    entryState.phase === "world"
+      ? { phase: "world", panelOpen: worldView.panelOpen }
+      : { phase: "selection", creating: creationDraft !== null },
+  onAction: (action) => runAction(action),
+});
+
 // Debug-only camera and public-source hooks for deterministic acceptance; `?debug` enables them.
 if (new URLSearchParams(window.location.search).has("debug")) {
   Object.assign(window, { __valeDebug: { ...worldView.debugApi(), worldSource: () => world?.source ?? null } });
@@ -725,7 +733,7 @@ function renderSelection() {
 }
 
 function worldInput() {
-  return { keys, jumps };
+  return { held: controls.heldIntent(), jumps };
 }
 
 function errorMessage(error: unknown): string {
@@ -768,7 +776,7 @@ function enterWorld() {
   worldFailure = null;
   turntable.cancel();
   entryState = next;
-  keys.clear();
+  controls.retire("enteredWorld");
   worldView.enter(worldInput(), world.source.latestProjection());
   characterSelect.hidden = true;
   for (const element of worldUi) {
@@ -791,7 +799,7 @@ function returnToCharacters(failure: string | null = null) {
   }
   worldFailure = failure;
   entryState = initialEntryState(character);
-  keys.clear();
+  controls.retire("leftWorld");
   worldView.leave();
   characterSelect.hidden = false;
   for (const element of worldUi) {
@@ -865,81 +873,55 @@ canvas.addEventListener("wheel", (event) => {
   worldView.wheel(event);
 }, { passive: false });
 
-window.addEventListener("keydown", (event) => {
-  if (event.altKey || event.ctrlKey || event.metaKey) {
-    return;
-  }
-  // Native controls and the turntable own their keyboard input.
-  if (event.target instanceof HTMLElement &&
-      event.target.closest("button, input, select, textarea, summary, a, [contenteditable=true], [role=slider]")) {
-    return;
-  }
-  if (entryState.phase === "character-selection") {
-    if (creationDraft) {
-      if (event.code === "Escape" && !event.repeat) {
-        event.preventDefault();
-        cancelCharacterCreation();
-      }
+// One input path: keyboard and gamepad resolve to semantic actions through input-bindings.
+// Movement is sampled from held actions each frame; one-shot actions are intents the zone decides.
+function runAction(action: GameAction): void {
+  switch (action) {
+    case "move.forward":
+    case "move.back":
+    case "move.strafeLeft":
+    case "move.strafeRight":
       return;
-    }
-    if (event.code === "Enter" && !event.repeat) {
-      event.preventDefault();
-      enterWorld();
-    }
-    return;
-  }
-  if (event.code === "Escape" && !event.repeat) {
-    event.preventDefault();
-    if (!worldView.closeLoot() && !worldView.closeBags()) {
-      returnToCharacters();
-    }
-    return;
-  }
-  if (event.code === "KeyB") {
-    event.preventDefault();
-    if (!event.repeat) {
-      worldView.toggleBags();
-    }
-    return;
-  }
-  if (event.code === "F3") {
-    event.preventDefault();
-    if (!event.repeat) {
-      worldView.toggleOverlay();
-    }
-    return;
-  }
-  keys.add(event.code);
-  if (event.code === "Space" && !event.repeat) {
-    // The outbox sends one Jump per counted press; the zone decides whether it lifts off.
-    jumps += 1;
-  }
-  // Targeting and attacking are intents; the zone decides what happens.
-  if (!event.repeat) {
-    if (event.code === "Tab") {
+    case "move.jump":
+      // The outbox sends one Jump per counted press; the zone decides whether it lifts off.
+      jumps += 1;
+      return;
+    case "target.next":
       worldView.queueIntent((projection) => {
         const target = nextTabTarget(projection);
         return target ? { kind: "select-target", target } : null;
       });
-    } else if (event.code === "KeyF") {
+      return;
+    case "combat.toggleAutoAttack":
       worldView.queueIntent(attackToggle);
-    } else if (event.code === "KeyR") {
+      return;
+    case "player.releaseSpirit":
       worldView.queueIntent((projection) => (projection.viewer.dead ? { kind: "release-spirit" } : null));
-    }
+      return;
+    case "ui.toggleBags":
+      worldView.toggleBags();
+      return;
+    case "ui.closePanel":
+      if (!worldView.closeLoot()) {
+        worldView.closeBags();
+      }
+      return;
+    case "ui.leaveWorld":
+      returnToCharacters();
+      return;
+    case "ui.toggleDebug":
+      worldView.toggleOverlay();
+      return;
+    case "ui.enterWorld":
+      enterWorld();
+      return;
+    case "ui.cancelCreation":
+      cancelCharacterCreation();
+      return;
   }
-  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "Tab"].includes(event.code)) {
-    event.preventDefault();
-  }
-});
-window.addEventListener("keyup", (event) => keys.delete(event.code));
-window.addEventListener("blur", () => keys.clear());
+}
+controls.attach({ window, document });
 window.addEventListener("resize", resize);
-document.addEventListener("focusin", () => keys.clear());
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    keys.clear();
-  }
-});
 window.addEventListener("storage", (event) => {
   if (event.key !== characterRosterStorageKey() || !rosterStorageHealthy || creationDraft) {
     return;

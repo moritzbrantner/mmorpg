@@ -13,7 +13,15 @@ import { ENVIRONMENT } from "./environment";
 import type { LocalWorld } from "./local-world";
 import { Minimap, buildMinimapLayers, dispositionOf, type MinimapElements, type MinimapUnit } from "./minimap";
 import { MovementOutbox, type MovementInput } from "./movement-outbox";
-import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput, type DragMode, type Vec3 } from "./orbit-camera";
+import {
+  IDLE_INTENT,
+  OrbitCamera,
+  PIXELS_PER_WHEEL_LINE,
+  movementInput,
+  type DragMode,
+  type HeldIntent,
+  type Vec3,
+} from "./orbit-camera";
 import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type SceneryScene } from "./scenery-nodes";
 import { SkyLayer } from "./sky";
 import { UnitAnimators, placeWithModel, unitIdentity, unitModel, unitNodeIds, type UnitContext, type UnitLook } from "./unit-nodes";
@@ -109,7 +117,7 @@ function obstructed(boxes: readonly Box[], target: Vec3, eye: Vec3): boolean {
   return false;
 }
 
-export type WorldInput = { keys: ReadonlySet<string>; jumps: number };
+export type WorldInput = { held: HeldIntent; jumps: number };
 
 export class WorldView {
   readonly #renderer: ThreeSceneRenderer;
@@ -162,7 +170,7 @@ export class WorldView {
     this.#bags = new BagsPanel(elements.bags, (command) => this.queueIntent(() => command));
     this.#loot = new LootPanel(elements.loot, (intent) => this.queueIntent(intent), () => { this.#bags.close(); });
     elements.bags.toggle.addEventListener("click", () => this.#loot.close(false));
-    this.#outbox = new MovementOutbox(this.#input({ keys: new Set(), jumps: 0 }));
+    this.#outbox = new MovementOutbox(this.#input({ held: IDLE_INTENT, jumps: 0 }));
   }
 
   get #animate(): boolean {
@@ -241,12 +249,15 @@ export class WorldView {
 
   closeBags(): boolean { return this.#bags.close(); }
 
+  /** Whether bags or loot are open: a non-blocking overlay over gameplay controls. */
+  get panelOpen(): boolean { return this.#bags.open || this.#loot.open; }
+
   toggleOverlay(): void {
     this.#overlay.toggle();
   }
 
-  #input({ keys, jumps }: WorldInput): MovementInput {
-    const input = movementInput(keys, this.#orbit.facing(), this.#movementFacing, jumps, this.#drag?.mode ?? "none");
+  #input({ held, jumps }: WorldInput): MovementInput {
+    const input = movementInput(held, this.#orbit.facing(), this.#movementFacing, jumps, this.#drag?.mode ?? "none");
     this.#movementFacing = input.facing;
     return input;
   }
