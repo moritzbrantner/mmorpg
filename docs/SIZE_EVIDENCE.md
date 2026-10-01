@@ -11,11 +11,13 @@ bun run --cwd web size:budget
 bun run --cwd web test:size-evidence
 ```
 
-`size:budget` builds the library with Cargo's locked release profile, no default features, the explicit GNU Linux x64 target and the repository-local target directory. It remaps the checkout prefix to `/mmorpg` so checkout path length does not inflate the archive. Ambient Rust flags, release-profile overrides and `RUSTUP_TOOLCHAIN` overrides are unavailable, rather than silently changing the declared build. Other host platforms are currently unavailable for this pilot.
+`size:budget` builds the library with Cargo's locked release profile, no default features, the explicit GNU Linux x64 target and the repository-local target directory. It remaps the checkout prefix to `/mmorpg` so checkout path length does not inflate the archive. Ambient compiler, wrapper, incremental, Rust-flag, release-profile and `RUSTUP_TOOLCHAIN` overrides are unavailable, rather than silently changing the declared build. Inherited Cargo configuration is unsupported unless it contains only dev/test profile settings, which cannot affect this release build. Cargo and rustc must pass bounded availability probes before compilation. Other host platforms are currently unavailable for this pilot.
 
 `.performance/size.json` selects that one archive and records the target, profile, features, Rust/Cargo versions, Cargo manifests and lockfile, toolchain declaration, producer script and source-package dependency graph. The committed baseline in `.performance/baselines/mmorpg-core.json` retains the exact bytes and SHA-256. Source edits are candidates rather than comparability inputs. Compiler, target, feature or declared build-input differences are incomparable, not improvements or regressions; missing tools, baselines and artifacts are unavailable.
 
 The initial archive budget is 2 MiB, with at most 64 KiB growth against a compatible reviewed baseline. These limits provide headroom over the initial approximately 1.65 MiB archive while catching accidental growth. They are an explicit pilot decision, not an existing runtime or fleet-wide performance guarantee. The shared collector comes from the public `coding-tooling/size-evidence` source export at revision `122ad55cbc5fd82233f2aa4af17278554db5cc78`; package publication is unnecessary.
+
+The script typecheck uses Bun's native `bun-types` provider for TOML parsing and declares its Undici type import explicitly. It preserves package symlinks so the isolated Bun dependency graph resolves through this consumer, with every declaration still checked.
 
 Ordinary gates never update the baseline. To propose an intentional update, capture to a disposable file, require a passed result, review its build identity, bytes and hashes, and then replace the committed baseline in the same reviewed change:
 

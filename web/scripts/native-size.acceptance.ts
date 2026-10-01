@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,9 +34,31 @@ assert.deepEqual(readFileSync(baselinePath), baseline);
 const overridden = run([], { ...process.env, RUSTFLAGS: "-C target-cpu=native" });
 assert.equal(overridden.status, 2, overridden.stderr);
 assert.equal(JSON.parse(overridden.stdout).status, "unavailable");
+const compilerOverride = run([], { ...process.env, RUSTC: "/mmorpg-size-missing-rustc" });
+assert.equal(compilerOverride.status, 2, compilerOverride.stderr);
+assert.equal(JSON.parse(compilerOverride.stdout).status, "unavailable");
 
 const fixture = mkdtempSync(join(tmpdir(), "mmorpg-native-size-"));
 try {
+  for (const name of ["RUSTC_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_INCREMENTAL"]) {
+    const override = run([], { ...process.env, [name]: "undeclared" });
+    assert.equal(override.status, 2, override.stderr);
+    assert.equal(JSON.parse(override.stdout).status, "unavailable");
+  }
+  const tools = join(fixture, "tools");
+  mkdirSync(tools);
+  const cargo = spawnSync("rustup", ["which", "cargo"], { encoding: "utf8", timeout: 10000 });
+  assert.equal(cargo.status, 0, cargo.stderr);
+  symlinkSync(cargo.stdout.trim(), join(tools, "cargo"));
+  const missingCompiler = run([], { ...process.env, PATH: tools });
+  assert.equal(missingCompiler.status, 2, missingCompiler.stderr);
+  assert.equal(JSON.parse(missingCompiler.stdout).status, "unavailable");
+  const cargoHome = join(fixture, "cargo-home");
+  mkdirSync(cargoHome);
+  writeFileSync(join(cargoHome, "config.toml"), '[build]\nrustc = "/mmorpg-size-missing-rustc"\n');
+  const inheritedConfiguration = run([], { ...process.env, CARGO_HOME: cargoHome });
+  assert.equal(inheritedConfiguration.status, 2, inheritedConfiguration.stderr);
+  assert.equal(JSON.parse(inheritedConfiguration.stdout).status, "unavailable");
   const declarationPath = join(fixture, ".performance/size.json");
   const declarationText = readFileSync(join(root, ".performance/size.json"), "utf8");
   const measurement = sizeEvidence(root);
@@ -83,7 +113,7 @@ try {
   assert.equal(compare().status, "failed");
   assert.deepEqual(readFileSync(fixtureBaseline), fixtureBaselineBytes);
   console.log(
-    "Native size acceptance passed: ordinary gate preserves baseline, ambient flags unavailable, compatible archive, missing baseline, target/features incomparable, missing tool/artifact, growth failure.",
+    "Native size acceptance passed: ordinary gate preserves baseline, ambient flags and compiler/wrapper/incremental overrides unavailable, missing compiler and inherited configuration unavailable, compatible archive, missing baseline, target/features incomparable, missing tool/artifact, growth failure.",
   );
 } finally {
   rmSync(fixture, { recursive: true, force: true });
