@@ -1,0 +1,66 @@
+# Agent tasks
+
+How work reaches the coding agents. A task is one GitHub issue that one agent turns into one PR (see `AGENTS.md`, Execution scope). Anyone may draft an issue, including a person or a chat assistant. An issue becomes implementable only once it is `spec:ready`.
+
+## Roles
+
+| Agent | Does |
+| --- | --- |
+| Claude Opus | Runs the loop (`/agent-loop`). Turns drafts into ready specs, writes new specs from `docs/STARTER_ZONE.md` and the roadmap, reviews PRs against their spec and merges them. Implements cross-cutting tasks itself (`agent:opus`). |
+| ChatGPT Sol | Implements `agent:sol` tasks: authoritative core/server/protocol work. |
+| Claude Sonnet | Implements `agent:sonnet` tasks: presentation, UI, docs, mechanical follow-ups. |
+| GitHub Actions | The full deterministic gate on every PR (`validate.yml`, `pages.yml`; Chromium only with the `browser-evidence` label). |
+| Codex review | Reviews each PR automatically when it is opened or marked ready; `@codex review` re-triggers it. |
+
+## Labels
+
+- `agent-task`: every task issue.
+- `spec:draft`: written but not yet checked against the code. Do not implement.
+- `spec:ready`: checked and implementable.
+- `spec:needs-input`: blocked on a question for the owner, asked in a comment.
+- `agent:opus`, `agent:sol`, `agent:sonnet`: the intended implementer.
+- `in-progress`: an implementer has started; the PR will reference the issue.
+
+## Picking up a task (implementers)
+
+When asked to "pick up work", take the oldest open issue labeled `spec:ready` plus your `agent:*` label that has no `in-progress` label and whose "Start after" dependencies are merged. Add `in-progress`, branch `agent/<topic>` (or the branch the issue names) and follow the issue and `AGENTS.md`. Open the PR only when the branch is complete, with `Closes #N`. Never implement `spec:draft` or `spec:needs-input` issues. If the spec turns out to be wrong or impossible, comment on the issue and stop; do not silently re-scope it.
+
+## Writing an issue
+
+**Title:** `<Area> <step>: <what the player or system gains>`, for example `Classes and abilities 8a: class choice, resources, abilities and auras in core`.
+
+**Sizing:**
+- One PR. Big enough to deliver a whole plan step (or its core half or its presentation half), small enough that one agent finishes it in one session.
+- Split only along the core/presentation seam: the presentation task starts after the core task merges.
+- At most one bump per format version (command, snapshot, canonical) per task.
+- Pick the implementer by the table above: authority/protocol → `agent:sol` or `agent:opus`; presentation-only → `agent:sonnet`.
+
+**Body:** use these sections in this order (the "Agent task" issue template has them):
+
+1. **Header line:** plan step and parent issue, implementer, branch name, `Start after #N` if it depends on another task.
+2. **Goal:** two or three sentences on the observable result.
+3. **Decisions already made (do not reopen):**
+   - rules and numbers (tables welcome);
+   - exact format changes: command tags and fields, snapshot sections, version bumps, the budget;
+   - compatibility behaviour for existing state and scenarios;
+   - deliberate simplifications.
+   
+   Anything left open says so explicitly ("implementer decides X; record it in the PR").
+4. **Acceptance:** concrete tests and scenarios. Name the checks CI does not run: `scripts/smoke-native.py`, and the `browser-evidence` label. Always end with "CI green and every Codex finding addressed".
+5. **Expected changes:** crates, files and docs likely touched.
+6. **Out of scope:** what a thorough implementer might otherwise add. Always includes foundation, tooling, pin and budget work.
+7. **Parallel work:** open tasks touching the same files, and how to stay out of their way.
+
+**Quality bar for `spec:ready`:**
+- Consistent with `AGENTS.md` (authority, distributed-world invariants, determinism).
+- No unresolved design question that would change a format or an authority boundary.
+- Acceptance checks can be verified from the PR.
+- Matches the current code: version numbers, tags, module names and budgets are checked on `main`.
+
+## Drafting with a chat assistant
+
+To hash out an issue in a chat (e.g. ChatGPT) and have it filed, paste this into the chat:
+
+> You are helping me specify a task for the `moritzbrantner/mmorpg` repository. Before proposing anything, read `AGENTS.md`, `docs/AGENT_TASKS.md`, `docs/STARTER_ZONE.md` and the docs relevant to the topic (`docs/PROTOCOL.md` for any format change). Discuss the task with me first: challenge scope that is too large for one PR, ask about decisions that would change formats or authority, and propose concrete numbers. When I say "file it", create a GitHub issue in `moritzbrantner/mmorpg` with the title and body sections exactly as in `docs/AGENT_TASKS.md` "Writing an issue", and the labels `agent-task`, `spec:draft` and the `agent:*` label we agreed on. Never label it `spec:ready`; Claude checks drafts against the code first. If you cannot create issues, output the title and the body as a Markdown code block instead.
+
+If the chat cannot create issues, open a new issue with the "Agent task" template and paste the body. The next `/agent-loop` run checks the draft against the code, completes or corrects it, and flips it to `spec:ready` (or asks its questions under `spec:needs-input`).

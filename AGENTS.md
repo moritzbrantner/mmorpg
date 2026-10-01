@@ -101,7 +101,7 @@ These rules govern how work is sliced and when expensive checks run. They never 
 - **Decide and continue.** When a task leaves a design choice open, pick the simplest option consistent with this file, record it in the PR description (or an ADR when consequential, REPO-020) and keep going.
 - **Short PR descriptions.** At most about 15 lines: what changed, format/compatibility changes, one line naming the gate steps that ran, and anything not verified (REPO-017). Leave detailed evidence to CI and the tests.
 
-A task spec names the goal and player-visible result, acceptance checks, the decided format changes, the crates/files expected to change and an explicit out-of-scope list.
+Tasks arrive as GitHub issues in the format, labels and pickup rules of `docs/AGENT_TASKS.md`; implement only `spec:ready` issues labeled for you. Claude Opus runs the loop with the `/agent-loop` skill (`.claude/skills/agent-loop/`).
 
 ## Shared conventions
 
