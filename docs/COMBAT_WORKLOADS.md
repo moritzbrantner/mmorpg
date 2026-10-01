@@ -152,6 +152,26 @@ a claim of byte parity between v7 and v8. Separate normalized state comparisons
 verify that reward generation preserves the AI/combat RNG and existing mechanics.
 The hosted wolf hunt still dies at tick 912 with the same combat state.
 
+## Classes and abilities v9 evidence
+
+Greyhaven revision 6 (`19e2d33bf767bf2f`) binds ability catalog revision 1 and
+keeps the AI/combat seed. Snapshot v9 adds 23 fixed projection bytes (class,
+resource, global cooldown, two cast records, three list counts); these fixtures
+never choose a class, so no cooldown or aura records follow, and the byte
+ceiling adds `23 × players × ticks`. Mirefin Lurkers now stop to cast Muck Bolt
+and Redbrand Bandits Crude Bandage, deliberately changing fights with them (owner
+decision on #112): the spread fixtures meet more lurkers and bandits, so their
+reviewed ceilings rise for broad-phase pairs (vale-fights-8 255,546; vale-fights-32
+365,288), contacts (vale-fights-32 32,010) and projection candidates
+(vale-fights-32 366,813). Wolf-only and rat-only fights are unchanged.
+
+| Workload | v9 projection bytes | Largest bytes | Loot sheets | Trace checksum |
+| --- | ---: | ---: | ---: | --- |
+| vale-idle-16 | 3,500,784 | 668 | 0 | `97e8b92ba1d47dfb` |
+| vale-fights-8 | 1,122,324 | 563 | 0 | `3e3db4867aeef952` |
+| vale-fights-32 | 5,977,342 | 773 | 0 | `96887014c967c0c5` |
+| vale-crowded-fights-64 | 24,558,670 | 1,073 | 240 | `aebe72b8335c68ff` |
+
 Validation uses locked dependencies, Rust 1.98.1 and the unchanged pinned physics
 engine. Shared convention sourceRevision is
 `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
