@@ -7,7 +7,7 @@ Implementation notes (step 6):
 - `mmorpg-wasm` hosts zone 1 with the same content as `mmorpg-zone-host` and plays the session role that `game-server`'s `MatchRuntime` plays for network hosts: never-reused player IDs from 1, sequence 0 rejected, stale sequences ignored. Its host-target tests check the same content and session outcomes against `MatchRuntime`, and byte-identical projections every tick while joined for a run-and-jump sequence and for the `browser-local-session` scenario's steps. Leaving removes the unit at once instead of after reconnect grace, so the away ticks are not compared.
 - The workspace `unsafe_code = "forbid"` lint applies unchanged; the code `wasm-bindgen` 0.2.129 generates compiles under it.
 - Step 6 landed first, with a scenery export that was a blockout of the hosted core colliders. Step 5 (#20) replaced it behind the same versioned format with a mapping of `mmorpg-scenery`'s Greyhaven Vale; the browser render loop did not change. Named areas are core content (`ZoneAreas`, `greyhaven_vale::areas()`).
-- Local demo saves of world state are removed until the durable character record (#30) exists; roster and appearance saves remain.
+- Local demo saves of world state are removed until the composed character/world save bundle and restore flow (#40) exists; #30 owns its durable character record prerequisite. Roster and appearance saves remain.
 
 ## Context
 
@@ -30,4 +30,4 @@ This is not MMO authority in the browser. It has no fencing, no leases, no hando
 - The Pages build needs a Rust toolchain, the `wasm32-unknown-unknown` target and a pinned `wasm-bindgen` CLI. Generated WASM and bindings are build outputs, not committed (REP-003).
 - `mmorpg-core` and `mmorpg-protocol` must keep compiling for `wasm32-unknown-unknown`: no threads, filesystem or wall clock in core paths. CI builds the WASM target.
 - Browser tests that need the simulation build the WASM module first; pure decoder and UI tests stay independent.
-- Local demo saves persist a durable character record through a core query/command API, not by reaching into simulation internals.
+- Local demo saves (#40) compose the durable character record (#30), accessed through core query/command APIs, with matching canonical zone/world checkpoints. They restore through those shared APIs, not by reaching into simulation internals.

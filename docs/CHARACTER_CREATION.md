@@ -24,4 +24,4 @@ Roster parsing fails closed for unsupported schemas, malformed records, duplicat
 
 ## Authority boundary
 
-This is local browser-demo state. It does not add account creation, durable multiplayer character records, class combat mechanics, inventory authority, or server-side character persistence. Those remain future server-owned boundaries (the durable character record is issue #30). The feature does not change `mmorpg-core`, `physics-engine`, `game-server`, or control-plane authority.
+This is local browser-demo state. It does not add account creation, durable multiplayer character records, class combat mechanics, inventory authority, or server-side character persistence. Those remain future server-owned boundaries (#30 owns the durable character record; #40 composes it with zone/world checkpoints for demo save/load). The feature does not change `mmorpg-core`, `physics-engine`, `game-server`, or control-plane authority.
