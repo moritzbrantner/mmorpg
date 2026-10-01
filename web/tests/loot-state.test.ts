@@ -167,3 +167,29 @@ test("dispatch cannot rewind a newer accepted projection", () => {
   expect(state.sheet).toEqual(sheet());
   expect(state.copper).toBe(0);
 });
+
+test("targetless bag failures cannot report retained rewards after a successful claim", () => {
+  const codes: ErrorCode[] = ["inventory-full", "invalid-inventory-move"];
+  for (const code of codes) {
+    const state = new LootState();
+    state.update(projection());
+    intent(state)(projection());
+    state.update({ ...projection(13n, null, 2), acknowledgedSequence: 7,
+      events: [{ kind: "error", code, target: null }] });
+    expect(state.sheet).toBeNull();
+    expect(state.copper).toBe(2);
+    expect(state.feedback).toBe("");
+  }
+});
+
+test("generic intent-capacity feedback may have no target", () => {
+  const state = new LootState();
+  state.update(projection());
+  intent(state)(projection());
+  state.update({ ...projection(13n), acknowledgedSequence: 6,
+    events: [{ kind: "error", code: "too-many-intents", target: null }] });
+  expect(state.sheet).toEqual(sheet());
+  expect(state.copper).toBe(0);
+  expect(state.feedback).toContain("Too many actions");
+  expect(state.canClaim).toBe(true);
+});

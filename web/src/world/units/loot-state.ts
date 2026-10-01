@@ -75,8 +75,13 @@ export class LootState {
     // Only feedback for this pending corpse action belongs in its window.
     if (pending?.sent && !targetChanged && (sheet === null || sameClaim(sheet, pending.sheet))) {
       for (const event of snapshot.events) {
-        if (event.kind !== "error" || (event.target !== null
-          && !sameEntity(event.target, { kind: "creature", id: pending.sheet.creatureId }))) {
+        if (event.kind !== "error") {
+          continue;
+        }
+        const related = event.target === null
+          ? event.code === "too-many-intents" || event.code === "you-are-dead"
+          : sameEntity(event.target, { kind: "creature", id: pending.sheet.creatureId });
+        if (!related) {
           continue;
         }
         const message = REFUSALS[event.code];
