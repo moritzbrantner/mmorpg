@@ -907,3 +907,76 @@ fn a_departing_target_ends_a_creature_cast_and_recovery_stays_valid() {
     )
     .expect("no cast names the departed player");
 }
+
+#[test]
+fn recovery_rejects_creature_casts_at_dead_players() {
+    let lurking = classes::arena(
+        vec![classes::lurker(500, [1, 1])],
+        vec![arena::spawn(1, LURKER, [-200, 0])],
+    );
+    let mut fight = Fight::new(lurking, 1);
+    fight.until(40, |fight| fight.creature(FIRST).abilities.cast.is_some());
+    let checkpoint = fight.zone.snapshot().unwrap();
+    let content = Arc::clone(fight.zone.content());
+    assert!(ZoneSimulation::from_snapshot(checkpoint.clone(), Arc::clone(&content)).is_ok());
+    let mut dead = checkpoint;
+    dead.players[0].combat.health = 0;
+    assert_eq!(
+        ZoneSimulation::from_snapshot(dead, content)
+            .err()
+            .unwrap()
+            .message(),
+        "a creature casts at a dead player"
+    );
+}
+
+#[test]
+fn an_arcanist_level_up_grows_current_mana_with_its_maximum() {
+    let mut fight = Fight::with_class(
+        classes::arena(
+            vec![arena::wolf(1, [1, 1])],
+            vec![arena::spawn(1, WOLF, [-200, 0])],
+        ),
+        1,
+        2,
+    );
+    assert_eq!(fight.resource(), ResourceKind::Mana.max(1));
+    let mut state = fight.zone.snapshot().unwrap();
+    state.players[0].combat.experience = mmorpg_core::experience_to_next_level(1).unwrap() - 1;
+    fight.zone = ZoneSimulation::from_snapshot(state, Arc::clone(fight.zone.content())).unwrap();
+    fight.send(arena::stand(NORTHWARD));
+    fight.send(ZoneCommand::SelectTarget(Some(TARGET)));
+    fight.send(ZoneCommand::StartAttack);
+    fight.until(200, |fight| fight.me().combat.level == 2);
+    assert_eq!(fight.resource(), 132);
+    assert_eq!(fight.resource(), ResourceKind::Mana.max(2));
+}
+
+#[test]
+fn content_without_the_ability_catalog_refuses_classes() {
+    let unbound = arena::arena(Vec::new(), Vec::new(), Vec::new());
+    assert_eq!(unbound.ability_revision(), 0);
+    let mut fight = Fight::new(unbound, 1);
+    fight.send(ZoneCommand::ChooseClass { class: 2, sex: 0 });
+    let tick = fight.zone.current_tick() + 1;
+    fight.tick();
+    assert_eq!(fight.errors_at(tick), [ErrorCode::InvalidClass]);
+    assert_eq!(fight.me().combat.abilities.class, None);
+    fight.use_ability(ids::FIREBOLT);
+    let tick = fight.zone.current_tick() + 1;
+    fight.tick();
+    assert_eq!(fight.errors_at(tick), [ErrorCode::NoClass]);
+
+    // A class checkpoint does not restore against content that never bound
+    // the catalog: its fingerprint does not cover the ability rules.
+    let classed = Fight::with_class(wolf_at(3_000), 1, 2).me();
+    let mut state = fight.zone.snapshot().unwrap();
+    state.players[0].combat.abilities = classed.combat.abilities;
+    assert_eq!(
+        ZoneSimulation::from_snapshot(state, Arc::clone(fight.zone.content()))
+            .err()
+            .unwrap()
+            .message(),
+        "a class player needs content that binds the ability catalog"
+    );
+}
