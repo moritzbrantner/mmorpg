@@ -16,6 +16,7 @@ import base64
 import functools
 import http.server
 import json
+import math
 import re
 from pathlib import Path
 import threading
@@ -428,20 +429,65 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.keyboard.press("F3")
         expect(overlay).to_be_hidden()
 
+    # Wolf 107, the nearest Wolfrun Woods spawn to the hub, stands at (-62, -18) m (units.rs).
+    NEAREST_ANIMAL_SPAWN = (-62.0, -18.0)
+
+    def self_position(self):
+        me = self.debug_stats()["self"]
+        return me["x"], me["z"]
+
+    def walk_until_animal_projected(self, max_steps=40):
+        """The authoritative player starts on the hub grid, outside the interest radius of the woods, so
+        a creature is only projected once the player walks toward the nearest animal spawn. Returns the
+        nearest projected animal; fails with a clear message when none appears within the bounded walk."""
+        goal_x, goal_z = self.NEAREST_ANIMAL_SPAWN
+        key = None
+        for _ in range(max_steps):
+            x, z = self.self_position()
+            animal = self.page.evaluate("([x, z]) => window.__valeDebug.nearestAnimal(x, z)", [x, z])
+            if animal:
+                return animal
+            if key is None:
+                # W/S/A/D move relative to the camera heading: probe each and keep the one that closes the distance.
+                best = None
+                for candidate in ("KeyW", "KeyS", "KeyA", "KeyD"):
+                    before = self.self_position()
+                    self.page.keyboard.down(candidate)
+                    self.frames(10)
+                    self.page.keyboard.up(candidate)
+                    self.frames(2)
+                    after = self.self_position()
+                    gain = math.hypot(goal_x - before[0], goal_z - before[1]) - math.hypot(goal_x - after[0], goal_z - after[1])
+                    if best is None or gain > best[0]:
+                        best = (gain, candidate)
+                key = best[1]
+                continue
+            self.page.keyboard.down(key)
+            self.frames(12)
+            self.page.keyboard.up(key)
+            self.frames(2)
+        units = self.page.evaluate("window.__valeDebug.projectedUnits()")
+        self.fail(f"No wolf, boar or rat was projected after walking toward {self.NEAREST_ANIMAL_SPAWN}; player at {self.self_position()}, projected: {units}")
+
     def test_creature_and_npc_models_render_over_the_placeholder_boxes(self):
-        """Debug viewpoints beside a wolf of Wolfrun Woods and a gate guard show the low-poly models,
+        """Debug viewpoints beside a projected wolf/boar/rat and a gate guard show the low-poly models,
         which draw more colours and a different silhouette than the single-colour placeholder boxes."""
         self.open("?debug")
         self.enter_world()
         self.frames(6)
-        # Wolf 108 stands at (-84.5, 4.5) m and guard 6 at (-5, -8) m; wolves wander up to 6 m, so the
-        # camera looks at the spawn point from 5 m away, high enough to see over the grass.
+        # Only units inside the interest radius are projected: walk toward the woods until an animal is.
+        animal = self.walk_until_animal_projected()
+        self.frames(4)
+        animal = self.page.evaluate("([x, z]) => window.__valeDebug.nearestAnimal(x, z)", list(self.self_position())) or animal
+        ax, az = animal["x"], animal["z"]
+        # Animals wander, so the camera looks at the projected position from 5 m away, high enough to see over the grass.
+        # Guard 6 stands at (-5, -8) m, inside the hub's interest range.
         views = {
-            "wolf": ([-84.5, 2.0, -1.0], [-84.5, 0.0, 4.5]),
+            "animal": ([ax, 2.0, az - 5.0], [ax, 0.0, az]),
             "guard": ([-5.0, 1.5, -3.0], [-5.0, 0.0, -8.0]),
         }
         # The units' scene identities; a placeholder draws only `-body` and `-nose` (plus a target ring).
-        identities = {"wolf": "unit-creature-108", "guard": "unit-npc-6"}
+        identities = {"animal": f"unit-creature-{animal['id']}", "guard": "unit-npc-6"}
         shots = {}
         for name, (eye, target) in views.items():
             # Heights above the presentation relief at the target.
@@ -459,14 +505,14 @@ class BrowserAcceptance(unittest.TestCase):
             parts = {i[len(identity) + 1:] for i in ids}
             self.assertGreaterEqual(len(parts), 8, f"{identity} must draw a multi-part model, got {sorted(parts)}")
             self.assertFalse(parts <= {"body", "nose", "target-ring"}, f"{identity} regressed to the placeholder box")
-            if name == "wolf":
-                self.assertTrue({"ear-left", "ear-right", "eye-left", "eye-right"} <= parts, f"The wolf draws its animal parts: {sorted(parts)}")
+            if name == "animal":
+                self.assertTrue({"ear-left", "ear-right", "eye-left", "eye-right"} <= parts, f"The {animal['family']} draws its animal parts: {sorted(parts)}")
             if name == "guard":
                 self.assertIn("head", parts, "The guard draws a humanoid model")
             colours = self.canvas_colours()
             self.assertGreater(colours["distinct"], 400, f"The {name} view must render a varied scene")
             self.assertGreater(colours["covered"], 0.5, f"The {name} view must draw most of the frame")
-        self.assertNotEqual(shots["wolf"], shots["guard"], "Animal and NPC models render different frames")
+        self.assertNotEqual(shots["animal"], shots["guard"], "Animal and NPC models render different frames")
         self.page.evaluate("window.__valeDebug.follow()")
 
     def wait_for_facing_change(self, facing, timeout_frames=60):
