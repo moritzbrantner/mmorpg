@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ASSET_AUTHORING_COMMIT, record, sha256 } from "../scripts/asset-operation-api";
-import { buildReliefPackage, RELIEF_GRID, RELIEF_PACKAGE_DIRECTORY, reliefMask } from "../scripts/relief-package";
+import { buildReliefPackage, reconcileReliefPackage, RELIEF_GRID, RELIEF_PACKAGE_DIRECTORY, reliefMask } from "../scripts/relief-package";
 
 const directory = RELIEF_PACKAGE_DIRECTORY;
 const json = async (name: string): Promise<unknown> => JSON.parse(await readFile(path.join(directory, name), "utf8"));
@@ -57,6 +57,7 @@ describe("Greyhaven saved relief package", () => {
     expect(record(record(record(manifest.result).outputs).output).sha256).toBe(record(outputs["flattened.rgba8.json"]).sha256);
     expect(manifest.evidence).toEqual({ repeatedFilterMatches: true, coldReplayMatches: true, sampleCount: 18753 });
     expect(record(source.capturedFrom)).toMatchObject({ commit: "6265e1c842aad9d2034bfe7946dec4582158b9e6", query: "mmorpg-wasm reliefAt(x,z)", contentRevision: "4", contentFingerprint: "5738a86de795e940" });
+    expect(record(source.capturedFrom).heightSamplesSha256).toBe(sha256(await readFile(path.join(directory, "source.heights.json"))));
   });
 
   test("zero, full and partial scalar weights match an independent signed-height oracle", () => {
@@ -170,9 +171,38 @@ describe("Greyhaven saved relief package", () => {
       }
       await writeFile(path.join(scratch, "source.json"), await readFile(path.join(directory, "source.json")));
       const field = record(await json("source.heights.json"));
-      await writeFile(path.join(scratch, "source.heights.json"), JSON.stringify({ ...field, heights: [128, ...original.slice(1)] }));
-      await expect(buildReliefPackage(checkout!, scratch)).rejects.toThrow("signed-centimetre relief range");
+      const edited = [...original];
+      const covered = coverage.findIndex((weight) => weight === 255);
+      edited[covered] = edited[covered]! + 1;
+      await writeFile(path.join(scratch, "source.heights.json"), JSON.stringify({ ...field, heights: edited }) + "\n");
+      await expect(reconcileReliefPackage(checkout!, "--write", scratch)).rejects.toThrow("immutable capture digest");
       expect(await readFile(path.join(scratch, "flattened.heights.json"))).toEqual(await readFile(path.join(directory, "flattened.heights.json")));
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!checkout)("reconciliation preserves identical files and validates all staging before replacement", async () => {
+    const scratch = await mkdtemp(path.join(tmpdir(), "mmorpg-relief-write-"));
+    try {
+      await cp(directory, scratch, { recursive: true });
+      const before = await stat(path.join(scratch, "manifest.json"));
+      await reconcileReliefPackage(checkout!, "--write", scratch);
+      const after = await stat(path.join(scratch, "manifest.json"));
+      expect([after.ino, after.mtimeMs]).toEqual([before.ino, before.mtimeMs]);
+      // A later durable target is unreadable; earlier staged bytes must not commit.
+      await writeFile(path.join(scratch, "flatten.txt"), (".".repeat(141) + "\n").repeat(133));
+      await rm(path.join(scratch, "flattened.heights.json"));
+      await mkdir(path.join(scratch, "flattened.heights.json"));
+      await expect(reconcileReliefPackage(checkout!, "--write", scratch)).rejects.toThrow();
+      for (const name of ["flatten.rgba8.json", "flattened.rgba8.json", "manifest.json"]) {
+        expect(await readFile(path.join(scratch, name))).toEqual(await readFile(path.join(directory, name)));
+      }
+      await rm(path.join(scratch, "flattened.heights.json"), { recursive: true });
+      await cp(path.join(directory, "flattened.heights.json"), path.join(scratch, "flattened.heights.json"));
+      await reconcileReliefPackage(checkout!, "--write", scratch);
+      await reconcileReliefPackage(checkout!, "--check", scratch);
+      expect(heights(JSON.parse(await readFile(path.join(scratch, "flattened.heights.json"), "utf8")))).toEqual(original);
     } finally {
       await rm(scratch, { recursive: true, force: true });
     }

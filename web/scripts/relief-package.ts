@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ASSET_AUTHORING_COMMIT, createPinnedAssetOperationCaller, record, sha256 } from "./asset-operation-api";
@@ -49,6 +49,8 @@ export async function buildReliefPackage(checkout: string, directory = RELIEF_PA
   assert.deepEqual(recipe.producer, { repository: "https://github.com/moritzbrantner/asset-tooling", commit: ASSET_AUTHORING_COMMIT, operation: "image.height.mask-flatten@1" });
   assert.deepEqual(recipe.flatten, { targetHeight: 128, channel: "scalar", glyphCoverage: GLYPHS, borderSamples: 2 });
   const source = record(JSON.parse(inputs.get("source.heights.json")!.toString("utf8")));
+  assert.equal(sha256(inputs.get("source.heights.json")!), captured.heightSamplesSha256,
+    "source heights must match their immutable capture digest");
   const { heights, ...grid } = source;
   assert.deepEqual(grid, { schemaVersion: 1, ...RELIEF_GRID });
   assert.ok(Array.isArray(heights) && heights.length === RELIEF_GRID.columns * RELIEF_GRID.rows);
@@ -120,13 +122,48 @@ export async function buildReliefPackage(checkout: string, directory = RELIEF_PA
 
 export async function reconcileReliefPackage(checkout: string, mode: "--check" | "--write", directory = RELIEF_PACKAGE_DIRECTORY): Promise<void> {
   const outputs = await buildReliefPackage(checkout, directory);
-  for (const [name, bytes] of outputs) {
-    const filename = path.join(directory, name);
-    if (mode === "--write") {
-      await writeFile(filename, bytes);
-    } else {
-      assert.deepEqual(await readFile(filename), Buffer.from(bytes), `${name} differs from the pinned asset-tooling build`);
-    }
+  if (mode === "--write") {
+    await replaceReliefOutputs(directory, outputs);
+    console.log("Greyhaven relief package written");
+    return;
   }
-  console.log(`Greyhaven relief package ${mode === "--check" ? "verified" : "written"}`);
+  for (const [name, bytes] of outputs) {
+    assert.deepEqual(await readFile(path.join(directory, name)), Buffer.from(bytes), `${name} differs from the pinned asset-tooling build`);
+  }
+  console.log("Greyhaven relief package verified");
+}
+
+/** Stage and validate every output before atomically replacing changed files. */
+async function replaceReliefOutputs(directory: string, outputs: Map<string, Uint8Array>): Promise<void> {
+  const staging = await mkdtemp(path.join(directory, ".relief-stage-"));
+  const changed: string[] = [];
+  try {
+    for (const [name, bytes] of outputs) {
+      const filename = path.join(directory, name);
+      const previous = await readFile(filename);
+      if (previous.equals(Buffer.from(bytes))) {
+        continue;
+      }
+      const staged = path.join(staging, name);
+      await writeFile(staged, bytes);
+      assert.deepEqual(await readFile(staged), Buffer.from(bytes), "staged package bytes must validate before replacement");
+      await writeFile(path.join(staging, `${name}.previous`), previous);
+      changed.push(name);
+    }
+    const replaced: string[] = [];
+    try {
+      // The manifest is last in the output map: it commits the checked bytes.
+      for (const name of changed) {
+        await rename(path.join(staging, name), path.join(directory, name));
+        replaced.push(name);
+      }
+    } catch (error) {
+      for (const name of replaced.reverse()) {
+        await rename(path.join(staging, `${name}.previous`), path.join(directory, name));
+      }
+      throw error;
+    }
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 }

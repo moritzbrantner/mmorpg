@@ -14,6 +14,8 @@ from the public WASM `reliefAt(x,z)` query at MMORPG commit
 output, including its original analytic clearances, rather than an unflattened
 noise field. `source.json` records the exact source commit, complete scenery
 export SHA-256, presentation fingerprint and gameplay content identity.
+It also records a separate immutable capture digest for the source heights;
+accidentally changing an in-range sample fails before generating any outputs.
 
 To reproduce the capture, build that source revision's browser WASM adapter,
 initialize its generated module, and query `reliefAt(-3500 + column * 50,
@@ -80,3 +82,11 @@ all bytes through the public producer, edit one mask cell, undo that edit,
 exercise zero/full interior coverage and reject invalid pins/calibration.
 Pages CI checks out the exact producer, reproduces both saved packages and
 runs these cases. The accepted grass selection is unchanged.
+
+Writes stage and verify the complete generated output set before replacing
+changed files with atomic same-filesystem renames. Identical files retain
+their inode and timestamp. The manifest is replaced last, and a caught
+replacement error rolls back files already replaced. An interruption between
+file replacements can leave a mixed generation; `--check` detects it and a
+successful `--write` reconciles it. Individual durable files are never partially
+written.
