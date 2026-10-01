@@ -40,7 +40,7 @@ use mmorpg_scenery::{PropKind, Scenery, TerrainGrid, greyhaven_vale_scenery};
 use serde::Serialize;
 
 pub const SCENERY_FORMAT: &str = "mmorpg.scenery";
-pub const SCENERY_FORMAT_VERSION: u32 = 2;
+pub const SCENERY_FORMAT_VERSION: u32 = 3;
 /// Where this export's props and terrain come from.
 pub const SCENERY_SOURCE: &str = "mmorpg-scenery";
 /// Terrain sample spacing: 4 m, 101 × 101 samples over ±200 m.
@@ -56,6 +56,8 @@ pub struct SceneryExport {
     pub source: &'static str,
     /// Decimal `u64`, so JavaScript never rounds it.
     pub content_revision: String,
+    /// Presentation-only identity; mask edits do not change gameplay content.
+    pub presentation_fingerprint: String,
     pub units_per_metre: i32,
     /// The player collision box from core, so clients place feet correctly.
     pub player_half_extents: [i32; 3],
@@ -189,6 +191,7 @@ fn export(scenery: &Scenery, colliders: &[StaticCollider], areas: &ZoneAreas) ->
         version: SCENERY_FORMAT_VERSION,
         source: SCENERY_SOURCE,
         content_revision: scenery.content_revision.to_string(),
+        presentation_fingerprint: format!("{:016x}", scenery.stable_hash()),
         units_per_metre: UNITS_PER_METRE,
         player_half_extents: PLAYER_HALF_EXTENTS_UNITS,
         terrain: terrain(&scenery.terrain_grid(TERRAIN_STEP_UNITS)),
@@ -452,6 +455,7 @@ mod tests {
         assert_eq!(value["version"], SCENERY_FORMAT_VERSION);
         assert_eq!(value["source"], SCENERY_SOURCE);
         assert_eq!(value["contentRevision"], "4");
+        assert_eq!(value["presentationFingerprint"], "1de3341c933449f6");
         assert_eq!(value["unitsPerMetre"], 100);
         assert_eq!(value["playerHalfExtents"], serde_json::json!([30, 90, 30]));
         let names: Vec<_> = value["areas"]

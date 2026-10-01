@@ -27,6 +27,7 @@
 //! platform builds identical scenery ([`Scenery::stable_hash`]).
 
 mod geometry;
+mod outpost_grass;
 
 use std::collections::BTreeMap;
 
@@ -34,6 +35,7 @@ pub use geometry::Rect;
 use geometry::{Ellipse, Rng, polyline_distance, splitmix64, value_noise};
 use mmorpg_core::greyhaven_vale::{self, PLAYABLE_BOUNDS, SPAWN_PLAZA, ids};
 use mmorpg_core::{Area, AreaId, StaticCollider, XzBounds, greyhaven_vale_definition, trig};
+pub use outpost_grass::outpost_grass_placements;
 
 /// Half the side of the square the terrain grid covers (±200 m).
 pub const TERRAIN_EXTENT_UNITS: i32 = 20_000;
@@ -519,6 +521,12 @@ const FARMLAND: Rect = Rect {
 /// Builds the Greyhaven Vale scenery from the core content revision.
 #[must_use]
 pub fn greyhaven_vale_scenery() -> Scenery {
+    let mut scenery = unmasked_greyhaven_vale_scenery();
+    outpost_grass::apply(&mut scenery.props);
+    scenery
+}
+
+fn unmasked_greyhaven_vale_scenery() -> Scenery {
     let definition = greyhaven_vale_definition();
     let structures: Vec<_> = definition
         .colliders()

@@ -32,7 +32,7 @@ export type SceneryStats = {
 const HUB_KINDS: ReadonlySet<PropKind> = new Set(["keep", "inn", "smithy", "house", "well", "waystone"]);
 
 function resourcePrefix(scenery: Scenery): string {
-  return `scenery:${scenery.source}:${scenery.contentRevision}`;
+  return `scenery:${scenery.source}:${scenery.contentRevision}:${scenery.presentationFingerprint}`;
 }
 
 /** Centroid of the samples of a named biome, in metres. */

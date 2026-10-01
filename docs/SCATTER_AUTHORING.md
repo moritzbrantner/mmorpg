@@ -3,8 +3,8 @@
 The first saved-mask package freezes 118 already accepted `grass-tuft` placements
 from the original Greyhaven Outpost scenery at MMORPG revision
 `166a003c067208234d3a484e1841a0ff49c74ef3`. The package lives in
-`crates/mmorpg-scenery/assets/outpost-grass/`. It is an offline authoring input;
-#94 owns adoption into native/browser scenery and actual visual acceptance.
+`crates/mmorpg-scenery/assets/outpost-grass/`. The selected package is consumed by native and browser clients through shared
+scenery. Authoring stays offline; no filter runs in either render loop.
 Gameplay content, colliders, RNG and snapshots are unchanged by this package.
 
 `accepted.instances.json` retains stable ordered IDs and complete local XYZ
@@ -73,3 +73,30 @@ runs public producer replay, localized edit/undo, empty/full masks and invalid
 calibration/provenance checks. Pages CI checks out the exact producer revision,
 reproduces the package, and runs these cases. Tests never silently substitute a
 consumer filtering implementation for producer evidence.
+
+## Shared scenery consumption
+
+The adapter also emits `accepted.props.rs` and `selected.props.rs`, exact
+centimetre coordinates and original transforms suitable for Rust inclusion.
+The manifest records their hashes plus the consumer adapter's own source hash.
+Sub-centimetre coordinates fail closed rather than being rounded. The selected
+include is compiled into `mmorpg-scenery`; the accepted include supplies the
+independent original-placement regression check. No JSON parser or asset-tooling
+runtime dependency enters scenery or network hosts.
+
+`outpost_grass_placements()` exposes stable saved instance IDs and ground-anchor
+props. The scenery builder replaces only cosmetic grass roots inside the
+inclusive authoring footprint with that selection. It preserves the original
+placement RNG execution for every other family. Tests retain the original
+scenery hash and compare every accepted placement, unrelated prop, road, water
+surface and both terrain grids against the original builder. The current
+presentation hash is `1de3341c933449f6`; gameplay stays at content revision 4.
+
+Scenery export v3 adds `presentationFingerprint`, a 16-digit hexadecimal shared
+scenery hash. Browser static, water and animated resource keys include it, so
+mask edits cannot reuse geometry under an unchanged gameplay revision. Older
+scenery exports fail closed; gameplay snapshot/command wire stays v7/v2.
+Native static props remain instanced boxes; browser grass joins the existing
+chunk/colour/distance batches. The debug `grass` camera shows the western
+clearing without moving the player. Browser acceptance saves its frame and
+bounded scene-work evidence under `artifacts/browser/outpost-grass-*`.

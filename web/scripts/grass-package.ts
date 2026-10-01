@@ -33,6 +33,26 @@ export function savedMask(bytes: Uint8Array, columns: number, rows: number): Uin
   }));
 }
 
+/** Lower accepted placements exactly to centimetre game units; never sample a mask here. */
+function rustPlacements(instances: unknown[], transforms: unknown[]): Uint8Array {
+  assert.equal(instances.length, transforms.length);
+  const lines = instances.map((value, index) => {
+    const instance = record(value);
+    const transform = record(transforms[index]);
+    assert.equal(instance.id, transform.id);
+    assert.ok(typeof instance.id === "string" && /^outpost-grass-[0-9]{3}$/.test(instance.id));
+    assert.ok(Array.isArray(instance.positionMicro) && instance.positionMicro.length === 3);
+    const position = instance.positionMicro.map((coordinate, axis) => {
+      assert.ok(typeof coordinate === "number" && Number.isSafeInteger(coordinate) && coordinate % 10_000 === 0,
+        "saved grass positions must lower exactly to centimetres");
+      return coordinate / 10_000 + (axis === 2 ? 2000 : 0);
+    });
+    assert.ok(Array.isArray(transform.halfExtents));
+    return `    (${JSON.stringify(instance.id)}, [${position.join(", ")}], ${transform.yaw}, ${transform.scalePermille}, [${transform.halfExtents.join(", ")}]),`;
+  });
+  return Buffer.from(`[\n${lines.join("\n")}\n]\n`);
+}
+
 /** Resolve only declared public exports from the verified, pinned producer. */
 async function producerExports(checkout: string) {
   const packageJson = record(JSON.parse(await readFile(path.join(checkout, "package.json"), "utf8")));
@@ -135,8 +155,11 @@ export async function buildGrassPackage(checkout: string, directory = GRASS_PACK
       ["selected.instances.json", selectedBytes],
       ["selected.transforms.json", Buffer.from(`${JSON.stringify(selectedTransforms, null, 2)}\n`)],
       ["exclusion.rgba8.json", encodedMask],
+      ["accepted.props.rs", rustPlacements(accepted.instances, transforms)],
+      ["selected.props.rs", rustPlacements(selected.instances, selectedTransforms)],
     ]);
-    const manifest = { schemaVersion: 1, producer: source.producer, sourceFiles: Object.fromEntries(names.map((name) => [name, { sha256: sha256(inputs.get(name)!), byteLength: inputs.get(name)!.length }])),
+    const consumerAdapter = { source: "web/scripts/grass-package.ts", sha256: sha256(await readFile(new URL("./grass-package.ts", import.meta.url))) };
+    const manifest = { schemaVersion: 1, producer: source.producer, consumerAdapter, sourceFiles: Object.fromEntries(names.map((name) => [name, { sha256: sha256(inputs.get(name)!), byteLength: inputs.get(name)!.length }])),
       build, result, outputs: Object.fromEntries([...outputFiles].map(([name, bytes]) => [name, { sha256: sha256(bytes), byteLength: bytes.length }])),
       evidence: { repeatedFilterMatches: true, coldReplayMatches: true, sourceCount: accepted.instances.length, keptCount: selected.instances.length, candidatesGenerated: 0 } };
     outputFiles.set("manifest.json", Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));

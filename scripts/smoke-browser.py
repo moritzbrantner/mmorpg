@@ -438,6 +438,27 @@ class BrowserAcceptance(unittest.TestCase):
         self.frames(3)
         self.assertGreater(self.page.evaluate("window.__calls.draws"), draws, "The render loop must keep running")
 
+    def test_saved_grass_clearing_and_bounded_batches(self):
+        self.open("?debug")
+        self.enter_world()
+        before = self.debug_stats()["self"]
+        self.page.evaluate("window.__valeDebug.flyTo('grass')")
+        self.frames(8)
+        self.page.screenshot(path=str(ARTIFACTS / "outpost-grass-clearing.png"))
+        stats = self.debug_stats()
+        self.assertEqual(stats["self"], before)
+        self.assertEqual(stats["scene"]["props"]["grass-tuft"], 2337)
+        self.assertLessEqual(stats["scene"]["staticNodes"], 600)
+        self.assertLessEqual(stats["scene"]["staticVertices"], 230_000)
+        colours = self.canvas_colours()
+        self.assertGreater(colours["distinct"], 400)
+        self.assertGreater(colours["covered"], 0.5)
+        (ARTIFACTS / "outpost-grass-evidence.json").write_text(json.dumps({
+            "acceptedInstances": 118, "selectedInstances": 55,
+            "clearingMetres": [-28, 8, -18, 16],
+            "scene": stats["scene"], "canvasColours": colours,
+        }, indent=2))
+
     def test_storage_denial_keeps_the_world_playable(self):
         self.context.add_init_script("Object.defineProperty(window, 'localStorage', {get() { throw new DOMException('Storage denied', 'SecurityError'); }});")
         self.open()
