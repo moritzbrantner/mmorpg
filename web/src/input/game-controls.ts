@@ -113,9 +113,14 @@ export const GAME_ACTION_REGISTRY: ActionRegistry = {
   ],
 };
 
-/** Native controls and the character turntable own their keyboard input. */
-const NATIVE_CONTROL_SELECTOR =
-  "button, input, select, textarea, summary, a, [contenteditable=true], [role=slider]";
+/** Text-like controls and the character turntable own every key. */
+const TEXT_LIKE_CONTROL_SELECTOR = "input, select, textarea, [contenteditable=true], [role=slider]";
+/**
+ * Buttons and links own only their activation, focus and dismissal keys (panels close themselves
+ * on Escape); other keys such as movement still reach gameplay while an overlay button has focus.
+ */
+const BUTTON_LIKE_CONTROL_SELECTOR = "button, summary, a";
+const BUTTON_OWNED_CODES = new Set(["Enter", "NumpadEnter", "Space", "Tab", "Escape"]);
 
 export type GameControlsTargets = {
   window: RuntimeEventTargetLike;
@@ -169,8 +174,13 @@ export class GameControls {
       ...(targets.getGamepads ? { getGamepads: targets.getGamepads } : {}),
       ...(targets.frameScheduler ? { scheduler: targets.frameScheduler } : {}),
     });
-    // Moving focus into a native control must not leave movement held.
-    const onFocusIn = () => this.retire("focusChanged");
+    // Typing into a text-like control must not leave movement held; buttons do not take
+    // movement keys, so focusing an overlay button keeps running.
+    const onFocusIn = (event: unknown) => {
+      if (ownsEveryKey((event as { target?: unknown } | null)?.target)) {
+        this.retire("focusChanged");
+      }
+    };
     targets.document.addEventListener("focusin", onFocusIn);
     return () => {
       targets.document.removeEventListener("focusin", onFocusIn);
@@ -202,7 +212,7 @@ function isGameAction(action: string): action is GameAction {
   return (GAME_ACTIONS as readonly string[]).includes(action);
 }
 
-/** Drops keydowns aimed at native controls; keyups always pass so held keys still release. */
+/** Drops keydowns a focused native control owns; keyups always pass so held keys still release. */
 function ignoringNativeControls(target: RuntimeEventTargetLike): RuntimeEventTargetLike {
   const wrapped = new Map<(event: any) => void, (event: any) => void>();
   return {
@@ -210,7 +220,7 @@ function ignoringNativeControls(target: RuntimeEventTargetLike): RuntimeEventTar
       const filtered =
         type === "keydown"
           ? (event: any) => {
-              if (!isNativeControl(event?.target)) {
+              if (!ownedByNativeControl(event?.target, event?.code)) {
                 listener(event);
               }
             }
@@ -225,7 +235,18 @@ function ignoringNativeControls(target: RuntimeEventTargetLike): RuntimeEventTar
   };
 }
 
-function isNativeControl(target: unknown): boolean {
+function ownedByNativeControl(target: unknown, code: unknown): boolean {
+  return (
+    ownsEveryKey(target) ||
+    (matches(target, BUTTON_LIKE_CONTROL_SELECTOR) && typeof code === "string" && BUTTON_OWNED_CODES.has(code))
+  );
+}
+
+function ownsEveryKey(target: unknown): boolean {
+  return matches(target, TEXT_LIKE_CONTROL_SELECTOR);
+}
+
+function matches(target: unknown, selector: string): boolean {
   const closest = (target as { closest?: (selector: string) => unknown } | null)?.closest;
-  return typeof closest === "function" && Boolean(closest.call(target, NATIVE_CONTROL_SELECTOR));
+  return typeof closest === "function" && Boolean(closest.call(target, selector));
 }

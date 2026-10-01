@@ -52,7 +52,8 @@ function key(code: string, target?: unknown, repeat = false) {
 }
 
 /** A focused native control, as `closest` sees it. */
-const nativeButton = { closest: (selector: string) => (selector.includes("button") ? {} : null) };
+const nativeButton = { closest: (selector: string) => (selector.startsWith("button") ? {} : null) };
+const nativeSlider = { closest: (selector: string) => (selector.includes("role=slider") ? {} : null) };
 
 function harness(initial: ControlScreen = { phase: "world", panelOpen: false }) {
   let screen = initial;
@@ -160,15 +161,27 @@ describe("MMORPG semantic controls", () => {
     expect(app.actions.at(-1)).toBe("ui.enterWorld");
   });
 
-  test("native controls and text entry keep their keys; focusing them releases held movement", () => {
+  test("native controls keep their own keys; focusing them releases held movement", () => {
     const app = harness();
     app.window.emit("keydown", key("Space", nativeButton));
+    app.window.emit("keydown", key("Escape", nativeButton));
+    app.window.emit("keydown", key("ArrowLeft", nativeSlider));
     app.window.emit("keydown", key("KeyW", { tagName: "INPUT", type: "text", isContentEditable: false }));
     expect(app.actions).toEqual([]);
 
     app.window.emit("keydown", key("KeyD"));
-    app.document.emit("focusin");
+    app.document.emit("focusin", { target: nativeButton });
+    // An overlay button does not stop running.
+    expect(app.controls.heldIntent().strafe).toBe(1);
+    app.document.emit("focusin", { target: nativeSlider });
     expect(app.controls.heldIntent().steering).toBe(false);
+  });
+
+  test("movement still reaches gameplay while an overlay's button has focus", () => {
+    const app = harness({ phase: "world", panelOpen: true });
+    app.window.emit("keydown", key("KeyW", nativeButton));
+    expect(app.controls.heldIntent().forward).toBe(1);
+    expect(app.actions).toEqual(["move.forward"]);
   });
 
   test("leaving the screen, blur and hidden visibility retire held movement", () => {
