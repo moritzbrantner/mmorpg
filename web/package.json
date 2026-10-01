@@ -7,16 +7,24 @@
     "build": "bun scripts/build-wasm.ts && tsc --noEmit && vite build",
     "build:wasm": "bun scripts/build-wasm.ts",
     "dev": "bun scripts/build-wasm.ts && vite",
-    "test": "bun test"
+    "test": "bun test",
+    "size:budget": "bun scripts/native-size.ts",
+    "size:baseline:capture": "bun scripts/native-size.ts --capture",
+    "test:size-evidence": "bun scripts/native-size.acceptance.ts",
+    "typecheck:size": "tsc --noEmit -p tsconfig.size.json"
   },
   "dependencies": {
     "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#f484db8a3d2a7a555fa463eddf9c28790b240ce0",
     "three": "0.185.1"
   },
   "devDependencies": {
+    "@types/node": "26.6.3",
+    "@types/three": "0.185.4",
+    "bun-types": "1.4.2",
+    "coding-tooling": "github:moritzbrantner/coding-tooling#122ad55cbc5fd82233f2aa4af17278554db5cc78",
     "typescript": "5.9.3",
-    "vite": "7.3.6",
-    "@types/three": "0.185.4"
+    "undici-types": "8.9.0",
+    "vite": "7.3.6"
   },
   "packageManager": "bun@1.4.2"
 }
