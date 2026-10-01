@@ -51,7 +51,7 @@ For each `spec:draft` issue (often drafted in a ChatGPT chat):
 For each of `agent:sol` and `agent:sonnet` with no startable task (an open `spec:ready` issue whose "Start after" dependencies are merged) and nothing `in-progress`:
 
 - Pick the next unfinished step: the open plan issues from `docs/STARTER_ZONE.md`, then the roadmap.
-- Respect dependencies: a presentation task waits for its core task.
+- Respect dependencies: a presentation task waits for its core task. Queue only a step whose own dependencies are already merged; if no such step exists for that agent, queue nothing and say so in the report.
 - Avoid conflicts: never queue two tasks that bump the same format version or edit the same HUD/module concurrently.
 - Write the issue exactly per `docs/AGENT_TASKS.md` "Writing an issue", with labels `agent-task`, `spec:ready` and the `agent:*` label. Verify every number and name you cite against the code first.
 - Link it from the parent plan issue with a one-line comment.
