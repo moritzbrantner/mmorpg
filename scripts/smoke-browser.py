@@ -108,17 +108,24 @@ class BrowserAcceptance(unittest.TestCase):
     def enter_button(self):
         return self.page.get_by_role("button", name=re.compile("^Enter World"))
 
-    def enter_world(self):
+    def enter_world(self, ticking=True):
+        """Enters the world. The class choice resolves in the zone's first tick,
+        so the resource check needs a ticking source (tests that pause the
+        source check it after their own ticks)."""
         self.enter_button().click()
         expect(self.page.locator("#character-select")).to_be_hidden()
         expect(self.page.locator(".hud")).to_be_visible()
         expect(self.page.get_by_role("progressbar", name="Level 1 · 0 / 100 XP")).to_be_visible()
         self.assertEqual(self.page.locator("#experience-bar").evaluate("bar => [bar.max, bar.value]"), [100, 0])
         expect(self.page.locator("#progression-feedback")).to_have_text("")
-        # Entry chose the character's class: the HUD names its resource.
-        expect(self.page.locator("#unit-status")).to_contain_text(re.compile(r"(Rage|Focus|Mana) \d+/\d+"))
+        if ticking:
+            self.expect_class_resource()
         self.page.locator("#world").focus()
         self.frames(4)
+
+    def expect_class_resource(self):
+        """Entry chose the character's class: the HUD names its resource."""
+        expect(self.page.locator("#unit-status")).to_contain_text(re.compile(r"(Rage|Focus|Mana) \d+/\d+"))
 
     def world_view(self):
         """The world canvas between the HUD panels; the camera follows the character."""
@@ -647,7 +654,8 @@ class BrowserAcceptance(unittest.TestCase):
             for (let tick = 0; tick < ticks; tick++) window.__lootAdvance(1 / 30);
           };
         }""")
-        self.enter_world()
+        # The paused source has not run the tick that takes the class choice yet.
+        self.enter_world(ticking=False)
         self.page.evaluate("""() => {
           const moves = new Map([[0,[1,0]],[36,[1,49152]],[121,[1,32768]],
             [131,[1,49152]],[375,[1,32768]],[395,[0,32768]]]);
@@ -664,6 +672,7 @@ class BrowserAcceptance(unittest.TestCase):
           window.__lootBefore = window.__lootLatest();
         }""")
         self.assertEqual(self.page.evaluate("Number(window.__lootLatest().loot.diedAt)"), 912)
+        self.expect_class_resource()
         self.page.evaluate("""() => {
           window.__lootSend({kind:'select-target',target:null});
           window.__lootStep(1);
