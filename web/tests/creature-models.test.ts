@@ -164,6 +164,9 @@ describe("trot gait", () => {
     expect([idle.frontLeft, idle.frontRight, idle.backLeft, idle.backRight].map(Math.abs)).toEqual([0, 0, 0, 0]);
     expect(Math.abs(idle.bob)).toBe(0);
     expect(idle.breathe).toBeGreaterThan(0);
+    const torso = (time: number) => CREATURE_MODEL.nodes(frame(creature(1), { ...REST, time })).find((node) => node.id.endsWith("-torso"))!;
+    const widthAt = (time: number) => (torso(time).geometry as { size: number[] }).size[0]!;
+    expect(widthAt(0.3)).not.toBe(widthAt(1.4));
     expect(quadrupedPoseFor({ ...REST, time: 0 })).toEqual(quadrupedPoseFor({ ...REST, time: 0 }));
   });
 

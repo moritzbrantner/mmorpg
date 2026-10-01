@@ -135,7 +135,9 @@ export function animalParts(
   const at = ([x, y, z]: Pt, mirror = 1): [number, number, number] => [x * mirror * hx, y * height - pivotY, z * hz];
   const size = ([x, y, z]: Pt): Primitive => box(x * hx, y * height, z * hz);
   const frame = (position: Pt, mirror = 1): Frame => child(body, at(position, mirror));
-  addPart(parts, "torso", size(spec.torso.size), spec.fur, frame(spec.torso.at));
+  const breathe = 1 + pose.breathe;
+  const [tx, ty, tz] = spec.torso.size;
+  addPart(parts, "torso", size([tx * breathe, ty, tz * breathe]), spec.fur, frame(spec.torso.at));
   const { legs } = spec;
   const swings = [
     ["front-left", 1, legs.front, pose.frontLeft], ["front-right", -1, legs.front, pose.frontRight],
