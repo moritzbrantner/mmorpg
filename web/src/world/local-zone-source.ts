@@ -1,11 +1,12 @@
 import { encodeCommand, type WorldCommand } from "../command-wire";
 import { FixedTickClock } from "../demo-clock";
 import { decodeSnapshot, SnapshotBuffer, type EntityState, type ZoneSnapshot } from "../replication";
-import type { WorldSource } from "./world-source";
+import { classChoiceCodes, DEFAULT_JOIN_CHARACTER, type JoinCharacter, type WorldSource } from "./world-source";
 
 /** The subset of the wasm-bindgen `LocalZone` this source drives. */
 export type LocalZoneHandle = {
-  join(): number;
+  /** Spawns a player and submits its class choice as command sequence 1. */
+  join(classId: number, sex: number): number;
   leave(player: number): boolean;
   submit(player: number, sequence: number, command: Uint8Array): boolean;
   tick(): bigint;
@@ -32,11 +33,12 @@ export class LocalZoneSource implements WorldSource {
     this.#zone = zone;
   }
 
-  join(): number {
+  join(character: JoinCharacter = DEFAULT_JOIN_CHARACTER): number {
     if (this.#player !== null) {
       throw new Error("Already in the world; leave before joining again.");
     }
-    const player = this.#zone.join();
+    const choice = classChoiceCodes(character);
+    const player = this.#zone.join(choice.classId, choice.sex);
     this.#clock.reset();
     this.#history.reset();
     this.#latest = null;
@@ -48,7 +50,8 @@ export class LocalZoneSource implements WorldSource {
       throw error;
     }
     this.#player = player;
-    this.#sequence = 0;
+    // The class choice was sequence 1.
+    this.#sequence = 1;
     return player;
   }
 

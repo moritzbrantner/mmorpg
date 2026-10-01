@@ -1,4 +1,4 @@
-/** Player-visible protocol v8 only. Canonical recovery state never enters rendering. */
+/** Player-visible protocol v9 only. Canonical recovery state never enters rendering. */
 import { entityKindFromCode, sameEntity, type EntityKind, type EntityRef } from "./entity-ref";
 
 export type { EntityKind, EntityRef } from "./entity-ref";
@@ -23,7 +23,7 @@ export type EntityFlags = {
 export type EntityState = {
   kind: EntityKind;
   entityId: number;
-  /** Creature template ID, NPC ID, or 0 for players. */
+  /** Creature template ID, NPC ID, or for players 0 without a class and otherwise `1 + class × 2 + sex`. */
   appearance: number;
   position: Vector3;
   /** Presentation velocity in units per tick, saturated to the i8 wire range. */
@@ -35,6 +35,17 @@ export type EntityState = {
   healthPercent: number;
   flags: EntityFlags;
 };
+
+export type ClassId = "warden" | "ranger" | "arcanist";
+export type ResourceKind = "rage" | "focus" | "mana";
+export type ClassChoice = { classId: ClassId; sex: "female" | "male" };
+export type ResourceState = { kind: ResourceKind; value: number; max: number };
+/** A cast or channel in progress: `elapsed` of `total` ticks. */
+export type CastState = { ability: number; elapsed: number; total: number; channel: boolean };
+export type AuraKind = "damage-over-time" | "heal-over-time" | "absorb" | "root" | "snare" | "stun" | "haste";
+/** `amount`: total of a damage/heal over time, remaining shield, snare/haste percent, 0 otherwise. */
+export type AuraState = { ability: number; kind: AuraKind; remaining: number; amount: number };
+export type CooldownState = { ability: number; remaining: number };
 
 /** The viewer's own exact state. */
 export type ViewerState = {
@@ -48,6 +59,11 @@ export type ViewerState = {
   inCombat: boolean;
   autoAttacking: boolean;
   target: EntityRef | null;
+  classChoice: ClassChoice | null;
+  /** Present exactly when the viewer has a class. */
+  resource: ResourceState | null;
+  cast: CastState | null;
+  globalCooldown: number;
 };
 
 export type ErrorCode =
@@ -64,14 +80,28 @@ export type ErrorCode =
   | "invalid-loot"
   | "not-loot-owner"
   | "empty-loot"
-  | "money-overflow";
+  | "money-overflow"
+  | "no-class"
+  | "not-learned"
+  | "not-ready"
+  | "not-enough-resource"
+  | "stunned"
+  | "already-casting"
+  | "invalid-class";
 
 /** Feedback the viewer received in the projection's tick; cosmetic and lossy. */
 export type ZoneEvent =
   | { kind: "damage-dealt" | "damage-taken"; source: EntityRef; target: EntityRef; amount: number; critical: boolean }
   | { kind: "miss" | "evade"; source: EntityRef; target: EntityRef }
   | { kind: "died"; entity: EntityRef; killer: EntityRef | null }
-  | { kind: "error"; code: ErrorCode; target: EntityRef | null };
+  | { kind: "error"; code: ErrorCode; target: EntityRef | null }
+  | { kind: "cast-started"; source: EntityRef; target: EntityRef | null; ability: number; ticks: number }
+  | { kind: "ability-used"; source: EntityRef; target: EntityRef | null; ability: number }
+  | { kind: "healed"; source: EntityRef; target: EntityRef; ability: number; amount: number }
+  | { kind: "aura-applied"; source: EntityRef; target: EntityRef; ability: number; ticks: number }
+  | { kind: "aura-removed"; source: EntityRef; target: EntityRef; ability: number }
+  | { kind: "interrupted"; source: EntityRef | null; target: EntityRef; ability: number }
+  | { kind: "absorbed"; source: EntityRef; target: EntityRef; amount: number };
 
 /** Wire catalog revision 1, validated against the core's immutable stack limits. */
 export type InventorySlot = { itemId: number; quantity: number } | null;
@@ -91,8 +121,14 @@ export type ZoneSnapshot = {
   /** The player this projection is addressed to ("self"). */
   viewerId: number;
   viewer: ViewerState;
+  /** Running cooldowns in ability order. */
+  cooldowns: readonly CooldownState[];
+  /** The viewer's auras in slot order. */
+  auras: readonly AuraState[];
   /** The viewer's target's own target. */
   targetOfTarget: EntityRef | null;
+  /** The viewer's target's cast and auras; empty without a living visible target. */
+  targetDetail: { cast: CastState | null; auras: readonly AuraState[] };
   inventoryRevision: bigint;
   /** Complete self bag when present; null means retain prior state, never empty. */
   inventory: readonly InventorySlot[] | null;
@@ -106,24 +142,63 @@ export type ZoneSnapshot = {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 8;
-const SCHEMA_VERSION = 8;
+const WIRE_VERSION = 9;
+const SCHEMA_VERSION = 9;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
-/** Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 27, target 5, inventory revision 8/presence 1, loot presence 1, two counts. */
-const FIXED_BYTES = 77;
+/**
+ * Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 27, self abilities 16 (class,
+ * resource, global cooldown, cast, two list counts), target 12 (target-of-target, its cast, aura count),
+ * inventory revision 8/presence 1, loot presence 1, two counts.
+ */
+const FIXED_BYTES = 100;
 const ENTITY_BYTES = 21;
 const MAX_EVENTS = 16;
-/** (1 077 − 77) / 21: records that fit without events or a bag sheet. */
-const MAX_ENTITIES = 47;
+/** (1 077 − 100) / 21: records that fit without events, sheets, cooldowns or auras. */
+const MAX_ENTITIES = 46;
+const MAX_COOLDOWNS = 4;
+const MAX_AURAS = 8;
+const GLOBAL_COOLDOWN_TICKS = 45;
 const BUFFER_CAPACITY = 32;
 
 const ERROR_CODES: readonly ErrorCode[] = [
   "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target",
   "too-many-intents", "invalid-inventory-move", "inventory-full",
   "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
+  "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
 ];
+const CLASSES: readonly ClassId[] = ["warden", "ranger", "arcanist"];
+const RESOURCES: readonly ResourceKind[] = ["rage", "focus", "mana"];
+const AURA_KINDS: readonly AuraKind[] = ["damage-over-time", "heal-over-time", "absorb", "root", "snare", "stun", "haste"];
+
+type AbilityShape = { castTicks: number; channel: boolean; cooldown: number; aura: AuraKind | null; auraTicks: number };
+const instant = (cooldown: number, aura: AuraKind | null = null, auraTicks = 0): AbilityShape =>
+  ({ castTicks: 0, channel: false, cooldown, aura, auraTicks });
+/**
+ * Ability catalog revision 1 by ID, the wire facts the decoder validates (cast time, channel, cooldown
+ * and aura); `local-zone-wasm.test.ts` holds it to the WASM catalog export.
+ */
+export const ABILITY_SHAPES: ReadonlyMap<number, AbilityShape> = new Map([
+  [1, instant(0)],
+  [2, instant(360, "stun", 60)],
+  [3, instant(900, "heal-over-time", 300)],
+  [4, instant(180)],
+  [5, instant(180)],
+  [6, instant(0, "damage-over-time", 450)],
+  [7, instant(360, "snare", 120)],
+  [8, instant(900, "haste", 300)],
+  [9, { castTicks: 60, channel: false, cooldown: 0, aura: null, auraTicks: 0 }],
+  [10, instant(600, "root", 180)],
+  [11, instant(900, "absorb", 600)],
+  [12, { castTicks: 180, channel: true, cooldown: 0, aura: null, auraTicks: 0 }],
+  [13, { castTicks: 45, channel: false, cooldown: 240, aura: null, auraTicks: 0 }],
+  [14, { castTicks: 90, channel: false, cooldown: 600, aura: null, auraTicks: 0 }],
+]);
+/** Mana: 110 + 22 per level above 1; rage and focus: 100. */
+function resourceMax(kind: ResourceKind, level: number): number {
+  return kind === "mana" ? 110 + 22 * (level - 1) : 100;
+}
 
 class Reader {
   readonly #view: DataView;
@@ -244,9 +319,94 @@ function decodeEvent(reader: Reader): ZoneEvent {
       }
       return { kind: "error", code, target };
     }
+    case 7:
+    case 8: {
+      const ability = knownAbility(flags);
+      if (source === null) {
+        throw new Error("Malformed event record");
+      }
+      if (kind === 7) {
+        return { kind: "cast-started", source, target, ability, ticks: amount };
+      }
+      noAmount();
+      return { kind: "ability-used", source, target, ability };
+    }
+    case 9:
+    case 10:
+    case 11: {
+      const ability = knownAbility(flags);
+      const [from, to] = pair();
+      if (kind === 9) {
+        return { kind: "healed", source: from, target: to, ability, amount };
+      }
+      if (kind === 10) {
+        return { kind: "aura-applied", source: from, target: to, ability, ticks: amount };
+      }
+      noAmount();
+      return { kind: "aura-removed", source: from, target: to, ability };
+    }
+    case 12: {
+      const ability = knownAbility(flags);
+      if (target === null) {
+        throw new Error("Malformed event record");
+      }
+      noAmount();
+      return { kind: "interrupted", source, target, ability };
+    }
+    case 13: {
+      critical(false);
+      const [from, to] = pair();
+      return { kind: "absorbed", source: from, target: to, amount };
+    }
     default:
       throw new Error("Unknown event kind");
   }
+}
+
+function knownAbility(id: number): number {
+  if (!ABILITY_SHAPES.has(id)) {
+    throw new Error("Unknown ability");
+  }
+  return id;
+}
+
+/** A cast names a catalog ability with its exact cast time and channel flag, and is in progress. */
+function decodeCast(reader: Reader): CastState | null {
+  const ability = reader.u8();
+  const [channel = false] = reader.flags(1);
+  const elapsed = reader.u16();
+  const total = reader.u16();
+  if (ability === 0) {
+    if (channel || elapsed !== 0 || total !== 0) {
+      throw new Error("Inconsistent cast state");
+    }
+    return null;
+  }
+  const shape = ABILITY_SHAPES.get(ability);
+  if (!shape || shape.castTicks !== total || shape.channel !== channel || total === 0 || elapsed >= total) {
+    throw new Error("Inconsistent cast state");
+  }
+  return { ability, elapsed, total, channel };
+}
+
+function decodeAuras(reader: Reader): AuraState[] {
+  const count = reader.u8();
+  if (count > MAX_AURAS) {
+    throw new Error("Snapshot has too many auras");
+  }
+  const auras: AuraState[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const ability = reader.u8();
+    const kind = AURA_KINDS[reader.u8() - 1];
+    const remaining = reader.u16();
+    const amount = reader.u16();
+    const shape = ABILITY_SHAPES.get(ability);
+    if (!shape || kind === undefined || shape.aura !== kind || remaining === 0 || remaining > shape.auraTicks) {
+      throw new Error("Inconsistent aura record");
+    }
+    auras.push({ ability, kind, remaining, amount });
+  }
+  return auras;
 }
 
 function decodeEntity(reader: Reader): EntityState {
@@ -322,7 +482,57 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
     || health > maxHealth || dead !== (health === 0)) {
     throw new Error("Inconsistent viewer state");
   }
+  const classCode = reader.u8();
+  if (classCode > 6) {
+    throw new Error("Inconsistent viewer ability state");
+  }
+  const classChoice: ClassChoice | null = classCode === 0
+    ? null
+    : { classId: CLASSES[Math.floor((classCode - 1) / 2)] ?? "warden", sex: (classCode - 1) % 2 === 0 ? "female" : "male" };
+  const resourceCode = reader.u8();
+  const resourceValue = reader.u16();
+  const resourceMaximum = reader.u16();
+  const globalCooldown = reader.u16();
+  const cast = decodeCast(reader);
+  const cooldownCount = reader.u8();
+  if (cooldownCount > MAX_COOLDOWNS) {
+    throw new Error("Snapshot has too many cooldowns");
+  }
+  const cooldowns: CooldownState[] = [];
+  for (let index = 0; index < cooldownCount; index += 1) {
+    const ability = reader.u8();
+    const remaining = reader.u16();
+    const shape = ABILITY_SHAPES.get(ability);
+    const previous = cooldowns.at(-1);
+    if (!shape || remaining === 0 || remaining > shape.cooldown || (previous && previous.ability >= ability)) {
+      throw new Error("Inconsistent cooldown record");
+    }
+    cooldowns.push({ ability, remaining });
+  }
+  const auras = decodeAuras(reader);
+  let resource: ResourceState | null = null;
+  if (classChoice === null) {
+    if (resourceCode !== 0 || resourceValue !== 0 || resourceMaximum !== 0) {
+      throw new Error("Inconsistent viewer resource");
+    }
+  } else {
+    const kind = RESOURCES[CLASSES.indexOf(classChoice.classId)];
+    if (kind === undefined || RESOURCES[resourceCode - 1] !== kind || resourceMaximum !== resourceMax(kind, level)
+      || resourceValue > resourceMaximum) {
+      throw new Error("Inconsistent viewer resource");
+    }
+    resource = { kind, value: resourceValue, max: resourceMaximum };
+  }
+  if (globalCooldown > GLOBAL_COOLDOWN_TICKS
+    || (classChoice === null && (globalCooldown !== 0 || cast !== null || cooldowns.length > 0 || auras.length > 0))
+    || (dead && (cast !== null || auras.length > 0))) {
+    throw new Error("Inconsistent viewer ability state");
+  }
   const targetOfTarget = reader.entity();
+  const targetDetail = { cast: decodeCast(reader), auras: decodeAuras(reader) };
+  if (target === null && (targetDetail.cast !== null || targetDetail.auras.length > 0)) {
+    throw new Error("Target detail needs a target");
+  }
   const inventoryRevision = reader.u64();
   if (inventoryRevision === 0n) {
     throw new Error("Inventory revision must be nonzero");
@@ -398,8 +608,11 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   }
   return {
     zoneId, tick, contentRevision, acknowledgedSequence, viewerId,
-    viewer: { copper, experience, experienceToNextLevel, health, maxHealth, level, dead, inCombat, autoAttacking, target },
-    targetOfTarget, inventoryRevision, inventory, loot, events, entities,
+    viewer: {
+      copper, experience, experienceToNextLevel, health, maxHealth, level, dead, inCombat, autoAttacking, target,
+      classChoice, resource, cast, globalCooldown,
+    },
+    cooldowns, auras, targetOfTarget, targetDetail, inventoryRevision, inventory, loot, events, entities,
   };
 }
 

@@ -115,6 +115,8 @@ class BrowserAcceptance(unittest.TestCase):
         expect(self.page.get_by_role("progressbar", name="Level 1 · 0 / 100 XP")).to_be_visible()
         self.assertEqual(self.page.locator("#experience-bar").evaluate("bar => [bar.max, bar.value]"), [100, 0])
         expect(self.page.locator("#progression-feedback")).to_have_text("")
+        # Entry chose the character's class: the HUD names its resource.
+        expect(self.page.locator("#unit-status")).to_contain_text(re.compile(r"(Rage|Focus|Mana) \d+/\d+"))
         self.page.locator("#world").focus()
         self.frames(4)
 

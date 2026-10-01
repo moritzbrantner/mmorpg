@@ -1,6 +1,6 @@
 /**
- * Command wire version 3, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
- * `fixtures/protocol/commands-v3.hex` holds both encoders to the same bytes.
+ * Command wire version 4, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
+ * `fixtures/protocol/commands-v4.hex` holds both encoders to the same bytes.
  * The session supplies player identity and sequence separately.
  */
 import { entityKindCode, isU32, type EntityRef } from "./entity-ref";
@@ -16,9 +16,14 @@ export type WorldCommand =
   | { kind: "start-attack" }
   | { kind: "stop-attack" }
   | { kind: "release-spirit" }
-  | { kind: "move-item"; source: number; destination: number; quantity: number };
+  | { kind: "move-item"; source: number; destination: number; quantity: number }
+  /** A class ability at `target`, or at the current selection with `null`. */
+  | { kind: "use-ability"; ability: number; target: EntityRef | null }
+  | { kind: "cancel-cast" }
+  /** Class 0 Warden, 1 Ranger, 2 Arcanist; sex 0 female, 1 male. The zone refuses invalid values. */
+  | { kind: "choose-class"; classId: number; sex: number };
 
-const COMMAND_WIRE_VERSION = 3;
+const COMMAND_WIRE_VERSION = 4;
 const MOVE_TAG = 1;
 const JUMP_TAG = 2;
 const SELECT_TARGET_TAG = 3;
@@ -27,10 +32,29 @@ const STOP_ATTACK_TAG = 5;
 const RELEASE_SPIRIT_TAG = 6;
 const MOVE_ITEM_TAG = 7;
 const LOOT_TAG = 8;
+const USE_ABILITY_TAG = 9;
+const CANCEL_CAST_TAG = 10;
+const CHOOSE_CLASS_TAG = 11;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
   return value === -1 || value === 0 || value === 1;
+}
+
+function isU8(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= 255;
+}
+
+/** Writes a 5-byte entity reference at `offset`; `null` is kind 0 with ID 0. */
+function writeEntity(view: DataView, offset: number, target: EntityRef | null): void {
+  if (target === null) {
+    return;
+  }
+  if (!isU32(target.id)) {
+    throw new Error("Target IDs must be u32.");
+  }
+  view.setUint8(offset, entityKindCode(target.kind));
+  view.setUint32(offset + 1, target.id);
 }
 
 export function encodeCommand(command: WorldCommand): Uint8Array {
@@ -84,14 +108,28 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       const view = new DataView(payload.buffer);
       view.setUint8(0, COMMAND_WIRE_VERSION);
       view.setUint8(1, SELECT_TARGET_TAG);
-      if (command.target !== null) {
-        if (!isU32(command.target.id)) {
-          throw new Error("Target IDs must be u32.");
-        }
-        view.setUint8(2, entityKindCode(command.target.kind));
-        view.setUint32(3, command.target.id);
-      }
+      writeEntity(view, 2, command.target);
       return payload;
+    }
+    case "use-ability": {
+      if (!isU8(command.ability)) {
+        throw new Error("Ability IDs must be u8.");
+      }
+      const payload = new Uint8Array(8);
+      const view = new DataView(payload.buffer);
+      view.setUint8(0, COMMAND_WIRE_VERSION);
+      view.setUint8(1, USE_ABILITY_TAG);
+      view.setUint8(2, command.ability);
+      writeEntity(view, 3, command.target);
+      return payload;
+    }
+    case "cancel-cast":
+      return Uint8Array.of(COMMAND_WIRE_VERSION, CANCEL_CAST_TAG);
+    case "choose-class": {
+      if (!isU8(command.classId) || !isU8(command.sex)) {
+        throw new Error("Class choices must fit u8 fields.");
+      }
+      return Uint8Array.of(COMMAND_WIRE_VERSION, CHOOSE_CLASS_TAG, command.classId, command.sex);
     }
     case "start-attack":
       return Uint8Array.of(COMMAND_WIRE_VERSION, START_ATTACK_TAG);

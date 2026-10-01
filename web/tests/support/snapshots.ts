@@ -11,12 +11,16 @@ export function playerEntity(entityId: number, position: Vector3, velocity: Vect
 
 export const HEALTHY_VIEWER: ViewerState = {
   copper: 0, health: 50, maxHealth: 50, experience: 0, experienceToNextLevel: 100, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
+  classChoice: null, resource: null, cast: null, globalCooldown: 0,
 };
 
 /** A projection with a healthy viewer, no target and no events. */
 export function testSnapshot(
   fields: Pick<ZoneSnapshot, "zoneId" | "tick" | "contentRevision" | "acknowledgedSequence" | "viewerId" | "entities"> &
-    Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events" | "inventoryRevision" | "inventory" | "loot">>,
+    Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events" | "inventoryRevision" | "inventory" | "loot" | "cooldowns" | "auras" | "targetDetail">>,
 ): ZoneSnapshot {
-  return { loot: null, inventoryRevision: 1n, inventory: null, viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [], ...fields };
+  return {
+    loot: null, inventoryRevision: 1n, inventory: null, viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [],
+    cooldowns: [], auras: [], targetDetail: { cast: null, auras: [] }, ...fields,
+  };
 }

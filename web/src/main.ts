@@ -45,6 +45,7 @@ import { characterLook } from "./world/humanoid";
 import { WorldView, webGpuProjection } from "./world/world-view";
 import { attackToggle, nextTabTarget } from "./world/units/targeting";
 import { GameControls, type GameAction } from "./input/game-controls";
+import { cancelCast, useAbilitySlot } from "./world/units/abilities";
 import "./character-selection-layout.css";
 import "./character-creation.css";
 
@@ -207,7 +208,7 @@ const worldView = new WorldView(renderer, camera, {
 const controls = new GameControls({
   screen: () =>
     entryState.phase === "world"
-      ? { phase: "world", panelOpen: worldView.panelOpen }
+      ? { phase: "world", panelOpen: worldView.panelOpen, casting: Boolean(world?.source.latestProjection()?.viewer.cast) }
       : { phase: "selection", creating: creationDraft !== null },
   onAction: (action) => runAction(action),
 });
@@ -766,7 +767,8 @@ function enterWorld() {
   // Join before switching the page: a refused join leaves the source unjoined, so
   // the page stays on selection, says why, and entry can be retried.
   try {
-    world.source.join();
+    const character = selectedCharacter();
+    world.source.join({ classId: character.classId, sex: character.sex });
   } catch (error) {
     console.error(error);
     worldFailure = `Could not enter the world: ${errorMessage(error)}`;
@@ -894,6 +896,18 @@ function runAction(action: GameAction): void {
       return;
     case "combat.toggleAutoAttack":
       worldView.queueIntent(attackToggle);
+      return;
+    case "ability.slot1":
+    case "ability.slot2":
+    case "ability.slot3":
+    case "ability.slot4": {
+      const slot = Number(action.slice(-1));
+      const catalog = world?.catalog;
+      worldView.queueIntent((projection) => (catalog ? useAbilitySlot(slot, projection, catalog) : null));
+      return;
+    }
+    case "combat.cancelCast":
+      worldView.queueIntent(cancelCast);
       return;
     case "player.releaseSpirit":
       worldView.queueIntent((projection) => (projection.viewer.dead ? { kind: "release-spirit" } : null));

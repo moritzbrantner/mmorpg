@@ -22,6 +22,8 @@ import { worldSourceContract } from "./support/world-source-contract";
 class RecordingZone implements LocalZoneHandle {
   readonly submitted: { player: number; sequence: number; bytes: string }[] = [];
   readonly left: number[] = [];
+  /** `[player, class, sex]` of every join; the zone submits the choice as sequence 1. */
+  readonly joins: [number, number, number][] = [];
   ticks = 0;
   viewerOverride: number | null = null;
   /** While set, projections are truncated bytes the strict decoder rejects. */
@@ -29,10 +31,11 @@ class RecordingZone implements LocalZoneHandle {
   #nextPlayer = 1;
   #players = new Set<number>();
 
-  join(): number {
+  join(classId: number, sex: number): number {
     const player = this.#nextPlayer;
     this.#nextPlayer += 1;
     this.#players.add(player);
+    this.joins.push([player, classId, sex]);
     return player;
   }
 
@@ -77,16 +80,18 @@ describe("LocalZoneSource", () => {
   test("sends encoded commands with strictly increasing sequences per player", () => {
     const zone = new RecordingZone();
     const source = new LocalZoneSource(zone);
-    const first = source.join();
+    const first = source.join({ classId: "arcanist", sex: "female" });
     source.sendCommand({ kind: "move", forward: 1, strafe: -1, facing: 16_384 });
     source.sendCommand({ kind: "jump" });
     source.leave();
     const second = source.join();
     source.sendCommand({ kind: "jump" });
+    // Joining spent sequence 1 on the class choice; the default is a male Warden.
+    expect(zone.joins).toEqual([[first, 2, 0], [second, 0, 1]]);
     expect(zone.submitted).toEqual([
-      { player: first, sequence: 1, bytes: "030101ff4000" },
-      { player: first, sequence: 2, bytes: Buffer.from(encodeCommand({ kind: "jump" })).toString("hex") },
-      { player: second, sequence: 1, bytes: "0302" },
+      { player: first, sequence: 2, bytes: "040101ff4000" },
+      { player: first, sequence: 3, bytes: Buffer.from(encodeCommand({ kind: "jump" })).toString("hex") },
+      { player: second, sequence: 2, bytes: "0402" },
     ]);
     expect(zone.left).toEqual([first]);
   });
@@ -135,7 +140,7 @@ describe("LocalZoneSource", () => {
       zone.viewerOverride = null;
       expect(source.join()).toBe(2);
       source.sendCommand({ kind: "jump" });
-      expect(zone.submitted).toEqual([{ player: 2, sequence: 1, bytes: "0302" }]);
+      expect(zone.submitted).toEqual([{ player: 2, sequence: 2, bytes: "0402" }]);
     }
   });
 });

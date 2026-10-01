@@ -77,7 +77,7 @@ function harness(initial: ControlScreen = { phase: "world", panelOpen: false }) 
       pads = [{
         index: 0,
         axes,
-        buttons: Array.from({ length: 10 }, (_, index) => ({ pressed: pressed.includes(index), value: pressed.includes(index) ? 1 : 0 })),
+        buttons: Array.from({ length: 16 }, (_, index) => ({ pressed: pressed.includes(index), value: pressed.includes(index) ? 1 : 0 })),
       }];
       frames.step();
     },
@@ -146,6 +146,26 @@ describe("MMORPG semantic controls", () => {
     app.window.emit("keyup", key("Escape"));
     app.window.emit("keydown", key("Escape"));
     expect(app.actions.at(-1)).toBe("ui.leaveWorld");
+  });
+
+  test("1–4 and the d-pad use ability slots; while casting, Escape cancels the cast before leaving", () => {
+    const app = harness();
+    for (const code of ["Digit1", "Digit2", "Digit3", "Digit4"]) {
+      app.window.emit("keydown", key(code));
+    }
+    expect(app.actions).toEqual(["ability.slot1", "ability.slot2", "ability.slot3", "ability.slot4"]);
+    const pad = harness();
+    pad.pad([0, 0], [12, 15, 13, 14]);
+    expect([...pad.actions].sort()).toEqual(["ability.slot1", "ability.slot2", "ability.slot3", "ability.slot4"]);
+    expect(contextStack({ phase: "world", panelOpen: true, casting: true }).map((layer) => layer.id))
+      .toEqual(["world", "gameplay", "casting", "panels"]);
+    const casting = harness({ phase: "world", panelOpen: false, casting: true });
+    casting.window.emit("keydown", key("Escape"));
+    expect(casting.actions).toEqual(["combat.cancelCast"]);
+    casting.setScreen({ phase: "world", panelOpen: true, casting: true });
+    casting.window.emit("keyup", key("Escape"));
+    casting.window.emit("keydown", key("Escape"));
+    expect(casting.actions.at(-1)).toBe("ui.closePanel");
   });
 
   test("character creation is modal over selection; gameplay keys do nothing outside the world", () => {

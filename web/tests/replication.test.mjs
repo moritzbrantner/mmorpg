@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodeSnapshot, findEntity, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
 import { NO_FLAGS, playerEntity, testSnapshot } from "./support/snapshots.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v8.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v9.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
 const player = (entityId, x, facing = 0) => playerEntity(entityId, [x, 90, 0], [21, 0, 0], facing);
 const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapshot({
@@ -13,8 +13,16 @@ const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapsh
 const VIEWER = { kind: "player", id: 7 };
 const WOLF = { kind: "creature", id: 108 };
 /** Byte offsets of the fixture's sections (docs/PROTOCOL.md). */
-const EVENTS = 138;
-const ENTITY_COUNT = EVENTS + 1 + 7 * 14;
+const CLASS = 59;
+const CAST = CLASS + 8;
+const COOLDOWNS = CAST + 6;
+const AURAS = COOLDOWNS + 1 + 2 * 3;
+const TARGET_OF_TARGET = AURAS + 1 + 6;
+const TARGET_CAST = TARGET_OF_TARGET + 5;
+const TARGET_AURAS = TARGET_CAST + 6;
+const INVENTORY = TARGET_AURAS + 1 + 6;
+const EVENTS = INVENTORY + 8 + 1 + 64 + 1;
+const ENTITY_COUNT = EVENTS + 1 + 14 * 14;
 const FIRST_ENTITY = ENTITY_COUNT + 2;
 
 describe("Rust/browser snapshot contract", () => {
@@ -22,19 +30,19 @@ describe("Rust/browser snapshot contract", () => {
     const legacy = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v6.hex", import.meta.url), "utf8").trim();
     expect(() => decodeSnapshot(Uint8Array.from(Buffer.from(legacy, "hex")))).toThrow("version");
     const zeroRevision = fixture.slice();
-    zeroRevision.fill(0, 64, 72);
+    zeroRevision.fill(0, INVENTORY, INVENTORY + 8);
     expect(() => decodeSnapshot(zeroRevision)).toThrow("revision");
     const invalidFlag = fixture.slice();
-    invalidFlag[72] = 2;
+    invalidFlag[INVENTORY + 8] = 2;
     expect(() => decodeSnapshot(invalidFlag)).toThrow("Reserved");
     for (const [slot, item, quantity] of [[0, 0, 3], [0, 3, 1], [0, 1, 0], [0, 1, 21], [1, 2, 2]]) {
       const bytes = fixture.slice();
       const view = new DataView(bytes.buffer);
-      view.setUint16(73 + slot * 4, item);
-      view.setUint16(75 + slot * 4, quantity);
+      view.setUint16(INVENTORY + 9 + slot * 4, item);
+      view.setUint16(INVENTORY + 11 + slot * 4, quantity);
       expect(() => decodeSnapshot(bytes)).toThrow("inventory stack");
     }
-    const omitted = new Uint8Array([...fixture.slice(0, 72), 0, ...fixture.slice(137)]);
+    const omitted = new Uint8Array([...fixture.slice(0, INVENTORY + 8), 0, ...fixture.slice(INVENTORY + 9 + 64)]);
     expect(decodeSnapshot(omitted)).toMatchObject({ inventoryRevision: 9n, inventory: null });
   });
   test("rejects invalid progression and the actual legacy v5 fixture", () => {
@@ -50,11 +58,21 @@ describe("Rust/browser snapshot contract", () => {
     }
   });
   test("decodes the same golden bytes as the Rust encoder", () => {
-    expect(fixture.length).toBe(77 + 64 + 7 * 14 + 4 * 21);
+    expect(fixture.length).toBe(100 + 2 * 3 + 2 * 6 + 64 + 14 * 14 + 4 * 21);
     expect(decodeSnapshot(fixture)).toEqual({
       zoneId: 42, tick: 99n, contentRevision: 4n, acknowledgedSequence: 81, viewerId: 7,
-      viewer: { copper: 42, experience: 37, experienceToNextLevel: 100, health: 38, maxHealth: 50, level: 1, dead: false, inCombat: true, autoAttacking: true, target: WOLF },
+      viewer: {
+        copper: 42, experience: 37, experienceToNextLevel: 400, health: 38, maxHealth: 95, level: 4, dead: false, inCombat: true,
+        autoAttacking: true, target: WOLF, classChoice: { classId: "arcanist", sex: "female" },
+        resource: { kind: "mana", value: 121, max: 176 }, cast: { ability: 9, elapsed: 20, total: 60, channel: false }, globalCooldown: 25,
+      },
+      cooldowns: [{ ability: 10, remaining: 412 }, { ability: 11, remaining: 700 }],
+      auras: [{ ability: 11, kind: "absorb", remaining: 500, amount: 31 }],
       targetOfTarget: VIEWER,
+      targetDetail: {
+        cast: { ability: 13, elapsed: 10, total: 45, channel: false },
+        auras: [{ ability: 10, kind: "root", remaining: 150, amount: 0 }],
+      },
       inventoryRevision: 9n,
       inventory: [{ itemId: 1, quantity: 3 }, { itemId: 2, quantity: 1 }, ...Array(13).fill(null), { itemId: 1, quantity: 20 }],
       loot: null,
@@ -65,15 +83,22 @@ describe("Rust/browser snapshot contract", () => {
         { kind: "evade", source: VIEWER, target: WOLF },
         { kind: "died", entity: WOLF, killer: VIEWER },
         { kind: "error", code: "out-of-range", target: WOLF },
-        { kind: "error", code: "no-target", target: null },
+        { kind: "error", code: "not-enough-resource", target: null },
+        { kind: "cast-started", source: WOLF, target: VIEWER, ability: 13, ticks: 45 },
+        { kind: "ability-used", source: VIEWER, target: null, ability: 10 },
+        { kind: "healed", source: VIEWER, target: VIEWER, ability: 3, amount: 2 },
+        { kind: "aura-applied", source: VIEWER, target: WOLF, ability: 10, ticks: 180 },
+        { kind: "aura-removed", source: VIEWER, target: VIEWER, ability: 11 },
+        { kind: "interrupted", source: null, target: VIEWER, ability: 9 },
+        { kind: "absorbed", source: WOLF, target: VIEWER, amount: 5 },
       ],
       entities: [
         {
-          kind: "player", entityId: 7, appearance: 0, position: [10, 90, -30], velocity: [1, -2, 3], facing: 16_384,
-          level: 1, healthPercent: 76, flags: { ...NO_FLAGS, inCombat: true },
+          kind: "player", entityId: 7, appearance: 5, position: [10, 90, -30], velocity: [1, -2, 3], facing: 16_384,
+          level: 1, healthPercent: 40, flags: { ...NO_FLAGS, inCombat: true },
         },
         {
-          kind: "creature", entityId: 108, appearance: 1, position: [-845, 45, 2_500], velocity: [-13, 0, -128],
+          kind: "creature", entityId: 108, appearance: 5, position: [-845, 45, 2_500], velocity: [-13, 0, -128],
           facing: 49_152, level: 2, healthPercent: 43,
           flags: { ...NO_FLAGS, inCombat: true, hostile: true, attackable: true, targetsViewer: true },
         },
@@ -99,6 +124,7 @@ describe("Rust/browser snapshot contract", () => {
       "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target",
       "too-many-intents", "invalid-inventory-move", "inventory-full",
       "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
+      "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
     ];
     codes.forEach((code, index) => {
       const bytes = fixture.slice();
@@ -119,9 +145,31 @@ describe("Rust/browser snapshot contract", () => {
       [53, 0b1000, "Reserved"],
       [53, 0b111, "Inconsistent"],
       [54, 9, "kind"],
-      [59, 0, "absent"],
+      [CLASS, 7, "ability state"],
+      [CLASS, 1, "resource"],
+      [CLASS + 1, 1, "resource"],
+      [CLASS + 4, 0xff, "resource"],
+      [CLASS + 7, 46, "ability state"],
+      [CAST, 1, "cast state"],
+      [CAST + 1, 1, "cast state"],
+      [CAST + 1, 2, "Reserved"],
+      [CAST + 3, 60, "cast state"],
+      [COOLDOWNS, 5, "too many cooldowns"],
+      [COOLDOWNS + 1, 11, "cooldown record"],
+      [COOLDOWNS + 2, 9, "cooldown record"],
+      [AURAS, 9, "too many auras"],
+      [AURAS + 1, 9, "aura record"],
+      [AURAS + 2, 4, "aura record"],
+      [AURAS + 3, 9, "aura record"],
+      [TARGET_OF_TARGET, 0, "absent"],
+      [TARGET_CAST, 0, "cast state"],
+      [TARGET_AURAS + 4, 0, "aura record"],
       [EVENTS, 17, "event capacity"],
-      [EVENTS + 1, 9, "event kind"],
+      [EVENTS + 1, 14, "event kind"],
+      [EVENTS + 1 + 7 * 14 + 1, 15, "Unknown ability"],
+      [EVENTS + 1 + 7 * 14 + 1, 0, "Unknown ability"],
+      [EVENTS + 1 + 8 * 14 + 13, 1, "Malformed"],
+      [EVENTS + 1 + 13 * 14 + 1, 1, "flags"],
       [EVENTS + 2, 2, "flags"],
       [EVENTS + 1 + 2 * 14 + 1, 1, "flags"],
       [EVENTS + 1 + 6 * 14 + 13, 99, "error code"],

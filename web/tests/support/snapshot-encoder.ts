@@ -1,11 +1,15 @@
 import { entityKindCode, type EntityRef } from "../../src/entity-ref";
-import type { ZoneEvent, ZoneSnapshot } from "../../src/replication";
+import type { AuraState, CastState, ZoneEvent, ZoneSnapshot } from "../../src/replication";
 
-const FIXED_BYTES = 77;
+const FIXED_BYTES = 100;
+const AURA_KINDS = ["damage-over-time", "heal-over-time", "absorb", "root", "snare", "stun", "haste"];
+const CLASSES = ["warden", "ranger", "arcanist"];
+const RESOURCES = ["rage", "focus", "mana"];
 const EVENT_BYTES = 14;
 const ENTITY_BYTES = 21;
 const ERROR_CODES = [
   "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target", "too-many-intents", "invalid-inventory-move", "inventory-full", "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
+  "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
 ];
 
 function flagByte(flags: readonly boolean[]): number {
@@ -13,7 +17,7 @@ function flagByte(flags: readonly boolean[]): number {
 }
 
 /**
- * Test-only player-visible snapshot v8 encoder (docs/PROTOCOL.md); Rust owns the real one.
+ * Test-only player-visible snapshot v9 encoder (docs/PROTOCOL.md); Rust owns the real one.
  * Like it, positions must fit i16 and velocities saturate to i8.
  */
 export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
@@ -21,7 +25,8 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
   if (snapshot.loot !== null) {
     lootBytes = snapshot.loot.item === null ? 17 : 21;
   }
-  const size = FIXED_BYTES + (snapshot.inventory === null ? 0 : 64) + lootBytes + EVENT_BYTES * snapshot.events.length + ENTITY_BYTES * snapshot.entities.length;
+  const lists = 3 * snapshot.cooldowns.length + 6 * (snapshot.auras.length + snapshot.targetDetail.auras.length);
+  const size = FIXED_BYTES + lists + (snapshot.inventory === null ? 0 : 64) + lootBytes + EVENT_BYTES * snapshot.events.length + ENTITY_BYTES * snapshot.entities.length;
   const bytes = new Uint8Array(size);
   const view = new DataView(bytes.buffer);
   let offset = 0;
@@ -33,9 +38,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u8(value === null ? 0 : entityKindCode(value.kind));
     u32(value?.id ?? 0);
   };
-  u8(8);
+  u8(9);
   u8(2);
-  u16(8);
+  u16(9);
   u32(snapshot.zoneId);
   u64(snapshot.tick);
   u64(snapshot.contentRevision);
@@ -50,7 +55,37 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
   u32(viewer.copper);
   u8(flagByte([viewer.dead, viewer.inCombat, viewer.autoAttacking]));
   entity(viewer.target);
+  const choice = viewer.classChoice;
+  u8(choice === null ? 0 : 1 + CLASSES.indexOf(choice.classId) * 2 + (choice.sex === "female" ? 0 : 1));
+  u8(viewer.resource === null ? 0 : RESOURCES.indexOf(viewer.resource.kind) + 1);
+  u16(viewer.resource?.value ?? 0);
+  u16(viewer.resource?.max ?? 0);
+  u16(viewer.globalCooldown);
+  const cast = (value: CastState | null) => {
+    u8(value?.ability ?? 0);
+    u8(value?.channel ? 1 : 0);
+    u16(value?.elapsed ?? 0);
+    u16(value?.total ?? 0);
+  };
+  const auras = (values: readonly AuraState[]) => {
+    u8(values.length);
+    for (const aura of values) {
+      u8(aura.ability);
+      u8(AURA_KINDS.indexOf(aura.kind) + 1);
+      u16(aura.remaining);
+      u16(aura.amount);
+    }
+  };
+  cast(viewer.cast);
+  u8(snapshot.cooldowns.length);
+  for (const cooldown of snapshot.cooldowns) {
+    u8(cooldown.ability);
+    u16(cooldown.remaining);
+  }
+  auras(snapshot.auras);
   entity(snapshot.targetOfTarget);
+  cast(snapshot.targetDetail.cast);
+  auras(snapshot.targetDetail.auras);
   u64(snapshot.inventoryRevision);
   u8(snapshot.inventory === null ? 0 : 1);
   if (snapshot.inventory !== null) {
@@ -138,6 +173,37 @@ function encodeEvent(
       entity(null);
       entity(event.target);
       u16(ERROR_CODES.indexOf(event.code) + 1);
+      return;
+    case "cast-started":
+    case "ability-used":
+      u8(event.kind === "cast-started" ? 7 : 8);
+      u8(event.ability);
+      entity(event.source);
+      entity(event.target);
+      u16(event.kind === "cast-started" ? event.ticks : 0);
+      return;
+    case "healed":
+    case "aura-applied":
+    case "aura-removed":
+      u8(event.kind === "healed" ? 9 : event.kind === "aura-applied" ? 10 : 11);
+      u8(event.ability);
+      entity(event.source);
+      entity(event.target);
+      u16(event.kind === "healed" ? event.amount : event.kind === "aura-applied" ? event.ticks : 0);
+      return;
+    case "interrupted":
+      u8(12);
+      u8(event.ability);
+      entity(event.source);
+      entity(event.target);
+      u16(0);
+      return;
+    case "absorbed":
+      u8(13);
+      u8(0);
+      entity(event.source);
+      entity(event.target);
+      u16(event.amount);
       return;
   }
 }

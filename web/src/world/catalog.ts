@@ -1,8 +1,9 @@
 /**
  * The content catalog from the WASM `catalog()` export (format
- * `mmorpg.catalog` v2): names and presentation facts for the IDs that
+ * `mmorpg.catalog` v3): names and presentation facts for the IDs that
  * projections carry. Creature templates by template ID, NPCs by NPC ID,
- * areas by area ID. Combat numbers stay on the server.
+ * areas by area ID, classes by wire value and abilities by ability ID.
+ * Combat numbers stay on the server.
  */
 export type CreatureFamily = "wolf" | "boar" | "vermin" | "marauder" | "mirefin" | "redbrand";
 export type CreatureBehaviour = "aggressive" | "neutral";
@@ -24,6 +25,25 @@ export type NpcRecord = { id: number; name: string; role: NpcRole; level: number
 
 export type ItemRecord = { id: number; name: string; maxStack: number };
 
+export type ClassName = "warden" | "ranger" | "arcanist";
+export type ClassRecord = { id: number; name: ClassName; resource: "rage" | "focus" | "mana" };
+
+export type AbilityRecord = {
+  id: number;
+  name: string;
+  /** A class name, or `creature`. */
+  user: ClassName | "creature";
+  /** Unlock level for classes. */
+  level: number;
+  cost: number;
+  /** 0 for instants. */
+  castTicks: number;
+  channel: boolean;
+  cooldown: number;
+  /** Aura kind wire code (1 damage over time … 7 haste), or null. */
+  aura: number | null;
+};
+
 export type ContentCatalog = {
   itemCatalogRevision: bigint;
   items: ReadonlyMap<number, ItemRecord>;
@@ -33,10 +53,15 @@ export type ContentCatalog = {
   creatureTemplates: ReadonlyMap<number, CreatureTemplate>;
   npcs: ReadonlyMap<number, NpcRecord>;
   areas: ReadonlyMap<number, string>;
+  classes: ReadonlyMap<number, ClassRecord>;
+  abilities: ReadonlyMap<number, AbilityRecord>;
 };
 
 const FORMAT = "mmorpg.catalog";
-const VERSION = 2;
+const VERSION = 3;
+const CLASS_NAMES: readonly ClassName[] = ["warden", "ranger", "arcanist"];
+const RESOURCES = ["rage", "focus", "mana"] as const;
+const USERS: readonly (ClassName | "creature")[] = [...CLASS_NAMES, "creature"];
 const FAMILIES: readonly CreatureFamily[] = ["wolf", "boar", "vermin", "marauder", "mirefin", "redbrand"];
 const BEHAVIOURS: readonly CreatureBehaviour[] = ["aggressive", "neutral"];
 const ROLES: readonly NpcRole[] = ["quest_giver", "vendor", "spirit_healer", "guard"];
@@ -106,6 +131,7 @@ export function decodeCatalog(json: string): ContentCatalog {
   }
   const root = object(parsed, [
     "format", "version", "contentRevision", "contentFingerprint", "creatureTemplates", "npcs", "areas", "itemCatalogRevision", "items",
+    "classes", "abilityCatalogRevision", "abilities",
   ], "export");
   if (root.format !== FORMAT || root.version !== VERSION) {
     fail(`unsupported format ${String(root.format)} v${String(root.version)}`);
@@ -168,7 +194,40 @@ export function decodeCatalog(json: string): ContentCatalog {
       maxStack: int(record.maxStack, `item ${index} stack limit`, 1, 0xffff),
     };
   });
+  const classes = list(root.classes, "classes", 3).map((value, index) => {
+    const record = object(value, ["id", "name", "resource"], `class ${index}`);
+    return {
+      id: int(record.id, `class ${index} id`, 0, 2),
+      name: oneOf(record.name, CLASS_NAMES, `class ${index} name`),
+      resource: oneOf(record.resource, RESOURCES, `class ${index} resource`),
+    };
+  });
+  if (root.abilityCatalogRevision !== "1") {
+    fail("unsupported ability catalog revision");
+  }
+  const abilities = list(root.abilities, "abilities", 255).map((value, index) => {
+    const name = `ability ${index}`;
+    const record = object(value, [
+      "id", "name", "user", "level", "cost", "castTicks", "channel", "cooldown", "aura",
+    ], name);
+    if (typeof record.channel !== "boolean") {
+      fail(`${name} channel must be a flag`);
+    }
+    return {
+      id: int(record.id, `${name} id`, 1, 255),
+      name: text(record.name, `${name} name`),
+      user: oneOf(record.user, USERS, `${name} user`),
+      level: int(record.level, `${name} level`, 1, 255),
+      cost: int(record.cost, `${name} cost`, 0, 0xffff),
+      castTicks: int(record.castTicks, `${name} cast ticks`, 0, 0xffff),
+      channel: record.channel,
+      cooldown: int(record.cooldown, `${name} cooldown`, 0, 0xffff),
+      aura: record.aura === null ? null : int(record.aura, `${name} aura`, 1, 7),
+    };
+  });
   return {
+    classes: byId(classes, "class"),
+    abilities: byId(abilities, "ability"),
     itemCatalogRevision: 1n,
     items: byId(items, "item"),
     contentRevision,

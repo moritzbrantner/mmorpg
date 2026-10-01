@@ -22,6 +22,11 @@ export const GAME_ACTIONS = [
   "move.jump",
   "target.next",
   "combat.toggleAutoAttack",
+  "ability.slot1",
+  "ability.slot2",
+  "ability.slot3",
+  "ability.slot4",
+  "combat.cancelCast",
   "player.releaseSpirit",
   "ui.toggleBags",
   "ui.closePanel",
@@ -34,14 +39,15 @@ export type GameAction = (typeof GAME_ACTIONS)[number];
 
 /**
  * - `selection` / `creation`: character selection, with creation as a modal layer;
- * - `world` < `gameplay` < `panels`: bags or loot open as a non-blocking overlay that claims
- *   Escape but lets movement fall through to gameplay.
+ * - `world` < `gameplay` < `casting` < `panels`: while the viewer casts, Escape cancels the cast
+ *   instead of leaving; bags or loot open as a non-blocking overlay that claims Escape first but
+ *   lets movement fall through to gameplay.
  */
-export type GameContext = "selection" | "creation" | "world" | "gameplay" | "panels";
+export type GameContext = "selection" | "creation" | "world" | "gameplay" | "casting" | "panels";
 
 export type ControlScreen =
   | { phase: "selection"; creating: boolean }
-  | { phase: "world"; panelOpen: boolean };
+  | { phase: "world"; panelOpen: boolean; casting?: boolean };
 
 export function contextStack(screen: ControlScreen): ContextLayer[] {
   if (screen.phase === "selection") {
@@ -49,7 +55,12 @@ export function contextStack(screen: ControlScreen): ContextLayer[] {
       ? [{ id: "selection" }, { id: "creation", blocksLower: true }]
       : [{ id: "selection" }];
   }
-  return [{ id: "world" }, { id: "gameplay" }, ...(screen.panelOpen ? [{ id: "panels" }] : [])];
+  return [
+    { id: "world" },
+    { id: "gameplay" },
+    ...(screen.casting ? [{ id: "casting" }] : []),
+    ...(screen.panelOpen ? [{ id: "panels" }] : []),
+  ];
 }
 
 const key = (code: string): InputStroke => ({ key: { kind: "physical", value: code } });
@@ -83,7 +94,10 @@ function action(
   };
 }
 
-/** Standard-mapping gamepad: left stick moves, A jumps, B backs out, X attacks, Y releases. */
+/**
+ * Standard-mapping gamepad: left stick moves, A jumps, B backs out (or cancels a cast), X attacks,
+ * Y releases, and the d-pad (up, right, down, left) uses ability slots 1–4.
+ */
 export const GAME_ACTION_REGISTRY: ActionRegistry = {
   actions: [
     action("move.forward", "Run forward", "gameplay", [key("KeyW"), key("ArrowUp"), stick(1, "negative")]),
@@ -103,6 +117,11 @@ export const GAME_ACTION_REGISTRY: ActionRegistry = {
     action("move.jump", "Jump", "gameplay", [key("Space"), button(0)]),
     action("target.next", "Target next", "gameplay", [key("Tab"), button(5)]),
     action("combat.toggleAutoAttack", "Toggle auto-attack", "gameplay", [key("KeyF"), button(2)]),
+    action("ability.slot1", "Ability 1", "gameplay", [key("Digit1"), button(12)]),
+    action("ability.slot2", "Ability 2", "gameplay", [key("Digit2"), button(15)]),
+    action("ability.slot3", "Ability 3", "gameplay", [key("Digit3"), button(13)]),
+    action("ability.slot4", "Ability 4", "gameplay", [key("Digit4"), button(14)]),
+    action("combat.cancelCast", "Cancel cast", "casting", [key("Escape"), button(1)]),
     action("player.releaseSpirit", "Release spirit", "gameplay", [key("KeyR"), button(3)]),
     action("ui.toggleBags", "Toggle bags", "gameplay", [key("KeyB"), button(8)]),
     action("ui.closePanel", "Close panel", "panels", [key("Escape"), button(1)]),
