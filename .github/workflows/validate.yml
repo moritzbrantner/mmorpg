@@ -13,13 +13,13 @@ jobs:
       packages: read
     uses: moritzbrantner/reusable-workflows/.github/workflows/validate-repo.yml@45042e56be120b438096e774027637cac0280075
     with:
-      bun_version: ""
+      bun_version: "1.4.2"
       node_version: ""
-      install_command: ""
+      install_command: cd web && bun install --frozen-lockfile
       cache_bun: false
       cache_cargo: true
       format_command: cargo fmt --all -- --check
-      lint_command: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      test_command: cargo test --workspace --all-features --locked
+      lint_command: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings && bun run --cwd web typecheck:size
+      test_command: cargo test --workspace --all-features --locked && mkdir -p artifacts && bun run --cwd web size:budget > artifacts/native-size.json && bun run --cwd web test:size-evidence
       build_command: cargo build --workspace --all-features --locked && cargo build -p mmorpg-core -p mmorpg-protocol -p mmorpg-wasm --target wasm32-unknown-unknown --locked
-      artifact_paths: ""
+      artifact_paths: artifacts/native-size.json
