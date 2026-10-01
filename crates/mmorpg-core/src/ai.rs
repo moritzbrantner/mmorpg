@@ -138,6 +138,7 @@ impl ZoneSimulation {
         if creature.life != Life::Alive {
             return Ok(());
         }
+        self.tick_work.creature_ai_evaluations += 1;
         let body = body_id(EntityRef::Creature(id));
         let current = self
             .world

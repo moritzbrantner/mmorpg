@@ -45,7 +45,7 @@ pub use snapshot::{
     CanonicalCreatureSnapshot, CanonicalPlayerCombat, CanonicalPlayerSnapshot,
     CanonicalZoneSnapshot, CreatureAi, CreatureLife, PlayerIntent, ThreatEntry,
 };
-pub use zone::{MAX_PENDING_INTENTS, ZoneSimulation};
+pub use zone::{MAX_PENDING_INTENTS, ZoneSimulation, ZoneTickWork};
 
 use std::error::Error;
 use std::fmt;
