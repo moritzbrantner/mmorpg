@@ -470,6 +470,7 @@ class BrowserAcceptance(unittest.TestCase):
                     if best is None or gain > best[0]:
                         best = (gain, candidate)
                 key = best[1]
+                self.walk_key = key
                 continue
             self.page.keyboard.down(key)
             self.frames(12)
@@ -892,6 +893,112 @@ class BrowserAcceptance(unittest.TestCase):
                 self.frames()
                 self.assert_selection_layout()
                 self.page.screenshot(path=str(ARTIFACTS / f"selection-{width}x{height}.png"))
+
+
+    def hud_number(self, selector, pattern):
+        text = self.page.locator(selector).inner_text()
+        match = re.search(pattern, text)
+        self.assertIsNotNone(match, f"{selector} shows {pattern}: {text!r}")
+        return int(match.group(1))
+
+    def target_distance(self):
+        """Metres from the character to the projected animal nearest to it (the only creature near the woods edge)."""
+        x, z = self.self_position()
+        animal = self.page.evaluate("([x, z]) => window.__valeDebug.nearestAnimal(x, z)", [x, z])
+        if not animal:
+            return None, None
+        return math.hypot(animal["x"] - x, animal["z"] - z), animal
+
+    def approach_animal(self, metres, max_steps=80):
+        """Walks the key that closed the distance earlier until the nearest animal is within `metres`,
+        sidestepping when a prop blocks the way."""
+        sideways = {"KeyW": ("KeyA", "KeyD"), "KeyS": ("KeyD", "KeyA"), "KeyA": ("KeyS", "KeyW"), "KeyD": ("KeyW", "KeyS")}[self.walk_key]
+        side = 0
+        stuck = 0
+        for _ in range(max_steps):
+            distance, _animal = self.target_distance()
+            if distance is not None and distance <= metres:
+                return distance
+            before = self.self_position()
+            keys = [self.walk_key] if stuck < 2 else [self.walk_key, sideways[side]]
+            for key in keys:
+                self.page.keyboard.down(key)
+            self.frames(8)
+            for key in keys:
+                self.page.keyboard.up(key)
+            self.frames(2)
+            moved = math.hypot(*(a - b for a, b in zip(self.self_position(), before)))
+            stuck = 0 if moved > 0.5 else stuck + 1
+            if stuck > 6:
+                side = 1 - side
+                stuck = 2
+        self.fail(f"Never came within {metres} m of an animal; last distance {self.target_distance()[0]}")
+
+    def create_and_select(self, name, class_label):
+        self.page.get_by_role("button", name="Create character", exact=True).click()
+        self.page.get_by_label("Name").fill(name)
+        self.page.get_by_role("radio", name=re.compile(f"^{class_label}")).check()
+        self.page.get_by_role("button", name="Create character", exact=True).filter(visible=True).click()
+        expect(self.page.locator("#character-name")).to_have_text(name)
+
+    def assert_action_bar(self, locked_levels):
+        slots = self.page.locator("#class-hud .action-slot")
+        expect(slots).to_have_count(4)
+        self.assertEqual(slots.locator(".slot-key").all_inner_texts(), ["1", "2", "3", "4"])
+        states = slots.evaluate_all("els => els.map(el => el.dataset.state)")
+        self.assertEqual(states[0] in ("ready", "cooldown"), True, f"Slot 1 is learned at level 1: {states}")
+        self.assertEqual(states[1:], ["locked"] * 3, f"Higher abilities are not learned yet: {states}")
+        self.assertEqual(slots.locator(".slot-unlock").all_inner_texts()[1:], locked_levels)
+
+    def test_warden_action_bar_rage_and_combat_text(self):
+        """A level-1 Warden fights a wolf: auto-attack builds rage, key 1 spends it on Heroic Strike."""
+        self.open("?debug")
+        self.enter_world()
+        self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
+        expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text("Rage 0 / 100")
+        self.walk_until_animal_projected()
+        self.approach_animal(3.0)
+        self.page.keyboard.press("Tab")
+        expect(self.page.locator("[data-part=target]")).to_be_visible()
+        expect(self.page.locator("[data-part=target-name]")).to_contain_text("Lv")
+        self.page.keyboard.press("KeyF")
+        # Hits build rage; combat text floats up for each damage event.
+        self.page.wait_for_function("document.querySelector('[data-part=player-resource-text]').textContent.match(/Rage (\\d+)/) && Number(RegExp.$1) >= 15", timeout=30_000)
+        expect(self.page.locator(".combat-text-entry").first).to_be_visible()
+        before = self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)")
+        self.page.keyboard.press("Digit1")
+        self.frames(3)
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-warden.png"))
+        self.page.wait_for_function("([before]) => { const m = document.querySelector('[data-part=player-resource-text]').textContent.match(/Rage (\\d+)/); return m && Number(m[1]) < before; }", arg=[before], timeout=10_000)
+        self.page.locator("#class-hud .action-slot").first.hover()
+        expect(self.page.locator("[data-part=tooltip]")).to_contain_text("Heroic Strike")
+        expect(self.page.locator("[data-part=tooltip]")).to_contain_text("Melee range")
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-warden-tooltip.png"))
+
+    def test_arcanist_action_bar_cast_bar_and_combat_text(self):
+        """A level-1 Arcanist targets a wolf and casts Firebolt with key 1: mana is spent, the cast bar
+        fills, damage text floats up and the target frame shows the wolf."""
+        self.open("?debug")
+        self.create_and_select("Dorian Voss", "Arcanist")
+        self.enter_world()
+        self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
+        expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text("Mana 110 / 110")
+        self.walk_until_animal_projected()
+        self.approach_animal(24.0)
+        self.page.keyboard.press("Tab")
+        expect(self.page.locator("[data-part=target]")).to_be_visible()
+        self.page.keyboard.press("Digit1")
+        cast = self.page.locator("[data-part=cast]")
+        expect(cast).to_be_visible()
+        expect(self.page.locator("[data-part=cast-name]")).to_have_text("Firebolt")
+        self.assertEqual(self.page.locator("#class-hud .action-slot").first.get_attribute("data-state"), "casting")
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-cast.png"))
+        self.page.wait_for_function("document.querySelector('[data-part=player-resource-text]').textContent.match(/Mana (\\d+)/) && Number(RegExp.$1) < 110", timeout=10_000)
+        expect(self.page.locator(".combat-text-entry").first).to_be_visible(timeout=10_000)
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-hit.png"))
+        # The cast bar clears once the bolt lands.
+        expect(cast).to_be_hidden(timeout=10_000)
+        expect(self.page.locator("#class-hud .action-slot").first).to_have_attribute("data-gcd", "true")
 
 
 if __name__ == "__main__":
