@@ -39,3 +39,67 @@ Quiet and supported cases improve in this local comparison. Sparse and crowded c
 Upstream `docs/translational-maintenance.md` records physics-call phase/work/capacity evidence and its independent exhaustive rebuild oracle. Upstream work fences require zero staging, bounds, queries and map reconstruction on unchanged quiet ticks, and zero body-map reconstruction on active successful ticks. Vector capacity is not process RSS or allocator overhead; the consumer does not claim a measured memory reduction from this dependency update.
 
 Fingerprint: Rust 1.98.1, `x86_64-unknown-linux-gnu`, release profile, empty `RUSTFLAGS`, workload v1, three trials, identical inputs and horizons, committed dependency locks on each side; Linux, AMD Ryzen 7 5700X. Local workspace debug verification disables debug symbols/incremental caches to limit disposable disk use; timing comparisons use the same release configuration. Resolved conventions sourceRevision: `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
+
+
+## Maintenance pin refresh (#61)
+
+The consumer now pins physics-engine
+`16833b766629c354a6a5925b991eeb74208a242d`. This separately adopts retained
+translational staging capacity (#229), broad-phase vector capacity (#230) and
+dependency-valid fixed bounds (#249), after the first maintenance adoption above.
+The zone continues to use the integer-state `physics_engine::World`. Floating
+physics, capsules and new query/contact features are not selected by a pin update;
+#46's persistent-solver migration still awaits the engine-owned production f32
+contract (physics-engine #258) and applicable migration acceptance.
+
+The baseline consumer is `7c5cde9864c6f5640bff6ee029b00b3786058485`, with the old
+`0baf3411419fc250273caec24d64654cb30c28ec` pin. Run the unchanged
+`physics_workload --release --locked -- --trace DIRECTORY` command above on each
+pin. All eight workloads completed 120 ticks in each of three trials on both
+versions. All 24 corresponding length-prefixed canonical/player-projection binary
+trace files match byte for byte, including recovery from tick 60. Every non-timing
+JSON field also matches: completed horizon, population, movement, projection and
+canonical bytes, maintenance inspections and diagnostic trace checksum. Existing
+scenario/protocol goldens and the separate combat-workload ceilings are preserved.
+
+Advisory local median `advance_tick` totals for the 120 completed ticks:
+
+| Workload | Old pin ms | New pin ms |
+| --- | ---: | ---: |
+| quiet-128 | 1.432 | 1.049 |
+| quiet-512 | 8.926 | 8.321 |
+| sparse-512-k1 | 23.471 | 23.647 |
+| sparse-512-k8 | 23.161 | 23.613 |
+| supported-512 | 48.626 | 39.902 |
+| crowded-64 | 2.885 | 2.776 |
+| mutation-recovery-32 | 0.766 | 0.726 |
+| vale-units-16 | 17.678 | 15.115 |
+
+The one/eight-moving sparse controls are slightly slower in this sample; they are
+retained alongside the other observations. These sequential three-trial local
+runs establish no controlled wall-clock regression or general speedup claim. The
+blocking evidence is completed work, exact byte compatibility, recovery and
+deterministic counter budgets. Engine-owned capacity reuse does not eliminate
+whole-population staging or sorting, and retained high-water scratch is not a
+measured reduction in process memory. See the producer's
+[translational maintenance evidence](https://github.com/moritzbrantner/physics-engine/blob/16833b766629c354a6a5925b991eeb74208a242d/docs/translational-maintenance.md)
+for the precise capacity/fixed-bound contracts and their independent oracles.
+
+The intentional lock transaction advances only physics-engine and its two
+rust-kernels source identities (`7049e423ef00f5f65e7276281c0845d431ed6300`) and
+adds the engine's SHA-256/checkpoint dependency family (`sha2` 0.10.9 and five
+transitives). Previously locked registry package versions are retained. Existing
+`sha2` 0.11.0 remains the transport dependency; it is not downgraded.
+
+Fingerprint: Rust 1.98.1, `x86_64-unknown-linux-gnu`, release profile, empty
+`RUSTFLAGS`, identical workload v1/content/commands, three trials per pin, committed
+locks, Linux/AMD Ryzen 7 5700X. Native/WASM/browser acceptance uses the same Rust
+authority and unchanged protocol fixtures. Resolved conventions sourceRevision:
+`46d8793bb3034326561f876dcc67dbaa5aa1e432`.
+
+Validation passed: workspace format/Clippy/tests/build, core/protocol/WASM builds,
+unchanged headless bot/control-plane scenarios, native GPU readback/session resume,
+148 browser unit tests, browser production build and all nine Chromium smoke
+journeys. The isolated Python runner used Playwright 1.57.0's Ubuntu 24.04 Chromium
+build on this Ubuntu 26.04 host (explicit platform selection because that pinned
+runner does not recognize Ubuntu 26.04). No acceptance test was skipped.
