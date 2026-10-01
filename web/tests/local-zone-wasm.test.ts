@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { GRASS_PACKAGE_DIRECTORY, record } from "../scripts/grass-package";
 import { encodeCommand } from "../src/command-wire";
 import { decodeSnapshot, type EntityState } from "../src/replication";
 import { BagState } from "../src/world/units/bag-state";
@@ -170,6 +172,32 @@ describe("WASM local zone host", () => {
     expect(scenery.scenery.water).toEqual([{ centerXz: [5_500, -5_500], radiiXz: [2_200, 1_600], surfaceY: 15 }]);
     expect(scenery.scenery.roads.map((road) => road.name)).toContain("Hollow Road");
     expect(Math.max(...scenery.scenery.farTerrain.heights)).toBeGreaterThan(Math.max(...scenery.scenery.terrain.heights));
+  });
+
+  test("WASM scenery consumes the exact selected Outpost anchors and presentation transforms", () => {
+    const provider = createLocalWorld(wasm).scenery;
+    const selected = record(JSON.parse(readFileSync(`${GRASS_PACKAGE_DIRECTORY}/selected.instances.json`, "utf8"))).instances;
+    const transforms: unknown = JSON.parse(readFileSync(`${GRASS_PACKAGE_DIRECTORY}/selected.transforms.json`, "utf8"));
+    if (!Array.isArray(selected) || !Array.isArray(transforms)) {
+      throw new Error("Missing selected grass package");
+    }
+    const expected = selected.map((value, index) => {
+      const position = record(value).positionMicro;
+      const transform = record(transforms[index]);
+      if (!Array.isArray(position)) {
+        throw new Error("Missing selected grass coordinates");
+      }
+      const x = Number(position[0]) / 10_000;
+      const y = Number(position[1]) / 10_000;
+      const z = Number(position[2]) / 10_000 + 2000;
+      return { kind: "grass-tuft", position: [x, y + provider.reliefAt(x, z), z], yaw: transform.yaw,
+        scale: Number(transform.scalePermille) / 1000, halfExtents: transform.halfExtents, collider: null };
+    });
+    const actual = provider.scenery.props.filter((prop) => prop.kind === "grass-tuft" && prop.position[0] >= -3500 && prop.position[0] <= 3500 && prop.position[2] >= -1300 && prop.position[2] <= 5300);
+    expect(actual).toEqual(expected);
+    expect(actual.length).toBe(55);
+    expect(provider.scenery.presentationFingerprint).toBe("1de3341c933449f6");
+    expect(provider.scenery.contentRevision).toBe(4n);
   });
 
   test("the vale's static scene models every prop within a bounded node and vertex budget", () => {

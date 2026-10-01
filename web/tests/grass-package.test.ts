@@ -41,6 +41,7 @@ function outputSet(outputs: Map<string, Uint8Array>): unknown[] {
 describe("Greyhaven accepted grass package", () => {
   test("source and derived bytes agree with the complete pinned provenance", async () => {
     expect(record(manifest.producer).commit).toBe(GRASS_PRODUCER_COMMIT);
+    expect(record(manifest.consumerAdapter).sha256).toBe(sha256(await readFile(new URL("../scripts/grass-package.ts", import.meta.url))));
     for (const group of ["sourceFiles", "outputs"]) {
       for (const [name, value] of Object.entries(record(manifest[group]))) {
         const identity = record(value);
@@ -137,6 +138,16 @@ describe("Greyhaven accepted grass package", () => {
       await expect(buildGrassPackage(checkout!, scratch)).rejects.toThrow();
       await writeFile(path.join(scratch, "source.json"), JSON.stringify({ ...source, producer: { ...record(source.producer), commit: "0000000000000000000000000000000000000000" } }));
       await expect(buildGrassPackage(checkout!, scratch)).rejects.toThrow();
+      await writeFile(path.join(scratch, "source.json"), await readFile(path.join(directory, "source.json")));
+      const fractional = record(await json("accepted.instances.json"));
+      const first = record(instances(fractional)[0]);
+      const position = first.positionMicro;
+      if (!Array.isArray(position)) {
+        throw new Error("Missing accepted position");
+      }
+      position[0] = Number(position[0]) + 1;
+      await writeFile(path.join(scratch, "accepted.instances.json"), JSON.stringify(fractional));
+      await expect(buildGrassPackage(checkout!, scratch)).rejects.toThrow("saved grass positions must lower exactly");
       expect(await readFile(path.join(scratch, "selected.instances.json"))).toEqual(await readFile(path.join(directory, "selected.instances.json")));
     } finally {
       await rm(scratch, { recursive: true, force: true });

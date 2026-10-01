@@ -12,9 +12,9 @@ use mmorpg_scenery::{
 };
 
 /// Recorded from this revision; any change to content, placement or relief
-/// must update it deliberately. Revision 4 adds bag content only; the
-/// derived scenery is unchanged apart from the revision it carries.
-const STABLE_HASH: u64 = 0xbfbc_7757_2f3a_f7fd;
+/// must update it deliberately. The saved Outpost grass mask changes only
+/// presentation, leaving Greyhaven gameplay at revision 4.
+const STABLE_HASH: u64 = 0x1de3_341c_9334_49f6;
 
 fn is_terrain(collider: &StaticCollider) -> bool {
     collider.id == ids::GROUND || ids::BOUNDARY_WALLS.contains(&collider.id)
@@ -43,13 +43,35 @@ fn scenery_is_deterministic_with_a_stable_hash() {
     let hash = first.stable_hash();
     assert_eq!(hash, second.stable_hash());
     assert_eq!(hash, STABLE_HASH, "scenery changed: {hash:#018x}");
-    let mut previous_revision = first;
-    previous_revision.content_revision = 3;
+}
+
+#[test]
+fn authored_grass_retains_stable_ids_and_clears_the_selected_approach() {
+    let scenery = greyhaven_vale_scenery();
+    let clearing = Rect {
+        min: [-2_800, 800],
+        max: [-1_800, 1_600],
+    };
+    let placements: Vec<_> = mmorpg_scenery::outpost_grass_placements().collect();
+    assert_eq!(placements.len(), 55);
+    let mut ids: Vec<_> = placements.iter().map(|(id, _)| *id).collect();
+    let ordered = ids.clone();
+    ids.sort_unstable();
+    ids.dedup();
     assert_eq!(
-        previous_revision.stable_hash(),
-        0x8495_49d6_874e_b332,
-        "inventory must not change presentation content"
+        ids, ordered,
+        "saved IDs remain unique and in accepted order"
     );
+    for (_, prop) in placements {
+        assert!(scenery.props.contains(&prop));
+        assert!(prop.collider.is_none());
+        assert!(!prop.footprint().intersects(clearing));
+    }
+    assert_eq!(
+        greyhaven_vale::content().fingerprint(),
+        0x5738_a86d_e795_e940
+    );
+    assert_eq!(scenery.content_revision, 4);
 }
 
 #[test]

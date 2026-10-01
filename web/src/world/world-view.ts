@@ -54,6 +54,7 @@ const ZONE_NAME = "Greyhaven Vale";
 /** Debug-only camera poses for screenshots; they never touch the simulation. */
 export const DEBUG_VIEWPOINTS: Readonly<Record<string, { eye: Vec3; target: Vec3 }>> = {
   hub: { eye: [5, 8.5, 31], target: [-14, 3, 4] },
+  grass: { eye: [-23, 16, 29], target: [-23, 0, 11] },
   woods: { eye: [-46, 7, 14], target: [-78, 3, -2] },
   hollow: { eye: [6, 14, -64], target: [0, 3, -98] },
   farm: { eye: [46, 12, 16], target: [72, 3, 40] },

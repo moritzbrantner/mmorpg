@@ -90,6 +90,15 @@ describe("the static scene", () => {
     expect(scene.stats.staticNodes).toBe(scene.batches.length);
   });
 
+  test("presentation edits receive new resource keys without changing gameplay revision", () => {
+    const first = build();
+    const second = buildSceneryScene({ ...scenery, presentationFingerprint: "fedcba9876543210" }, ENVIRONMENT);
+    expect(second.batches.map((batch) => batch.node.id)).toEqual(first.batches.map((batch) => batch.node.id));
+    const keys = new Set(first.batches.map((batch) => batch.node.geometry.resourceKey));
+    expect(second.batches.every((batch) => !keys.has(batch.node.geometry.resourceKey))).toBe(true);
+    expect(second.water.every((node) => node.geometry.resourceKey?.includes("fedcba9876543210"))).toBe(true);
+  });
+
   test("terrain faces point up and the same scenery always builds the same scene", () => {
     const first = build();
     const second = build();
