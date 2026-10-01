@@ -17,6 +17,7 @@ import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput, type DragMode, type 
 import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type SceneryScene } from "./scenery-nodes";
 import { SkyLayer } from "./sky";
 import { UnitAnimators, placeWithModel, unitIdentity, unitModel, type UnitContext, type UnitLook } from "./unit-nodes";
+import { BagsPanel, type BagsElements } from "./units/bags-panel";
 import { CombatHud } from "./units/combat-hud";
 import { ProgressionHud } from "./units/progression-hud";
 import { SecondaryClick, attackToggle } from "./units/targeting";
@@ -41,6 +42,7 @@ export type WorldViewElements = {
   experienceBar: HTMLProgressElement;
   experienceStatus: HTMLElement;
   progressionFeedback: HTMLElement;
+  bags: BagsElements;
 };
 
 /** A targeting or attack intent, resolved against the latest projection when it is sent. */
@@ -115,6 +117,7 @@ export class WorldView {
   readonly #animators = new UnitAnimators();
   readonly #combatHud: CombatHud;
   readonly #progressionHud: ProgressionHud;
+  readonly #bags: BagsPanel;
   readonly #intents: Intent[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
@@ -144,6 +147,7 @@ export class WorldView {
     this.#sky = new SkyLayer(elements.sky, ENVIRONMENT);
     this.#combatHud = new CombatHud(elements.unitStatus, elements.combatFeedback);
     this.#progressionHud = new ProgressionHud(elements.experienceBar, elements.experienceStatus, elements.progressionFeedback);
+    this.#bags = new BagsPanel(elements.bags, (command) => this.queueIntent(() => command));
     this.#outbox = new MovementOutbox(this.#input({ keys: new Set(), jumps: 0 }));
   }
 
@@ -154,6 +158,7 @@ export class WorldView {
   /** Builds the static scene and the minimap image once per loaded world. */
   load(world: LocalWorld): void {
     const started = performance.now();
+    this.#bags.load(world.catalog);
     const scenery = world.scenery.scenery;
     this.#scene = buildSceneryScene(scenery, ENVIRONMENT);
     this.#sceneryFrame = new SceneryFrame(this.#scene, `${sceneryResourcePrefix(scenery)}:animated`);
@@ -163,7 +168,7 @@ export class WorldView {
   }
 
   /** Starts a session: fresh camera, intent and animation state. */
-  enter(input: WorldInput): void {
+  enter(input: WorldInput, projection: ZoneSnapshot | null): void {
     this.#orbit = new OrbitCamera();
     this.#movementFacing = this.#orbit.facing();
     this.#endDrag();
@@ -172,6 +177,7 @@ export class WorldView {
     this.#intents.length = 0;
     this.#combatHud.reset();
     this.#progressionHud.reset();
+    this.#bags.reset(projection);
     this.#shownArea = null;
     this.#flyTo = null;
     this.#framePending = true;
@@ -196,6 +202,7 @@ export class WorldView {
   }
 
   leave(): void {
+    this.#bags.reset();
     this.#endDrag();
     this.#sky.show(false);
     this.#overlay.hide();
@@ -205,6 +212,10 @@ export class WorldView {
   queueIntent(intent: Intent): void {
     this.#intents.push(intent);
   }
+
+  toggleBags(): void { this.#bags.toggle(); }
+
+  closeBags(): boolean { return this.#bags.close(); }
 
   toggleOverlay(): void {
     this.#overlay.toggle();
@@ -246,7 +257,9 @@ export class WorldView {
     for (const command of this.#outbox.update(this.#input(input), now)) {
       source.sendCommand(command);
     }
-    source.advance(deltaSeconds);
+    for (const received of source.advance(deltaSeconds)) {
+      this.#bags.update(received);
+    }
     const projection = source.latestProjection();
     if (!projection) {
       throw new Error("The local zone has no projection for the joined player.");
@@ -290,6 +303,7 @@ export class WorldView {
     }
     this.#combatHud.update(projection, catalog, now);
     this.#progressionHud.update(projection, now);
+    this.#bags.update(projection);
     this.#lastSelf = { x: self.x, z: self.z, facing: self.facing };
     if (this.#framePending) {
       this.#framePending = false;

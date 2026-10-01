@@ -133,7 +133,7 @@
 
       <header class="topbar" data-world-ui hidden>
         <p class="eyebrow">Greyhaven Vale · local zone host</p>
-        <div class="world-toolbar"><button id="return-to-characters" type="button">Characters</button></div>
+        <div class="world-toolbar"><button id="bags-toggle" type="button" aria-controls="bags-panel" aria-expanded="false">Bags (B)</button><button id="return-to-characters" type="button">Characters</button></div>
       </header>
       <aside id="minimap" class="minimap" data-world-ui aria-label="Minimap" hidden>
         <h1 id="area-name" class="minimap-zone">Greyhaven Vale</h1>
@@ -144,9 +144,17 @@
           <button id="minimap-zoom-out" class="minimap-button minimap-zoom-out" type="button" aria-label="Zoom minimap out" title="Zoom out">−</button>
         </div>
       </aside>
+      <aside id="bags-panel" class="bags-panel" aria-label="Bags" hidden>
+        <div class="bags-heading"><h2>Bags</h2><button id="bags-close" type="button" aria-label="Close bags">Close</button></div>
+        <p id="bag-status" aria-live="polite"></p>
+        <div id="bag-slots" class="bag-slots" role="group" aria-label="Inventory slots"></div>
+        <p id="bag-selection"></p>
+        <label class="bag-quantity">Quantity <input id="bag-quantity" type="number" min="1" max="65535" step="1" value="1" disabled /></label>
+        <p id="bag-feedback" aria-live="polite"></p>
+      </aside>
       <section id="debug-overlay" class="debug-overlay" aria-label="Debug statistics" hidden></section>
       <section class="hud" data-world-ui aria-label="Controls" hidden>
-        <p><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Tab</kbd> target · <kbd>F</kbd> or right-click attack · left-drag look · right-drag turn · wheel zoom · <kbd>F3</kbd> stats · <kbd>Esc</kbd> characters</p>
+        <p><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Tab</kbd> target · <kbd>F</kbd> or right-click attack · left-drag look · right-drag turn · wheel zoom · <kbd>B</kbd> bags · <kbd>F3</kbd> stats · <kbd>Esc</kbd> characters</p>
         <p id="objective">Explore Greyhaven Vale. Quests are not in this build yet.</p>
         <p id="unit-status" aria-live="polite"></p>
         <p id="combat-feedback" aria-live="polite"></p>

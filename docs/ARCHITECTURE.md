@@ -185,7 +185,7 @@ The world presentation (`web/src/world/world-view.ts`) builds the static scene o
 
 The pinned renderer has no fog, sky, sun, vertex colour, emissive or instancing support yet (3d-lab #84 and #82). `EnvironmentStyle` and the batching module are the seams where those features replace the baked haze bands, per-colour batches and colour-only glows.
 
-Combat input and feedback are small modules under `web/src/world/units/` hooked into the world view. Tab selects the nearest living attackable creature and cycles outward, F or a right click (a right drag still turns) toggles auto-attack and R releases a dead spirit; each is an intent resolved against the latest projection when the next frame sends it. Two HUD text lines show the viewer's health, combat state and target and the latest feedback event. Names come from the module's versioned `catalog()` export (`mmorpg.catalog` v1: creature templates with family, behaviour, levels and body size, NPCs with roles, and area names), which carries the content revision and fingerprint; the browser refuses to enter a zone whose revision differs from the catalog's. Combat numbers, spawn points and AI never leave Rust. Target frames, nameplates and combat text are step 7b of #22.
+Combat input and feedback are small modules under `web/src/world/units/` hooked into the world view. Tab selects the nearest living attackable creature and cycles outward, F or a right click (a right drag still turns) toggles auto-attack and R releases a dead spirit; each is an intent resolved against the latest projection when the next frame sends it. Two HUD text lines show the viewer's health, combat state and target and the latest feedback event. Names come from the module's versioned `catalog()` export (`mmorpg.catalog` v2: creature templates with family, behaviour, levels and body size, NPCs with roles, area names and immutable item names/stack limits), which carries the content revision and fingerprint; the browser refuses to enter a zone whose revision differs from the catalog's. Combat numbers, spawn points and AI never leave Rust. Target frames, nameplates and combat text are step 7b of #22.
 
 For an online client, buffer delay comes from observed server ticks and jitter; never compare remote ticks directly with wall-clock timestamps. Optional local prediction must reuse compatible physics and content, retain a bounded command history, and reconcile against `acknowledged_sequence`. Remote entities can interpolate. Inventing collision corrections in TypeScript would create competing physics semantics.
 
@@ -239,3 +239,15 @@ Starter progression is core-owned: death rewards the eligible tapper exactly
 once; XP/level are character-durable canonical facts and exact self-projection
 state. Leaving clears taps so a reused session-local player ID cannot inherit
 an old reward. Shared rules and cap behavior are in PROGRESSION.md.
+
+
+The browser Bags panel reads only the self sheet. It caches the last received
+slots across omitted sheets, disables intent while a higher revision is missing,
+and recovers on the periodic full sheet. Its session identity and tick/revision
+checks reject stale updates; enter/leave clears selection, slots and feedback.
+The panel sends `MoveItem` through `WorldView` and the existing sequenced source,
+without simulating moves or grants. A bounded source advance returns each decoded
+projection in tick order (at most four local catch-up ticks), so intermediate
+sheets and refusals reach the bag cache before drawing the newest frame. Catalog format v2 adds item catalog revision
+and ID/name/stack-limit records; v1 exports fail closed at that presentation
+boundary. The snapshot/command wire and content identity remain v7/v2/revision 4.

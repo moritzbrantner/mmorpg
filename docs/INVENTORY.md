@@ -63,5 +63,28 @@ budget and packs fewer low-priority entities when a sheet is present; see
 
 Core recovery/loss fixtures, the `inventory-resume` real-session scenario, a real
 native WebTransport move/resume/merge test, and the browser WASM adapter prove
-ownership, sequenced moves and periodic recovery. Browser bags presentation
-remains #84; loot, money, equipment effects and vendors remain their own slices.
+ownership, sequenced moves and periodic recovery. Browser bags presentation (#84) reads these sheets; loot, money, equipment effects and vendors remain their own slices.
+
+
+## Browser Bags panel (#84)
+
+Open **Bags** or press B from the world canvas. All 16 slots show core catalog
+names and received quantities. Select an occupied slot, enter a whole-number
+quantity (default: the full stack), then select a destination. Selecting the same
+slot cancels. This supports split, transfer, merge and full-stack swap using the
+shared command path; the core decides whether each move is allowed. The slots
+stay unchanged while an intent is pending, and server refusals appear in the
+panel. Escape or **Close** closes it without leaving the world.
+
+Missing sheets retain the prior bag. If a projection announces a newer revision
+without its sheet, moves pause until periodic recovery supplies that revision.
+Stale ticks/revisions and another viewer/zone/content identity cannot replace the
+cache. Entry binds the current source identity and leave/reset removes prior
+slots, selection and feedback. A fresh entry still gets a fresh starter bag;
+character/world persistence belongs to #30/#40.
+
+Catalog JSON format v2 includes `itemCatalogRevision` (decimal string) and an
+ordered `items` array of `{id, name, maxStack}` from core. The browser decodes it
+strictly and uses its names, without reproducing grant or bag-mutation rules.
+Focused state tests and real Chromium cover commands, refusal, fresh-session
+reset, keyboard close and narrow/short viewport layouts.

@@ -18,8 +18,9 @@ export type WorldSource = {
   leave(): void;
   /** Sends intent under the next strictly increasing sequence. Throws when not joined. */
   sendCommand(command: WorldCommand): void;
-  /** Lets the source progress by elapsed wall-clock seconds. */
-  advance(deltaSeconds: number): void;
+  /** Progresses by elapsed seconds and returns received projections in tick order.
+   * Local catch-up is bounded to four ticks; intermediate sheets/events are retained. */
+  advance(deltaSeconds: number): readonly ZoneSnapshot[];
   /** The newest decoded projection addressed to the joined player, if any. */
   latestProjection(): ZoneSnapshot | null;
   /** Interpolated entities to draw now; empty before the first projection. */

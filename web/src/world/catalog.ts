@@ -1,6 +1,6 @@
 /**
  * The content catalog from the WASM `catalog()` export (format
- * `mmorpg.catalog` v1): names and presentation facts for the IDs that
+ * `mmorpg.catalog` v2): names and presentation facts for the IDs that
  * projections carry. Creature templates by template ID, NPCs by NPC ID,
  * areas by area ID. Combat numbers stay on the server.
  */
@@ -22,7 +22,11 @@ export type CreatureTemplate = {
 
 export type NpcRecord = { id: number; name: string; role: NpcRole; level: number };
 
+export type ItemRecord = { id: number; name: string; maxStack: number };
+
 export type ContentCatalog = {
+  itemCatalogRevision: bigint;
+  items: ReadonlyMap<number, ItemRecord>;
   contentRevision: bigint;
   /** 16 lower-case hex digits. */
   contentFingerprint: string;
@@ -32,7 +36,7 @@ export type ContentCatalog = {
 };
 
 const FORMAT = "mmorpg.catalog";
-const VERSION = 1;
+const VERSION = 2;
 const FAMILIES: readonly CreatureFamily[] = ["wolf", "boar", "vermin", "marauder", "mirefin", "redbrand"];
 const BEHAVIOURS: readonly CreatureBehaviour[] = ["aggressive", "neutral"];
 const ROLES: readonly NpcRole[] = ["quest_giver", "vendor", "spirit_healer", "guard"];
@@ -101,7 +105,7 @@ export function decodeCatalog(json: string): ContentCatalog {
     fail("not JSON");
   }
   const root = object(parsed, [
-    "format", "version", "contentRevision", "contentFingerprint", "creatureTemplates", "npcs", "areas",
+    "format", "version", "contentRevision", "contentFingerprint", "creatureTemplates", "npcs", "areas", "itemCatalogRevision", "items",
   ], "export");
   if (root.format !== FORMAT || root.version !== VERSION) {
     fail(`unsupported format ${String(root.format)} v${String(root.version)}`);
@@ -153,7 +157,18 @@ export function decodeCatalog(json: string): ContentCatalog {
     const record = object(value, ["id", "name"], `area ${index}`);
     return { id: int(record.id, `area ${index} id`, 0, 0xffff), name: text(record.name, `area ${index} name`) };
   });
+  if (root.itemCatalogRevision !== "1") fail("unsupported item catalog revision");
+  const items = list(root.items, "items", 256).map((value, index) => {
+    const record = object(value, ["id", "name", "maxStack"], `item ${index}`);
+    return {
+      id: int(record.id, `item ${index} id`, 1, 0xffff),
+      name: text(record.name, `item ${index} name`),
+      maxStack: int(record.maxStack, `item ${index} stack limit`, 1, 0xffff),
+    };
+  });
   return {
+    itemCatalogRevision: 1n,
+    items: byId(items, "item"),
     contentRevision,
     contentFingerprint: root.contentFingerprint,
     creatureTemplates: byId(templates, "creature template"),

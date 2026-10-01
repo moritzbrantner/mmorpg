@@ -76,16 +76,16 @@ export class LocalZoneSource implements WorldSource {
     }
   }
 
-  advance(deltaSeconds: number): void {
+  advance(deltaSeconds: number): readonly ZoneSnapshot[] {
     const player = this.#player;
     const due = this.#clock.advance(deltaSeconds);
-    if (player === null) {
-      return;
-    }
+    if (player === null) return [];
+    const received: ZoneSnapshot[] = [];
     for (let tick = 0; tick < due; tick += 1) {
       this.#zone.tick();
-      this.#publish(player);
+      received.push(this.#publish(player));
     }
+    return received;
   }
 
   latestProjection(): ZoneSnapshot | null {
@@ -109,12 +109,13 @@ export class LocalZoneSource implements WorldSource {
     return this.#player;
   }
 
-  #publish(player: number): void {
+  #publish(player: number): ZoneSnapshot {
     const snapshot = decodeSnapshot(this.#zone.projection(player));
     if (snapshot.viewerId !== player) {
       throw new Error("The local zone addressed a projection to another player.");
     }
     this.#latest = snapshot;
     this.#history.push(snapshot);
+    return snapshot;
   }
 }

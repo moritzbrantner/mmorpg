@@ -5,7 +5,8 @@
 //! [`CATALOG_FORMAT`], version [`CATALOG_FORMAT_VERSION`]) exports those
 //! tables of the hosted [`ZoneContent`] as compact JSON: creature templates
 //! (name, family, behaviour, levels, elite, body size), NPCs (name, role,
-//! level) and areas (name). It carries the content revision and fingerprint,
+//! level), areas (name) and items (name, stack limit). It carries the content
+//! revision and fingerprint,
 //! so a client can refuse a catalog of other content. Combat numbers,
 //! spawn points and AI stay on the server side.
 
@@ -17,7 +18,7 @@ use serde::Serialize;
 use crate::host::hosted_content;
 
 pub const CATALOG_FORMAT: &str = "mmorpg.catalog";
-pub const CATALOG_FORMAT_VERSION: u32 = 1;
+pub const CATALOG_FORMAT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +32,8 @@ pub struct CatalogExport {
     pub creature_templates: Vec<CreatureTemplateExport>,
     pub npcs: Vec<NpcExport>,
     pub areas: Vec<AreaNameExport>,
+    pub item_catalog_revision: String,
+    pub items: Vec<ItemExport>,
 }
 
 /// `[id, name, family, behaviour, minLevel, maxLevel, elite, halfExtents]`
@@ -63,6 +66,14 @@ pub struct AreaNameExport {
     pub name: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemExport {
+    pub id: u16,
+    pub name: &'static str,
+    pub max_stack: u16,
+}
+
 /// The catalog of `content`, every table ordered by ID.
 #[must_use]
 pub fn catalog(content: &ZoneContent) -> CatalogExport {
@@ -70,6 +81,15 @@ pub fn catalog(content: &ZoneContent) -> CatalogExport {
         format: CATALOG_FORMAT,
         version: CATALOG_FORMAT_VERSION,
         content_revision: content.revision().to_string(),
+        item_catalog_revision: mmorpg_core::ITEM_CATALOG_REVISION.to_string(),
+        items: mmorpg_core::ITEM_CATALOG
+            .iter()
+            .map(|item| ItemExport {
+                id: item.id.get(),
+                name: item.name,
+                max_stack: item.max_stack,
+            })
+            .collect(),
         content_fingerprint: format!("{:016x}", content.fingerprint()),
         creature_templates: content
             .creature_templates()
@@ -130,6 +150,14 @@ mod tests {
         let content = hosted_content();
         assert_eq!(value["format"], CATALOG_FORMAT);
         assert_eq!(value["version"], CATALOG_FORMAT_VERSION);
+        assert_eq!(value["itemCatalogRevision"], "1");
+        assert_eq!(
+            value["items"],
+            json!([
+                {"id": 1, "name": "Torn Fur", "maxStack": 20},
+                {"id": 2, "name": "Worn Dagger", "maxStack": 1}
+            ])
+        );
         assert_eq!(value["contentRevision"], content.revision().to_string());
         assert_eq!(
             value["contentFingerprint"],
