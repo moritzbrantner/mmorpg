@@ -319,3 +319,25 @@ bot = "hunter"
 entity = "creature:106"
 state = "absent"
 tick = 1701
+
+# XP is durable self-state: death, reconnect and release cannot erase a reward.
+[[expect]]
+kind = "progression"
+bot = "hunter"
+level = 1
+experience = 0
+tick = 2
+
+[[expect]]
+kind = "progression"
+bot = "hunter"
+level = 1
+experience = 50
+tick = 1040
+
+[[expect]]
+kind = "progression"
+bot = "hunter"
+level = 1
+experience = 50
+tick = 1701

@@ -64,6 +64,8 @@ impl EntitySnapshot {
 /// The viewer's own exact unit state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ViewerState {
+    pub experience: u32,
+    pub experience_to_next_level: u32,
     pub health: u32,
     pub max_health: u32,
     pub level: u8,
@@ -152,6 +154,9 @@ impl ZoneSimulation {
                 zone_id: self.zone_id,
                 tick: self.tick,
                 viewer: ViewerState {
+                    experience: viewer.experience,
+                    experience_to_next_level: crate::experience_to_next_level(viewer.level)
+                        .unwrap_or(0),
                     health: viewer.health,
                     max_health,
                     level: viewer.level,

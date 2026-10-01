@@ -37,9 +37,9 @@ An entity reference is 5 bytes: kind (`u8`) then ID (`u32`). Kind 1 is a player 
 
 | Offset | Width | Field |
 | --- | --- | --- |
-| 0 | 1 | Wire version: 5 |
+| 0 | 1 | Wire version: 6 |
 | 1 | 1 | Scope: 1 canonical, 2 player-visible |
-| 2 | 2 | Core schema version: 5 |
+| 2 | 2 | Core schema version: 6 |
 | 4 | 4 | Zone ID |
 | 8 | 8 | Simulation tick |
 
@@ -54,16 +54,18 @@ Sections follow in fixed order: header, self, target, events, entities.
 | 28 | 4 | Viewer player ID: the entity that is "self" |
 | 32 | 4 | Self: health |
 | 36 | 4 | Self: maximum health |
-| 40 | 1 | Self: level (at least 1) |
-| 41 | 1 | Self flags: bit 0 dead, bit 1 in combat, bit 2 auto-attacking; other bits 0 |
-| 42 | 5 | Self: target (entity reference, kind 0 for none) |
-| 47 | 5 | Target: the target's own target (entity reference) |
-| 52 | 1 | Event count, at most 16 |
-| 53 | 14 × events | Event records |
+| 40 | 1 | Self: level (1–10) |
+| 41 | 4 | Self: current-level XP |
+| 45 | 4 | Self: XP to next level (0 at level 10) |
+| 49 | 1 | Self flags: bit 0 dead, bit 1 in combat, bit 2 auto-attacking; other bits 0 |
+| 50 | 5 | Self: target (entity reference, kind 0 for none) |
+| 55 | 5 | Target: the target's own target (entity reference) |
+| 60 | 1 | Event count, at most 16 |
+| 61 | 14 × events | Event records |
 | … | 2 | Entity count |
 | … | 21 × count | Entity records |
 
-The self section is the viewer's exact state: `dead` holds exactly when health is 0, and health never exceeds its maximum. The target section is the target-of-target: a player's selection or an engaged creature's threat leader, so entity records need no per-entity target. The fixed part is 55 bytes; a projection is `55 + 14 × events + 21 × entities` bytes.
+The self section is the viewer's exact state: `dead` holds exactly when health is 0, and health never exceeds its maximum. The target section is the target-of-target: a player's selection or an engaged creature's threat leader, so entity records need no per-entity target. The fixed part is 63 bytes; a projection is `63 + 14 × events + 21 × entities` bytes.
 
 ### Events
 
@@ -106,7 +108,7 @@ Positions are absolute `i16` units. Zone content keeps every collider bound and 
 
 ### Datagram byte budget
 
-The pinned `game-server` sends a session snapshot frame unchanged when it fits the connection's current WebTransport datagram size. Otherwise it sends bounded, tick-keyed fragments; the native client reassembles and verifies the session frame before decoding this v5 payload. A lost fragment loses that snapshot, and newer complete ticks supersede older incomplete ones. The reassembler is reset on reconnect. This transport behavior does not change the MMO projection policy: its current budget derives from the smallest negotiated datagram size:
+The pinned `game-server` sends a session snapshot frame unchanged when it fits the connection's current WebTransport datagram size. Otherwise it sends bounded, tick-keyed fragments; the native client reassembles and verifies the session frame before decoding this v6 payload. A lost fragment loses that snapshot, and newer complete ticks supersede older incomplete ones. The reassembler is reset on reconnect. This transport behavior does not change the MMO projection policy: its current budget derives from the smallest negotiated datagram size:
 
 | Term | Bytes | Source |
 | --- | ---: | --- |
@@ -117,13 +119,13 @@ The pinned `game-server` sends a session snapshot frame unchanged when it fits t
 
 On loopback, path MTU discovery raises the host's value to 1,287 bytes before admission and the client's to 1,350–1,413 bytes, but on a real path the host can capture its limit before discovery completes, so the budget uses the floor. `mmorpg-client`'s `connected_world` tests log the negotiated size, pin the floor with discovery disabled on both peers, and deliver a crowded projection packed to the full 48-record budget through a real host.
 
-Encoding is budget-driven in fixed section priority: `pack_snapshot` writes the header, the self and target sections and this tick's events, then entities in priority order until the next record would exceed the budget, and reports how many it packed. Hosts publish with it. Without events, `(1,077 − 55) / 21 = 48` records fit (`MAX_WIRE_ENTITIES`), a 1,063-byte projection; with a full event section, 38 do. The viewer and its target lead the entities and always fit: `55 + 16 × 14 + 2 × 21 = 321` bytes, which a compile-time assertion checks. Relevant units beyond the budget are omitted by priority, never truncated by transport. `encode_snapshot`, used by fixtures and tests, fails closed instead of omitting any entity. A test with extreme field values (maximum IDs, tick and revision, `i16`/`i8` extremes, a full event section and the whole relevance cap) proves the packing fits one datagram. Future payload growth requires a deliberate MMO budget and wire change; transport fragmentation alone does not raise the budget. Later sections (character sheet, loot) take their place before the entities.
+Encoding is budget-driven in fixed section priority: `pack_snapshot` writes the header, the self and target sections and this tick's events, then entities in priority order until the next record would exceed the budget, and reports how many it packed. Hosts publish with it. Without events, `(1,077 − 63) / 21 = 48` records fit (`MAX_WIRE_ENTITIES`), a 1,071-byte projection; with a full event section, 37 do. The viewer and its target lead the entities and always fit: `63 + 16 × 14 + 2 × 21 = 329` bytes, which a compile-time assertion checks. Relevant units beyond the budget are omitted by priority, never truncated by transport. `encode_snapshot`, used by fixtures and tests, fails closed instead of omitting any entity. A test with extreme field values (maximum IDs, tick and revision, `i16`/`i8` extremes, a full event section and the whole relevance cap) proves the packing fits one datagram. Future payload growth requires a deliberate MMO budget and wire change; transport fragmentation alone does not raise the budget. Later sections (character sheet, loot) take their place before the entities.
 
 Player IDs are zone/session-local. These snapshots have no authority epoch field; the future online session/routing envelope must bind the stream to a grant and reset presentation on grant changes. An acknowledgement supports future prediction reconciliation, not permission to mutate authoritative state.
 
 Decoders reject payloads above the byte budget, a wrong wire version, scope or schema, inconsistent self state (level 0, health above its maximum, a dead flag that disagrees with zero health), more than 16 events or 48 entities, unknown entity kinds, event kinds or error codes, event flags or fields that do not fit their kind, an absent reference with a non-zero ID, reserved flag bits, a health percent above 100, counts not matching the payload length, a first record that is not the viewer, truncation and trailing bytes. The browser decoder additionally rejects duplicate `(kind, id)` identities. The native client rejects duplicates, a projection addressed to another viewer, and a projection without its own player.
 
-The shared fixture is `fixtures/protocol/player-snapshot-v5.hex`: a viewer fighting a wolf next to an NPC and a corpse tapped by another player, with one event of every kind. Rust encoding and browser decoding both verify these exact bytes.
+The shared fixture is `fixtures/protocol/player-snapshot-v6.hex`: a viewer fighting a wolf next to an NPC and a corpse tapped by another player, with one event of every kind. Rust encoding and browser decoding both verify these exact bytes.
 
 ## Canonical scope
 
@@ -151,15 +153,16 @@ A player record starts with the 39 bytes of movement state and continues with it
 | 33 | 4 | Last command sequence |
 | 37 | 2 | Spawn slot |
 | 39 | 1 | Level |
-| 40 | 4 | Health (0 means dead) |
-| 44 | 5 | Target (entity reference) |
-| 49 | 1 | Auto-attacking: 0 or 1 |
-| 50 | 2 | Swing timer (ticks until the next swing) |
-| 52 | 2 | Combat timer (ticks left in combat after the last blow) |
-| 54 | 2 | Calm ticks (out-of-combat ticks driving regeneration) |
-| 56 | 2 | Error cooldown (ticks until the next out-of-range error) |
-| 58 | 1 | Pending intent count, at most 16 |
-| 59 | 6 × intents | Intent code (1 select target, 2 start attack, 3 stop attack, 4 release spirit) and entity reference, which is none except for select target |
+| 40 | 4 | Current-level XP |
+| 44 | 4 | Health (0 means dead) |
+| 48 | 5 | Target (entity reference) |
+| 53 | 1 | Auto-attacking: 0 or 1 |
+| 54 | 2 | Swing timer (ticks until the next swing) |
+| 56 | 2 | Combat timer (ticks left in combat after the last blow) |
+| 58 | 2 | Calm ticks (out-of-combat ticks driving regeneration) |
+| 60 | 2 | Error cooldown (ticks until the next out-of-range error) |
+| 62 | 1 | Pending intent count, at most 16 |
+| 63 | 6 × intents | Intent code (1 select target, 2 start attack, 3 stop attack, 4 release spirit) and entity reference, which is none except for select target |
 | … | 1 | Intents dropped: 0 or 1; a full queue dropped a later intent, which the next tick reports |
 | … | 1 | Event count, at most 16 |
 | … | 14 × events | This tick's events, as in the player-visible scope |
@@ -193,9 +196,24 @@ Canonical data is for trusted replay/recovery and server-side verification. It m
 
 ## Versions and migration
 
-Snapshot wire and core schema version 5 replace version 4 for both scopes: player projections gained the self, target and event sections and 21-byte entity records for players, creatures and NPCs; canonical snapshots reference content by revision and fingerprint instead of embedding it and carry unit, creature, RNG and event state. Command wire version 2 gained tags 3–6 additively. Old bytes are never reinterpreted and there is no bundled migration:
+Before progression, snapshot wire and core schema version 5 replaced version 4 for both scopes: player projections gained the self, target and event sections and 21-byte entity records for players, creatures and NPCs; canonical snapshots reference content by revision and fingerprint instead of embedding it and carry unit, creature, RNG and event state. Command wire version 2 gained tags 3–6 additively. Old bytes are never reinterpreted and there is no bundled migration:
 
 - version 4 snapshots, canonical checkpoints and recovery bundles are rejected;
 - a standalone host restarted with an old `MMORPG_RECOVERY_DIR` fails closed. Start from fresh development state or arrange an explicit migration.
 
 Protocol changes require updating version handling, this specification, the shared fixture and both language contract tests together.
+
+## Starter XP snapshot v6
+
+Version 6 adds current-level XP (`u32`) after each canonical player's level,
+and XP plus next-level threshold (two `u32`s) after the self section's level.
+The 1,077-byte projection budget is unchanged: 63 fixed bytes, up to 48 entities
+without events or 37 with all 16 events. The largest attainable payload is
+1,071 bytes because records advance in multiples of seven.
+
+Both Rust and browser decoders reject out-of-range player levels, nonzero
+capped XP/threshold, zero uncapped thresholds and XP at or above its threshold.
+Canonical restore validates XP against the exact shared curve. Version 5 is
+retained as legacy fixture evidence and rejected; there is no implicit save or
+recovery migration. Existing version-5 recovery directories need an explicit
+migration or fresh development state. Commands remain version 2.

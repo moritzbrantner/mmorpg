@@ -414,6 +414,8 @@ async fn fragmented_projection_reaches_the_native_client() {
         acknowledged_sequence: 0,
         viewer_id: player_id,
         viewer: ViewerState {
+            experience: 0,
+            experience_to_next_level: 100,
             health: 50,
             max_health: 50,
             level: 1,
