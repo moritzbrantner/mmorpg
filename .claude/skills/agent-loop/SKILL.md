@@ -22,7 +22,7 @@ One run = the steps below, in order, then a short report. Keep chat output to th
 For each open, non-draft PR that closes an `agent-task` issue:
 
 1. **CI:** `gh pr checks <n>`. If pending, skip it this run. If red, comment the failing check and log excerpt, then stop on this PR.
-2. **Codex:** read the review comments and threads from `chatgpt-codex-connector` (`gh api repos/{owner}/{repo}/pulls/<n>/comments`, `.../reviews`, and the issue comments). Every finding must be fixed or answered in the thread. Check whether the review covers the head commit; if a substantial fix landed after it, comment `@codex review` and skip until it reports.
+2. **Codex:** read the review comments and threads from `chatgpt-codex-connector` (`gh api repos/{owner}/{repo}/pulls/<n>/comments`, `.../reviews`, and the issue comments). Require a completed connector review covering the current head commit; the review-summary issue comment may record completion even when there are no findings. Skip this PR while that review is absent or running. Every finding must be fixed or answered in the thread. If the head changed after the completed review, comment `@codex review` when no current-head review is running and skip until it completes.
 3. **Spec:** compare the diff with the issue's Decisions, Acceptance and Out of scope:
    - formats match exactly;
    - nothing out of scope slipped in;

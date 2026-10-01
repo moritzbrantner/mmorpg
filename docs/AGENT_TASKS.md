@@ -23,7 +23,7 @@ How work reaches the coding agents. A task is one GitHub issue that one agent tu
 
 ## Picking up a task (implementers)
 
-When asked to "pick up work", take the oldest open issue labeled `spec:ready` plus your `agent:*` label that has no `in-progress` label and whose "Start after" dependencies are merged. Add `in-progress`, branch `agent/<topic>` (or the branch the issue names) and follow the issue and `AGENTS.md`. Open the PR only when the branch is complete, with `Closes #N`. Never implement `spec:draft` or `spec:needs-input` issues. If the spec turns out to be wrong or impossible, comment on the issue and stop; do not silently re-scope it.
+When asked to "pick up work", take the oldest open issue labeled `spec:ready` plus your `agent:*` label that has no `in-progress` label and whose "Start after" dependencies are merged. Add `in-progress`, branch `agent/<topic>` (or the branch the issue names) and follow the issue and `AGENTS.md`. Open the PR only when the branch is complete, with `Closes #N`. Never implement `spec:draft` or `spec:needs-input` issues. If the spec turns out to be wrong or impossible, comment on the issue, replace `spec:ready` with `spec:needs-input`, remove `in-progress` and stop; do not silently re-scope it.
 
 ## Implementer loop
 
@@ -39,7 +39,7 @@ An implementer run (Codex: the `implementer-loop` skill in `.agents/skills/`; So
 3. **Otherwise, start the next task** per "Picking up a task". Work in a fresh worktree from `origin/main`. Commit in small steps. Run the focused checks plus what the issue lists that CI does not run. Push, then open the PR with `Closes #N` (and `browser-evidence` when browser-visible). Wait for CI and the first Codex review, and handle them as in step 1 within the same run.
 4. **Otherwise, exit.** Do not invent work: no new issues, no tooling, foundation or cleanup tasks.
 
-An implementer never merges, never edits issue bodies, never writes specs and never changes a `spec:*` label except to set `spec:needs-input` when the spec is wrong. That last case always comes with a comment explaining why.
+An implementer never merges, never edits issue bodies, never writes specs and never changes a `spec:*` label except to replace `spec:ready` with `spec:needs-input` when the spec is wrong. That last case always comes with a comment explaining why and removal of `in-progress`.
 
 ## Writing an issue
 
