@@ -35,7 +35,7 @@ For each open, non-draft PR that closes an `agent-task` issue:
    Also check the `AGENTS.md` invariants (authority boundaries, determinism, fail-closed versions).
 4. **Verdict:**
    - **Ready:** `gh pr merge <n> --merge --delete-branch`. If auto mode denies the merge, do not work around it; list the PR as "ready for you to merge" in the report.
-   - **Changes needed:** one PR comment with a numbered, concrete list. For a PR by Sonnet, dispatch Sonnet again with that list (step 4). For a PR by Opus, fix it yourself. For Sol, leave the comment; Sol's next run fixes its own PRs first.
+   - **Changes needed:** one PR comment with a numbered, concrete list. For a PR by Sonnet, dispatch Sonnet again with that list (step 4). For a PR by Opus, re-dispatch the Opus agent with that list (step 4); never fix it inline as well. For Sol, leave the comment; Sol's next run fixes its own PRs first.
 
 Never merge PRs in foundation repositories (3d-lab, game-server, physics-engine, …); list them for the user.
 
@@ -89,6 +89,6 @@ End with a compact table: each PR (merged / changes requested / waiting for CI o
 ## Pacing
 
 - A single invocation does one run.
-- For continuous operation the user runs `/loop /agent-loop`. Schedule the next wakeup around 1800 s while PRs wait on CI or Codex.
-- Stop the loop when no Opus or Sonnet work is in flight or startable and no plan steps remain for them. A non-empty Sol backlog alone is not a reason to keep looping.
+- For continuous operation the user runs `/loop /agent-loop`. Schedule the next wakeup around 1800 s while PRs wait on CI or Codex. While an unstarted Sol task blocks queued work, also schedule a wakeup no later than its 24-hour reassignment deadline (the clamp is 3600 s, so keep waking hourly until then).
+- Stop the loop when no Opus or Sonnet work is in flight or startable and no plan steps remain for them. A non-empty Sol backlog alone is not a reason to keep looping, but a Sol task that blocks queued work is.
 - A finished background Sonnet or Opus agent re-invokes you; continue from step 1 for its PR.
