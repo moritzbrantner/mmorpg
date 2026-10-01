@@ -77,6 +77,7 @@ pub(crate) struct PlayerState {
     pub(crate) last_sequence: u32,
     pub(crate) spawn_slot: u16,
     pub(crate) level: u8,
+    pub(crate) experience: u32,
     /// Zero means dead.
     pub(crate) health: u32,
     pub(crate) target: Option<EntityRef>,
@@ -107,6 +108,7 @@ impl PlayerState {
             last_sequence: 0,
             spawn_slot,
             level: PLAYER_START_LEVEL,
+            experience: 0,
             health: player_max_health(PLAYER_START_LEVEL),
             target: None,
             auto_attack: false,
@@ -310,6 +312,9 @@ impl ZoneSimulation {
         }
         for creature in self.creatures.values_mut() {
             creature.forget(entity);
+            if creature.tapped_by == Some(player_id) {
+                creature.tapped_by = None;
+            }
         }
         for player in self.players.values_mut() {
             if player.target == Some(entity) {

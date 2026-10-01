@@ -37,7 +37,7 @@ describe("WASM local zone host", () => {
     const projection = decodeSnapshot(zone.projection(player));
     expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 3n, viewerId: player });
     expect(projection.viewer).toEqual({
-      health: 50, maxHealth: 50, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
+      health: 50, maxHealth: 50, experience: 0, experienceToNextLevel: 100, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
     });
     expect(() => zone.submit(player, 1, Uint8Array.of(1, 1, 0, 0, 0, 0))).toThrow();
     expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(true);

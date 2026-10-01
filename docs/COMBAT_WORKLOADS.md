@@ -92,3 +92,16 @@ workload has no clock, network or GPU dependency. It runs in the ordinary worksp
 test gate; native/WASM builds continue to use the same Rust authority. Counts are
 integer operations and byte lengths, not timings. Resolved shared convention
 sourceRevision: `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
+
+Snapshot v6 adds eight self bytes for durable XP. The same 1,077-byte budget
+now has a largest attainable 1,071-byte payload. Recovery/replay and workload
+ceilings still cover complete ticks; historical v5 byte observations above
+remain identified as the original #26 baseline. Physics semantics are unchanged.
+
+The v6 byte ceiling adds at most eight bytes per completed recipient projection
+to the reviewed v5 ceiling. Every AI, physics, maintenance and candidate counter
+remains identical on these four fixtures. Measured v5 → v6 publication totals:
+idle-16 3,204,720 → 3,250,800; fights-8 981,271 → 1,004,311; fights-32
+5,406,543 → 5,498,703; crowded-64 24,499,402 → 24,671,752. The crowded
+fixture packs 570 fewer lower-priority entity records under the unchanged budget;
+its events and work counts are retained. No physics or gameplay-work ceiling rises.

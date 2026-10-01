@@ -1,9 +1,8 @@
 # Starter progression rules
 
-Issue #74 defines the immutable rule queries in `mmorpg-core`. XP is not yet
-awarded by the zone: #75 owns authoritative tapping/eligibility, mutable XP,
-level growth, canonical persistence and exact self projection; #76 owns the
-browser XP bar and feedback. These queries do not grant XP or change combat.
+Issue #74 defines the immutable rule queries in `mmorpg-core`. Issue #75 applies them on authoritative creature deaths and persists/projects
+progression. Issue #76 owns the browser XP bar and feedback. The rule queries
+themselves never grant XP.
 
 Player progression supports levels 1–10. The next-level thresholds are
 current-level XP, not cumulative totals:
@@ -41,9 +40,32 @@ Quest XP and other rewards are outside this kill rule.
 
 Both public queries return `None` for unsupported levels. The capped threshold
 is `Some(0)`, distinct from invalid input. No client command can call these
-queries to mutate XP. Applying these rules and rejecting invalid persisted
-progression belong to #75; existing snapshots are unchanged in #74.
+queries to mutate XP. The authority applies these rules and rejects invalid persisted progression;
+#74 introduced no snapshot changes and #75 deliberately versions them.
 
 Exact public-API fixtures cover the curve, rounding, gray rewards, bonus cap,
 player cap and invalid inputs. Conventions sourceRevision:
 `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
+
+## Authoritative awards (#75)
+
+The admitted living tapper receives the nominal reward once on the creature's
+alive-to-corpse transition, when its XZ distance from the corpse is at most
+45 metres (the interest radius). The killer may be a different player or NPC;
+tapping decides reward ownership. Missing/dead/out-of-range tappers get no XP. Leaving clears taps so a reused
+session-local player ID cannot inherit rewards.
+No command grants XP, and duplicate/stale attack sequences fail before rewards.
+
+Level-ups subtract thresholds in order, carry remainder and discard XP at
+level 10. Health increases by the maximum-health growth, preserving missing
+health; existing level-based melee damage applies automatically. XP and level
+are character-durable facts copied into canonical recovery state. Session
+identity remains separate; no persistence I/O occurs during awards.
+
+Snapshot schema/wire version 6 carries canonical player XP and exact self
+XP/threshold in every projection, so lost cosmetic events cannot erase progress.
+The browser decoder accepts this state; the XP bar and level-up feedback remain
+#76. Public API tests kill two level-1 wolves to reach level 2, restore at 50 XP,
+continue identically, reject invalid restored XP and cover tapper eligibility.
+The Greyhaven wolf-hunt scenario checks XP after its kill, death, reconnect and
+spirit release. Earlier snapshots fail closed; see PROTOCOL.md for migration.
