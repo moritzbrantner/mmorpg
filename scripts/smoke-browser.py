@@ -715,7 +715,8 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertEqual(self.page.evaluate("window.__lootLatest().events.some(e => e.kind === 'error' && e.code === 'empty-loot')"), True)
         self.assertEqual(self.page.evaluate("window.__lootLatest().viewer.copper"), 2)
         self.page.get_by_role("button", name="Characters", exact=True).click()
-        self.enter_world()
+        # The source is still paused: the new player's class choice waits for a tick.
+        self.enter_world(ticking=False)
         expect(self.page.locator("#copper-status")).to_have_text("Copper: 0")
         expect(panel).to_be_hidden()
         expect(self.page.locator("#loot-feedback")).to_have_text("")
