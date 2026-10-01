@@ -183,6 +183,16 @@ const worldView = new WorldView(renderer, camera, {
   experienceBar: requireElement<HTMLProgressElement>("#experience-bar"),
   experienceStatus: requireElement<HTMLElement>("#experience-status"),
   progressionFeedback: requireElement<HTMLElement>("#progression-feedback"),
+  loot: {
+    panel: requireElement<HTMLElement>("#loot-panel"),
+    toggle: requireElement<HTMLButtonElement>("#loot-toggle"),
+    close: requireElement<HTMLButtonElement>("#loot-close"),
+    title: requireElement<HTMLElement>("#loot-title"),
+    rewards: requireElement<HTMLElement>("#loot-rewards"),
+    claim: requireElement<HTMLButtonElement>("#loot-claim"),
+    feedback: requireElement<HTMLElement>("#loot-feedback"),
+    copper: requireElement<HTMLElement>("#copper-status"),
+  },
   bags: {
     panel: requireElement<HTMLElement>("#bags-panel"),
     toggle: requireElement<HTMLButtonElement>("#bags-toggle"),
@@ -194,9 +204,9 @@ const worldView = new WorldView(renderer, camera, {
     feedback: requireElement<HTMLElement>("#bag-feedback"),
   },
 });
-// Debug-only hooks (camera viewpoints, stats) for screenshots; `?debug` enables them.
+// Debug-only camera and public-source hooks for deterministic acceptance; `?debug` enables them.
 if (new URLSearchParams(window.location.search).has("debug")) {
-  Object.assign(window, { __valeDebug: worldView.debugApi() });
+  Object.assign(window, { __valeDebug: { ...worldView.debugApi(), worldSource: () => world?.source ?? null } });
 }
 
 const selectionStageNodes: RendererSceneNode[] = [
@@ -880,7 +890,7 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Escape" && !event.repeat) {
     event.preventDefault();
-    if (!worldView.closeBags()) {
+    if (!worldView.closeLoot() && !worldView.closeBags()) {
       returnToCharacters();
     }
     return;

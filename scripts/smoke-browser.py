@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Real Chromium acceptance against the production bundle; no mocked renderer or simulation.
+"""Real Chromium acceptance against the production bundle and embedded WASM host.
 
 The bundle embeds the shared Rust zone simulation as a WASM local host, so these
-tests drive real movement, jumps and zone entry/exit through the page.
+tests drive real movement, jumps, corpse claims and zone entry/exit through the page.
+The isolated full-bag DOM stage receives a projection fixture; core tests own its
+transaction-rule acceptance.
 
 Prerequisites: build web/ (bun run build), pip install playwright==1.57.0, then
 python -m playwright install --with-deps chromium.
@@ -525,6 +527,146 @@ class BrowserAcceptance(unittest.TestCase):
         self.frames()
         self.page.screenshot(path=str(ARTIFACTS / "character-selection-mobile-resume.png"))
         session.detach()
+
+    def test_projected_corpse_loot_claim_recovery_refusal_and_reset(self):
+        """Actual WASM hunt/claim/loss recovery, then an isolated full-bag presentation fixture."""
+        self.open("?debug")
+        # Pause publication and held-input resends through the public source. Explicit
+        # commands/ticks still drive the same WASM authority and production decoder.
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          window.__lootSource = source;
+          window.__lootSend = source.sendCommand.bind(source);
+          window.__lootAdvance = source.advance.bind(source);
+          window.__lootLatest = source.latestProjection.bind(source);
+          window.__lootSent = [];
+          source.advance = () => [];
+          source.sendCommand = command => {
+            if (command.kind === 'move' || command.kind === 'jump') return;
+            window.__lootSent.push(command);
+            if (window.__lootFixture) {
+              const fixture = window.__lootFixture;
+              fixture.tick++;
+              fixture.acknowledgedSequence++;
+              fixture.events = command.kind === 'loot'
+                ? [{kind: 'error', code: 'inventory-full', target: {kind: 'creature', id: 108}}] : [];
+              return;
+            }
+            window.__lootSend(command);
+          };
+          window.__lootStep = ticks => {
+            for (let tick = 0; tick < ticks; tick++) window.__lootAdvance(1 / 30);
+          };
+        }""")
+        self.enter_world()
+        self.page.evaluate("""() => {
+          const moves = new Map([[0,[1,0]],[36,[1,49152]],[121,[1,32768]],
+            [131,[1,49152]],[375,[1,32768]],[395,[0,32768]]]);
+          for (let tick = 0; tick < 912; tick++) {
+            const move = moves.get(tick);
+            if (move) window.__lootSend({kind:'move',forward:move[0],strafe:0,facing:move[1]});
+            if (tick === 1) window.__lootSend({kind:'start-attack'});
+            if (tick === 380) {
+              window.__lootSend({kind:'select-target',target:{kind:'creature',id:108}});
+              window.__lootSend({kind:'start-attack'});
+            }
+            window.__lootStep(1);
+          }
+          window.__lootBefore = window.__lootLatest();
+        }""")
+        self.assertEqual(self.page.evaluate("Number(window.__lootLatest().loot.diedAt)"), 912)
+        self.page.evaluate("""() => {
+          window.__lootSend({kind:'select-target',target:null});
+          window.__lootStep(1);
+        }""")
+        self.page.get_by_role("button", name="Loot", exact=True).click()
+        self.page.wait_for_function("window.__lootSent.some(c => c.kind === 'select-target' && c.target?.id === 108)")
+        self.page.evaluate("window.__lootStep(1)")
+        panel = self.page.get_by_role("complementary", name="Corpse loot", exact=True)
+        rewards = self.page.locator("#loot-rewards")
+        claim = self.page.get_by_role("button", name="Claim rewards", exact=True)
+        expect(panel).to_be_visible()
+        expect(self.page.locator("#loot-title")).to_have_text("Timber Wolf")
+        expect(rewards).to_have_text("2 copper · Torn Fur × 2")
+        expect(self.page.locator("#copper-status")).to_have_text("Copper: 0")
+        self.page.screenshot(path=str(ARTIFACTS / "loot-before-claim.png"))
+        claim.click()
+        expect(claim).to_be_disabled()
+        self.page.wait_for_function("window.__lootSent.some(c => c.kind === 'loot')")
+        # Drop the claim publication and its bag sheet: only the last of four
+        # authoritative ticks reaches the frame. Copper/loot absence still recover.
+        self.page.evaluate("window.__lootStep(4)")
+        expect(rewards).to_have_text("No rewards remain on this corpse.")
+        expect(self.page.locator("#copper-status")).to_have_text("Copper: 2")
+        sent = self.page.evaluate("window.__lootSent.filter(c => c.kind === 'loot').length")
+        claim.evaluate("button => button.click()")
+        self.frames(2)
+        self.assertEqual(self.page.evaluate("window.__lootSent.filter(c => c.kind === 'loot').length"), sent)
+        self.page.get_by_role("button", name="Bags (B)", exact=True).click()
+        expect(panel).to_be_hidden()
+        slots = self.page.locator("#bag-slots button")
+        expect(self.page.locator("#bag-status")).to_contain_text("Waiting")
+        expect(slots.nth(0)).to_have_text("Slot 1 · Torn Fur × 3")
+        self.page.evaluate("window.__lootStep(10 - Number(window.__lootLatest().tick % 10n))")
+        expect(slots.nth(0)).to_have_text("Slot 1 · Torn Fur × 5")
+        expect(slots.nth(0)).to_be_enabled()
+        self.page.evaluate("""() => {
+          window.__lootSend({kind:'loot',creatureId:108,diedAt:912n});
+          window.__lootStep(1);
+        }""")
+        self.assertEqual(self.page.evaluate("window.__lootLatest().events.some(e => e.kind === 'error' && e.code === 'empty-loot')"), True)
+        self.assertEqual(self.page.evaluate("window.__lootLatest().viewer.copper"), 2)
+        self.page.get_by_role("button", name="Characters", exact=True).click()
+        self.enter_world()
+        expect(self.page.locator("#copper-status")).to_have_text("Copper: 0")
+        expect(panel).to_be_hidden()
+        expect(self.page.locator("#loot-feedback")).to_have_text("")
+
+        # A received projection fixture covers the full-bag DOM/refusal layout.
+        # It never changes the real host. Atomic bag refusal is covered in core;
+        # the actual authority claim and missing publication were exercised above.
+        self.page.evaluate("""() => {
+          const before = window.__lootBefore;
+          const current = window.__lootLatest();
+          window.__lootFixture = {...before, viewerId:current.viewerId, tick:1000n, acknowledgedSequence:100,
+            entities:before.entities.map(entity => entity.kind === 'player' && entity.entityId === before.viewerId
+              ? {...entity, entityId:current.viewerId} : entity),
+            inventoryRevision:100n, inventory:Array.from({length:16},()=>({itemId:2,quantity:1})), events:[]};
+          window.__lootSource.latestProjection = () => window.__lootFixture;
+        }""")
+        self.page.get_by_role("button", name="Loot", exact=True).click()
+        expect(rewards).to_have_text("2 copper · Torn Fur × 2")
+        claim.click()
+        expect(self.page.locator("#loot-feedback")).to_contain_text("bags are full")
+        expect(rewards).to_have_text("2 copper · Torn Fur × 2")
+        expect(self.page.locator("#copper-status")).to_have_text("Copper: 0")
+        expect(claim).to_be_enabled()
+        self.assertEqual(self.page.evaluate("window.__lootLatest().viewer.copper"), 0)
+        for width, height in [(390,844),(640,360)]:
+            self.page.set_viewport_size({"width":width,"height":height})
+            box = panel.bounding_box()
+            self.assertIsNotNone(box)
+            self.assertGreaterEqual(box["x"],0)
+            self.assertLessEqual(box["x"]+box["width"],width)
+            self.assertLessEqual(box["y"]+box["height"],height)
+            self.assertFalse(panel.evaluate("p => p.scrollWidth > p.clientWidth"))
+            self.assertTrue(claim.evaluate("b => {const r=b.getBoundingClientRect();return b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}"))
+            self.assertTrue(self.page.get_by_role("button", name="Characters", exact=True).evaluate(
+                "b => {const r=b.getBoundingClientRect();return b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}"))
+            self.page.screenshot(path=str(ARTIFACTS / f"loot-full-bag-{width}x{height}.png"))
+        self.page.get_by_role("button", name="Close loot").focus()
+        self.page.keyboard.press("Escape")
+        expect(panel).to_be_hidden()
+        expect(self.page.locator("#character-select")).to_be_hidden()
+        self.page.evaluate("""() => {
+          window.__lootFixture = null;
+          window.__lootSource.latestProjection = window.__lootLatest;
+        }""")
+        self.page.get_by_role("button", name="Characters", exact=True).click()
+        self.enter_world()
+        expect(self.page.locator("#copper-status")).to_have_text("Copper: 0")
+        expect(rewards).not_to_contain_text("Torn Fur")
+        expect(self.page.locator("#loot-feedback")).to_have_text("")
 
     def test_projected_bags_split_merge_refusal_and_session_reset(self):
         self.open("?debug")

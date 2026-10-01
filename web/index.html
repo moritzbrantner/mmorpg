@@ -133,7 +133,7 @@
 
       <header class="topbar" data-world-ui hidden>
         <p class="eyebrow">Greyhaven Vale · local zone host</p>
-        <div class="world-toolbar"><button id="bags-toggle" type="button" aria-controls="bags-panel" aria-expanded="false">Bags (B)</button><button id="return-to-characters" type="button">Characters</button></div>
+        <div class="world-toolbar"><button id="loot-toggle" type="button" aria-controls="loot-panel" aria-expanded="false">Loot</button><button id="bags-toggle" type="button" aria-controls="bags-panel" aria-expanded="false">Bags (B)</button><button id="return-to-characters" type="button">Characters</button></div>
       </header>
       <aside id="minimap" class="minimap" data-world-ui aria-label="Minimap" hidden>
         <h1 id="area-name" class="minimap-zone">Greyhaven Vale</h1>
@@ -152,12 +152,19 @@
         <label class="bag-quantity">Quantity <input id="bag-quantity" type="number" min="1" max="65535" step="1" value="1" disabled /></label>
         <p id="bag-feedback" aria-live="polite"></p>
       </aside>
+      <aside id="loot-panel" class="loot-panel" aria-label="Corpse loot" hidden>
+        <div class="bags-heading"><h2 id="loot-title">Corpse loot</h2><button id="loot-close" type="button" aria-label="Close loot">Close</button></div>
+        <p id="loot-rewards" aria-live="polite"></p>
+        <button id="loot-claim" type="button" disabled>Claim rewards</button>
+        <p id="loot-feedback" aria-live="polite"></p>
+      </aside>
       <section id="debug-overlay" class="debug-overlay" aria-label="Debug statistics" hidden></section>
       <section class="hud" data-world-ui aria-label="Controls" hidden>
         <p><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Tab</kbd> target · <kbd>F</kbd> or right-click attack · left-drag look · right-drag turn · wheel zoom · <kbd>B</kbd> bags · <kbd>F3</kbd> stats · <kbd>Esc</kbd> characters</p>
         <p id="objective">Explore Greyhaven Vale. Quests are not in this build yet.</p>
         <p id="unit-status" aria-live="polite"></p>
         <p id="combat-feedback" aria-live="polite"></p>
+        <p id="copper-status">Copper: 0</p>
         <p id="experience-status"></p>
         <progress id="experience-bar" max="1" value="0" aria-labelledby="experience-status"></progress>
         <p id="progression-feedback" aria-live="polite"></p>
