@@ -4,10 +4,11 @@
 //! against the content.
 
 use mmorpg_core::{
-    CanonicalCreatureSnapshot, CanonicalPlayerCombat, CanonicalPlayerSnapshot,
-    CanonicalZoneSnapshot, CreatureAi, CreatureId, CreatureLife, EntityRef, MAX_CREATURE_SPAWNS,
-    MAX_EVENTS_PER_PLAYER, MAX_PENDING_INTENTS, MAX_PLAYERS_PER_ZONE, MAX_THREAT_ENTRIES,
-    PlayerIntent, ThreatEntry,
+    AbilityId, Aura, CanonicalCreatureAbilities, CanonicalCreatureSnapshot,
+    CanonicalPlayerAbilities, CanonicalPlayerCombat, CanonicalPlayerSnapshot,
+    CanonicalZoneSnapshot, CastState, ClassChoice, Cooldown, CreatureAi, CreatureId, CreatureLife,
+    EntityRef, MAX_AURAS, MAX_COOLDOWNS, MAX_CREATURE_SPAWNS, MAX_EVENTS_PER_PLAYER,
+    MAX_PENDING_INTENTS, MAX_PLAYERS_PER_ZONE, MAX_THREAT_ENTRIES, PlayerIntent, ThreatEntry,
 };
 
 use crate::ProtocolError;
@@ -25,6 +26,9 @@ const STOP_ATTACK_INTENT: u8 = 3;
 const RELEASE_SPIRIT_INTENT: u8 = 4;
 const MOVE_ITEM_INTENT: u8 = 5;
 const LOOT_INTENT: u8 = 6;
+const USE_ABILITY_INTENT: u8 = 7;
+const CANCEL_CAST_INTENT: u8 = 8;
+const CHOOSE_CLASS_INTENT: u8 = 9;
 const ALIVE: u8 = 1;
 const CORPSE: u8 = 2;
 const DESPAWNED: u8 = 3;
@@ -126,6 +130,16 @@ fn encode_player(
                 payload.push(0);
                 continue;
             }
+            PlayerIntent::UseAbility { ability, target } => {
+                payload.extend_from_slice(&[USE_ABILITY_INTENT, ability]);
+                encode_entity_ref(payload, target);
+                continue;
+            }
+            PlayerIntent::CancelCast => (CANCEL_CAST_INTENT, None),
+            PlayerIntent::ChooseClass { class, sex } => {
+                payload.extend_from_slice(&[CHOOSE_CLASS_INTENT, class, sex]);
+                continue;
+            }
         };
         payload.push(code);
         encode_entity_ref(payload, target);
@@ -139,7 +153,109 @@ fn encode_player(
     for event in &combat.events {
         encode_event(payload, event);
     }
+    let abilities = &combat.abilities;
+    payload.push(
+        abilities
+            .class
+            .map_or(0, |choice| u8::try_from(choice.appearance()).unwrap_or(0)),
+    );
+    for value in [
+        abilities.resource,
+        abilities.resource_ticks,
+        abilities.mana_delay,
+        abilities.global_cooldown,
+    ] {
+        payload.extend_from_slice(&value.to_be_bytes());
+    }
+    payload.push(encode_u8_count(
+        abilities.cooldowns.len(),
+        MAX_COOLDOWNS,
+        "player has too many cooldowns",
+    )?);
+    for cooldown in &abilities.cooldowns {
+        payload.push(cooldown.ability.get());
+        payload.extend_from_slice(&cooldown.remaining.to_be_bytes());
+    }
+    encode_cast(payload, abilities.cast);
+    encode_auras(payload, &abilities.auras)
+}
+
+/// 17 bytes: ability (0 for none), elapsed ticks, target reference, point
+/// present and the point (`2 × i32`, zero when absent).
+fn encode_cast(payload: &mut Vec<u8>, cast: Option<CastState>) {
+    let Some(cast) = cast else {
+        payload.extend_from_slice(&[0; 17]);
+        return;
+    };
+    payload.push(cast.ability.get());
+    payload.extend_from_slice(&cast.elapsed.to_be_bytes());
+    encode_entity_ref(payload, cast.target);
+    payload.push(u8::from(cast.point.is_some()));
+    for component in cast.point.unwrap_or([0; 2]) {
+        payload.extend_from_slice(&component.to_be_bytes());
+    }
+}
+
+fn decode_cast(payload: &[u8], offset: &mut usize) -> Result<Option<CastState>, ProtocolError> {
+    let ability = read_u8(payload, offset)?;
+    let elapsed = u16::from_be_bytes(take(payload, offset)?);
+    let target = decode_entity_ref(payload, offset)?;
+    let has_point = read_bool(payload, offset)?;
+    let point = [
+        i32::from_be_bytes(take(payload, offset)?),
+        i32::from_be_bytes(take(payload, offset)?),
+    ];
+    let point = match (has_point, point) {
+        (true, point) => Some(point),
+        (false, [0, 0]) => None,
+        (false, _) => return Err(ProtocolError::new("malformed cast state")),
+    };
+    if ability == 0 {
+        if elapsed != 0 || target.is_some() || point.is_some() {
+            return Err(ProtocolError::new("malformed cast state"));
+        }
+        return Ok(None);
+    }
+    Ok(Some(CastState {
+        ability: AbilityId::new(ability),
+        elapsed,
+        target,
+        point,
+    }))
+}
+
+/// A count, then 10 bytes per aura: ability, caster reference, remaining
+/// ticks and amount.
+fn encode_auras(payload: &mut Vec<u8>, auras: &[Aura]) -> Result<(), ProtocolError> {
+    payload.push(encode_u8_count(
+        auras.len(),
+        MAX_AURAS,
+        "unit has too many auras",
+    )?);
+    for aura in auras {
+        payload.push(aura.ability.get());
+        encode_entity_ref(payload, Some(aura.caster));
+        payload.extend_from_slice(&aura.remaining.to_be_bytes());
+        payload.extend_from_slice(&aura.amount.to_be_bytes());
+    }
     Ok(())
+}
+
+fn decode_auras(payload: &[u8], offset: &mut usize) -> Result<Vec<Aura>, ProtocolError> {
+    let count = decode_u8_count(payload, offset, MAX_AURAS, "unit has too many auras")?;
+    let mut auras = Vec::with_capacity(count);
+    for _ in 0..count {
+        let ability = AbilityId::new(read_u8(payload, offset)?);
+        let caster = decode_entity_ref(payload, offset)?
+            .ok_or_else(|| ProtocolError::new("an aura needs a caster"))?;
+        auras.push(Aura {
+            ability,
+            caster,
+            remaining: u16::from_be_bytes(take(payload, offset)?),
+            amount: u16::from_be_bytes(take(payload, offset)?),
+        });
+    }
+    Ok(auras)
 }
 
 fn encode_creature(
@@ -188,7 +304,10 @@ fn encode_creature(
     if let Some(rewards) = creature.loot {
         crate::loot::encode_rewards(payload, rewards);
     }
-    Ok(())
+    let abilities = &creature.abilities;
+    payload.extend_from_slice(&abilities.ability_timer.to_be_bytes());
+    encode_cast(payload, abilities.cast);
+    encode_auras(payload, &abilities.auras)
 }
 
 pub fn decode_canonical_snapshot(payload: &[u8]) -> Result<CanonicalZoneSnapshot, ProtocolError> {
@@ -278,6 +397,19 @@ fn decode_player(
             )?));
             continue;
         }
+        if code == USE_ABILITY_INTENT {
+            let ability = read_u8(payload, offset)?;
+            intents.push(PlayerIntent::UseAbility {
+                ability,
+                target: decode_entity_ref(payload, offset)?,
+            });
+            continue;
+        }
+        if code == CHOOSE_CLASS_INTENT {
+            let [class, sex] = take(payload, offset)?;
+            intents.push(PlayerIntent::ChooseClass { class, sex });
+            continue;
+        }
         if code == MOVE_ITEM_INTENT {
             let [source, destination, high, low, reserved] = take(payload, offset)?;
             if reserved != 0 {
@@ -296,6 +428,7 @@ fn decode_player(
             (START_ATTACK_INTENT, None) => PlayerIntent::StartAttack,
             (STOP_ATTACK_INTENT, None) => PlayerIntent::StopAttack,
             (RELEASE_SPIRIT_INTENT, None) => PlayerIntent::ReleaseSpirit,
+            (CANCEL_CAST_INTENT, None) => PlayerIntent::CancelCast,
             _ => return Err(ProtocolError::new("malformed pending intent")),
         });
     }
@@ -310,6 +443,39 @@ fn decode_player(
     for _ in 0..event_count {
         events.push(decode_event(payload, offset)?);
     }
+    let class_code = read_u8(payload, offset)?;
+    let class = ClassChoice::from_appearance(u16::from(class_code));
+    if class_code != 0 && class.is_none() {
+        return Err(ProtocolError::new("unknown class choice"));
+    }
+    let resource = u16::from_be_bytes(take(payload, offset)?);
+    let resource_ticks = u16::from_be_bytes(take(payload, offset)?);
+    let mana_delay = u16::from_be_bytes(take(payload, offset)?);
+    let global_cooldown = u16::from_be_bytes(take(payload, offset)?);
+    let cooldown_count = decode_u8_count(
+        payload,
+        offset,
+        MAX_COOLDOWNS,
+        "player has too many cooldowns",
+    )?;
+    let mut cooldowns = Vec::with_capacity(cooldown_count);
+    for _ in 0..cooldown_count {
+        let ability = AbilityId::new(read_u8(payload, offset)?);
+        cooldowns.push(Cooldown {
+            ability,
+            remaining: u16::from_be_bytes(take(payload, offset)?),
+        });
+    }
+    let abilities = CanonicalPlayerAbilities {
+        class,
+        resource,
+        resource_ticks,
+        mana_delay,
+        global_cooldown,
+        cooldowns,
+        cast: decode_cast(payload, offset)?,
+        auras: decode_auras(payload, offset)?,
+    };
     Ok(CanonicalPlayerSnapshot {
         player_id,
         position,
@@ -337,6 +503,7 @@ fn decode_player(
             intents,
             intents_dropped,
             events,
+            abilities,
         },
     })
 }
@@ -406,6 +573,11 @@ fn decode_creature(
     } else {
         None
     };
+    let abilities = CanonicalCreatureAbilities {
+        ability_timer: u16::from_be_bytes(take(payload, offset)?),
+        cast: decode_cast(payload, offset)?,
+        auras: decode_auras(payload, offset)?,
+    };
     Ok(CanonicalCreatureSnapshot {
         creature_id,
         level,
@@ -420,6 +592,7 @@ fn decode_creature(
         combat_timer,
         tapped_by,
         loot,
+        abilities,
     })
 }
 
@@ -498,6 +671,7 @@ mod tests {
                                 target: None,
                             },
                         ],
+                        abilities: CanonicalPlayerAbilities::default(),
                     },
                 },
                 CanonicalPlayerSnapshot {
@@ -535,6 +709,7 @@ mod tests {
                     swing_timer: 5,
                     combat_timer: 150,
                     tapped_by: Some(7),
+                    abilities: CanonicalCreatureAbilities::default(),
                 },
                 CanonicalCreatureSnapshot {
                     loot: None,
@@ -553,6 +728,7 @@ mod tests {
                     swing_timer: 0,
                     combat_timer: 0,
                     tapped_by: Some(8),
+                    abilities: CanonicalCreatureAbilities::default(),
                 },
                 CanonicalCreatureSnapshot {
                     loot: None,
@@ -571,6 +747,7 @@ mod tests {
                     swing_timer: 0,
                     combat_timer: 0,
                     tapped_by: None,
+                    abilities: CanonicalCreatureAbilities::default(),
                 },
                 CanonicalCreatureSnapshot {
                     loot: None,
@@ -586,6 +763,7 @@ mod tests {
                     swing_timer: 0,
                     combat_timer: 0,
                     tapped_by: None,
+                    abilities: CanonicalCreatureAbilities::default(),
                 },
             ],
         }
@@ -618,6 +796,128 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn canonical_class_casts_cooldowns_auras_and_creature_abilities_round_trip() {
+        let mut state = snapshot();
+        let wolf = EntityRef::Creature(CreatureId::new(4));
+        let blizzard = AbilityId::new(12);
+        state.players[0].combat.intents = vec![
+            PlayerIntent::UseAbility {
+                ability: 9,
+                target: Some(wolf),
+            },
+            PlayerIntent::UseAbility {
+                ability: u8::MAX,
+                target: None,
+            },
+            PlayerIntent::CancelCast,
+            PlayerIntent::ChooseClass {
+                class: u8::MAX,
+                sex: 1,
+            },
+        ];
+        state.players[0].combat.abilities = CanonicalPlayerAbilities {
+            class: Some(ClassChoice {
+                class: mmorpg_core::PlayerClass::Arcanist,
+                sex: mmorpg_core::Sex::Male,
+            }),
+            resource: 132,
+            resource_ticks: 29,
+            mana_delay: 150,
+            global_cooldown: 44,
+            cooldowns: vec![
+                Cooldown {
+                    ability: AbilityId::new(10),
+                    remaining: 600,
+                },
+                Cooldown {
+                    ability: AbilityId::new(11),
+                    remaining: 1,
+                },
+            ],
+            cast: Some(CastState {
+                ability: blizzard,
+                elapsed: 31,
+                target: Some(wolf),
+                point: Some([i32::MIN, i32::MAX]),
+            }),
+            auras: vec![Aura {
+                ability: AbilityId::new(11),
+                caster: EntityRef::Player(7),
+                remaining: 600,
+                amount: u16::MAX,
+            }],
+        };
+        state.creatures[0].abilities = CanonicalCreatureAbilities {
+            ability_timer: u16::MAX,
+            cast: Some(CastState {
+                ability: AbilityId::new(13),
+                elapsed: 44,
+                target: Some(EntityRef::Player(7)),
+                point: None,
+            }),
+            auras: (0..8)
+                .map(|caster| Aura {
+                    ability: AbilityId::new(6),
+                    caster: EntityRef::Player(caster),
+                    remaining: 1,
+                    amount: 34,
+                })
+                .collect(),
+        };
+        let encoded = encode_canonical_snapshot(&state).unwrap();
+        assert_eq!(decode_canonical_snapshot(&encoded).unwrap(), state);
+        for length in 0..encoded.len() {
+            assert!(decode_canonical_snapshot(&encoded[..length]).is_err());
+        }
+        let mut too_many = state.clone();
+        too_many.creatures[0].abilities.auras.push(Aura {
+            ability: AbilityId::new(7),
+            caster: EntityRef::Player(9),
+            remaining: 1,
+            amount: 50,
+        });
+        assert_eq!(
+            encode_canonical_snapshot(&too_many)
+                .unwrap_err()
+                .to_string(),
+            "unit has too many auras"
+        );
+        // Structural checks: a class code beyond the six choices, a point
+        // flag without a point and an aura without a caster.
+        // The intent count follows the player's timers; the four intents
+        // occupy 7 + 7 + 6 + 3 bytes, then the dropped flag and two events.
+        let intents = 16 + 32 + 2 + 146;
+        let player_abilities = intents + 1 + (7 + 7 + 6 + 3) + 1 + 1 + 2 * EVENT_BYTES;
+        assert_eq!(encoded[player_abilities], 6, "Arcanist, male");
+        let cast = player_abilities + 1 + 8 + 1 + 2 * 3;
+        let aura = cast + 17 + 1;
+        for (offset, value, message) in [
+            (player_abilities, 7, "unknown class choice"),
+            (cast + 8, 2, "boolean field must be 0 or 1"),
+            (aura + 1, 0, "an absent entity must have ID 0"),
+        ] {
+            let mut invalid = encoded.clone();
+            invalid[offset] = value;
+            assert_eq!(
+                decode_canonical_snapshot(&invalid).unwrap_err().to_string(),
+                message,
+                "byte {offset} = {value}"
+            );
+        }
+        let mut no_cast = state;
+        no_cast.players[0].combat.abilities.cast = None;
+        let encoded = encode_canonical_snapshot(&no_cast).unwrap();
+        let mut stray = encoded;
+        stray[cast + 2] = 1;
+        assert_eq!(
+            decode_canonical_snapshot(&stray).unwrap_err().to_string(),
+            "malformed cast state"
+        );
+    }
+
+    const EVENT_BYTES: usize = 14;
 
     #[test]
     fn canonical_snapshot_round_trip_preserves_continuation_state() {
@@ -663,7 +963,7 @@ mod tests {
         let mut cases = vec![
             (auto_attack, 2, "boolean field must be 0 or 1"),
             (intents, 17, "player has too many pending intents"),
-            (intents + 1, 9, "malformed pending intent"),
+            (intents + 1, 10, "malformed pending intent"),
         ];
         // The third intent (StartAttack) carries no target.
         cases.push((intents + 1 + 2 * 6 + 1, 2, "malformed pending intent"));

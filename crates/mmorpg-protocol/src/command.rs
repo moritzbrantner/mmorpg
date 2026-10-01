@@ -1,11 +1,12 @@
-//! Command wire version 3 adds a fenced corpse claim (tag 8).
+//! Command wire version 4 adds ability use (tag 9), cast cancellation
+//! (tag 10) and the class choice (tag 11).
 
 use mmorpg_core::ZoneCommand;
 
 use crate::ProtocolError;
 use crate::wire::{decode_entity_ref, encode_entity_ref};
 
-pub const COMMAND_WIRE_VERSION: u8 = 3;
+pub const COMMAND_WIRE_VERSION: u8 = 4;
 
 const MOVE_TAG: u8 = 1;
 const JUMP_TAG: u8 = 2;
@@ -15,6 +16,11 @@ const STOP_ATTACK_TAG: u8 = 5;
 const RELEASE_SPIRIT_TAG: u8 = 6;
 const MOVE_ITEM_TAG: u8 = 7;
 const LOOT_TAG: u8 = 8;
+const USE_ABILITY_TAG: u8 = 9;
+const CANCEL_CAST_TAG: u8 = 10;
+const CHOOSE_CLASS_TAG: u8 = 11;
+const USE_ABILITY_COMMAND_BYTES: usize = 8;
+const CHOOSE_CLASS_COMMAND_BYTES: usize = 4;
 const MOVE_COMMAND_BYTES: usize = 6;
 const SELECT_TARGET_COMMAND_BYTES: usize = 7;
 const BARE_COMMAND_BYTES: usize = 2;
@@ -40,6 +46,16 @@ pub fn encode_command(command: ZoneCommand) -> Vec<u8> {
             payload
         }
         ZoneCommand::Jump => vec![COMMAND_WIRE_VERSION, JUMP_TAG],
+        ZoneCommand::UseAbility { ability, target } => {
+            let mut payload = Vec::with_capacity(USE_ABILITY_COMMAND_BYTES);
+            payload.extend_from_slice(&[COMMAND_WIRE_VERSION, USE_ABILITY_TAG, ability]);
+            encode_entity_ref(&mut payload, target);
+            payload
+        }
+        ZoneCommand::CancelCast => vec![COMMAND_WIRE_VERSION, CANCEL_CAST_TAG],
+        ZoneCommand::ChooseClass { class, sex } => {
+            vec![COMMAND_WIRE_VERSION, CHOOSE_CLASS_TAG, class, sex]
+        }
         ZoneCommand::SelectTarget(target) => {
             let mut payload = Vec::with_capacity(SELECT_TARGET_COMMAND_BYTES);
             payload.extend_from_slice(&[COMMAND_WIRE_VERSION, SELECT_TARGET_TAG]);
@@ -139,6 +155,31 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
                 &mut offset,
             )?))
         }
+        USE_ABILITY_TAG => {
+            if payload.len() != USE_ABILITY_COMMAND_BYTES {
+                return Err(ProtocolError::new(
+                    "use ability command payload must be exactly 8 bytes",
+                ));
+            }
+            let mut offset = BARE_COMMAND_BYTES + 1;
+            Ok(ZoneCommand::UseAbility {
+                ability: payload[BARE_COMMAND_BYTES],
+                target: decode_entity_ref(payload, &mut offset)?,
+            })
+        }
+        CHOOSE_CLASS_TAG => {
+            let [_, _, class, sex] = payload else {
+                return Err(ProtocolError::new(
+                    "choose class command payload must be exactly 4 bytes",
+                ));
+            };
+            debug_assert_eq!(payload.len(), CHOOSE_CLASS_COMMAND_BYTES);
+            Ok(ZoneCommand::ChooseClass {
+                class: *class,
+                sex: *sex,
+            })
+        }
+        CANCEL_CAST_TAG => bare(ZoneCommand::CancelCast),
         JUMP_TAG => bare(ZoneCommand::Jump),
         START_ATTACK_TAG => bare(ZoneCommand::StartAttack),
         STOP_ATTACK_TAG => bare(ZoneCommand::StopAttack),
@@ -159,21 +200,40 @@ mod tests {
             strafe: 1,
             facing: 0xabcd,
         };
-        assert_eq!(encode_command(movement), [3, 1, 0xff, 1, 0xab, 0xcd]);
-        assert_eq!(encode_command(ZoneCommand::Jump), [3, 2]);
+        assert_eq!(encode_command(movement), [4, 1, 0xff, 1, 0xab, 0xcd]);
+        assert_eq!(encode_command(ZoneCommand::Jump), [4, 2]);
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(Some(EntityRef::Creature(
                 CreatureId::new(0x0102_0304)
             )))),
-            [3, 3, 2, 1, 2, 3, 4]
+            [4, 3, 2, 1, 2, 3, 4]
         );
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(None)),
-            [3, 3, 0, 0, 0, 0, 0]
+            [4, 3, 0, 0, 0, 0, 0]
         );
-        assert_eq!(encode_command(ZoneCommand::StartAttack), [3, 4]);
-        assert_eq!(encode_command(ZoneCommand::StopAttack), [3, 5]);
-        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [3, 6]);
+        assert_eq!(encode_command(ZoneCommand::StartAttack), [4, 4]);
+        assert_eq!(encode_command(ZoneCommand::StopAttack), [4, 5]);
+        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [4, 6]);
+        assert_eq!(
+            encode_command(ZoneCommand::UseAbility {
+                ability: 9,
+                target: Some(EntityRef::Creature(CreatureId::new(0x0102_0304))),
+            }),
+            [4, 9, 9, 2, 1, 2, 3, 4]
+        );
+        assert_eq!(
+            encode_command(ZoneCommand::UseAbility {
+                ability: 3,
+                target: None,
+            }),
+            [4, 9, 3, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(encode_command(ZoneCommand::CancelCast), [4, 10]);
+        assert_eq!(
+            encode_command(ZoneCommand::ChooseClass { class: 2, sex: 1 }),
+            [4, 11, 2, 1]
+        );
         for command in [
             movement,
             ZoneCommand::Jump,
@@ -188,6 +248,16 @@ mod tests {
             ZoneCommand::StartAttack,
             ZoneCommand::StopAttack,
             ZoneCommand::ReleaseSpirit,
+            ZoneCommand::CancelCast,
+            ZoneCommand::UseAbility {
+                ability: u8::MAX,
+                target: Some(EntityRef::Npc(NpcId::new(u32::MAX))),
+            },
+            // Out-of-range class values are gameplay refusals, not wire errors.
+            ZoneCommand::ChooseClass {
+                class: u8::MAX,
+                sex: u8::MAX,
+            },
         ] {
             assert_eq!(decode_command(&encode_command(command)).unwrap(), command);
         }
@@ -253,9 +323,28 @@ mod tests {
                 creature: CreatureId::new(u32::MAX),
                 died_at: u64::MAX,
             }),
+            ZoneCommand::UseAbility {
+                ability: 1,
+                target: None,
+            },
+            ZoneCommand::UseAbility {
+                ability: 9,
+                target: Some(EntityRef::Creature(CreatureId::new(108))),
+            },
+            ZoneCommand::UseAbility {
+                ability: u8::MAX,
+                target: Some(EntityRef::Player(4_000_000_000)),
+            },
+            ZoneCommand::CancelCast,
+            ZoneCommand::ChooseClass { class: 0, sex: 1 },
+            ZoneCommand::ChooseClass { class: 2, sex: 0 },
+            ZoneCommand::ChooseClass {
+                class: u8::MAX,
+                sex: 7,
+            },
         ];
         let mut fixture = String::from(
-            "# Command wire v3 golden fixture, verified by mmorpg-protocol and web tests.\n",
+            "# Command wire v4 golden fixture, verified by mmorpg-protocol and web tests.\n",
         );
         for command in commands {
             let hex = encode_command(command)
@@ -272,15 +361,16 @@ mod tests {
                 ZoneCommand::Loot(claim) => {
                     format!("loot {} {}", claim.creature.get(), claim.died_at)
                 }
-                ZoneCommand::SelectTarget(None) => "select_target 0 0".to_owned(),
-                ZoneCommand::SelectTarget(Some(target)) => {
-                    let kind = match target.kind() {
-                        mmorpg_core::EntityKind::Player => 1,
-                        mmorpg_core::EntityKind::Creature => 2,
-                        mmorpg_core::EntityKind::Npc => 3,
-                    };
-                    format!("select_target {kind} {}", target.id())
+                ZoneCommand::SelectTarget(target) => {
+                    let (kind, id) = entity_fields(target);
+                    format!("select_target {kind} {id}")
                 }
+                ZoneCommand::UseAbility { ability, target } => {
+                    let (kind, id) = entity_fields(target);
+                    format!("use_ability {ability} {kind} {id}")
+                }
+                ZoneCommand::CancelCast => "cancel_cast".to_owned(),
+                ZoneCommand::ChooseClass { class, sex } => format!("choose_class {class} {sex}"),
                 ZoneCommand::StartAttack => "start_attack".to_owned(),
                 ZoneCommand::StopAttack => "stop_attack".to_owned(),
                 ZoneCommand::ReleaseSpirit => "release_spirit".to_owned(),
@@ -295,9 +385,23 @@ mod tests {
         fixture
     }
 
+    fn entity_fields(target: Option<EntityRef>) -> (u8, u32) {
+        target.map_or((0, 0), |target| {
+            let kind = match target.kind() {
+                mmorpg_core::EntityKind::Player => 1,
+                mmorpg_core::EntityKind::Creature => 2,
+                mmorpg_core::EntityKind::Npc => 3,
+            };
+            (kind, target.id())
+        })
+    }
+
     #[test]
     fn commands_match_the_shared_golden_fixture() {
-        let checked_in = include_str!("../../../fixtures/protocol/commands-v3.hex");
+        let checked_in = include_str!("../../../fixtures/protocol/commands-v4.hex");
+        if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
+            print!("{}", command_fixture());
+        }
         assert_eq!(checked_in, command_fixture());
         for line in checked_in.lines().filter(|line| !line.starts_with('#')) {
             let hex = line.split_whitespace().next().unwrap();
@@ -310,9 +414,10 @@ mod tests {
     }
 
     #[test]
-    fn actual_legacy_v2_command_fixture_is_rejected() {
+    fn actual_legacy_v2_and_v3_command_fixtures_are_rejected() {
         for line in include_str!("../../../fixtures/protocol/commands-v2.hex")
             .lines()
+            .chain(include_str!("../../../fixtures/protocol/commands-v3.hex").lines())
             .filter(|line| !line.starts_with('#') && !line.is_empty())
         {
             let hex = line.split_whitespace().next().unwrap();
@@ -338,7 +443,12 @@ mod tests {
             creature: CreatureId::new(1),
             died_at: 99,
         }));
-        for encoded in [&movement, &select, &loot] {
+        let ability = encode_command(ZoneCommand::UseAbility {
+            ability: 5,
+            target: Some(EntityRef::Creature(CreatureId::new(7))),
+        });
+        let class = encode_command(ZoneCommand::ChooseClass { class: 1, sex: 0 });
+        for encoded in [&movement, &select, &loot, &ability, &class] {
             for length in 0..encoded.len() {
                 assert!(decode_command(&encoded[..length]).is_err(), "{length}");
             }
@@ -346,20 +456,20 @@ mod tests {
             trailing.push(0);
             assert!(decode_command(&trailing).is_err());
         }
-        for tag in [2, 4, 5, 6] {
+        for tag in [2, 4, 5, 6, 10] {
             assert_eq!(
-                decode_command(&[3, tag, 0]).unwrap_err().to_string(),
+                decode_command(&[4, tag, 0]).unwrap_err().to_string(),
                 "command payload must be exactly 2 bytes",
                 "tag {tag} has no body"
             );
         }
-        for unknown in [0, 9, u8::MAX] {
+        for unknown in [0, 12, u8::MAX] {
             assert_eq!(
-                decode_command(&[3, unknown]).unwrap_err().to_string(),
+                decode_command(&[4, unknown]).unwrap_err().to_string(),
                 "unknown command tag"
             );
         }
-        for version in [1, 2, 4] {
+        for version in [1, 2, 3, 5] {
             let mut other = movement.clone();
             other[0] = version;
             assert_eq!(
@@ -381,13 +491,19 @@ mod tests {
             );
         }
         assert_eq!(
-            decode_command(&[3, 3, 4, 0, 0, 0, 1])
+            decode_command(&[4, 3, 4, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "unknown entity kind"
         );
         assert_eq!(
-            decode_command(&[3, 3, 0, 0, 0, 0, 1])
+            decode_command(&[4, 9, 1, 4, 0, 0, 0, 1])
+                .unwrap_err()
+                .to_string(),
+            "unknown entity kind"
+        );
+        assert_eq!(
+            decode_command(&[4, 3, 0, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "an absent entity must have ID 0"
