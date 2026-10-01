@@ -766,6 +766,75 @@ fn a_pulse_that_breaks_an_earlier_root_skips_no_later_aura() {
 }
 
 #[test]
+fn recovery_rejects_casts_at_the_wrong_kind_of_unit() {
+    let mut fight = Fight::with_class(wolf_at(2_500), 6, 2);
+    fight.send(ZoneCommand::SelectTarget(Some(TARGET)));
+    fight.use_ability(ids::BLIZZARD);
+    fight.tick();
+    let checkpoint = fight.zone.snapshot().unwrap();
+    let content = Arc::clone(fight.zone.content());
+    assert!(ZoneSimulation::from_snapshot(checkpoint.clone(), Arc::clone(&content)).is_ok());
+    let mut at_player = checkpoint;
+    at_player.players[0]
+        .combat
+        .abilities
+        .cast
+        .as_mut()
+        .unwrap()
+        .target = Some(PLAYER);
+    assert_eq!(
+        ZoneSimulation::from_snapshot(at_player, Arc::clone(&content))
+            .err()
+            .unwrap()
+            .message(),
+        "a cast names a target of the wrong kind"
+    );
+
+    let lurking = classes::arena(
+        vec![classes::lurker(500, [1, 1])],
+        vec![arena::spawn(1, LURKER, [-200, 0])],
+    );
+    let mut fight = Fight::new(lurking, 1);
+    fight.until(40, |fight| fight.creature(FIRST).abilities.cast.is_some());
+    let mut at_creature = fight.zone.snapshot().unwrap();
+    at_creature.creatures[0]
+        .abilities
+        .cast
+        .as_mut()
+        .unwrap()
+        .target = Some(TARGET);
+    assert_eq!(
+        ZoneSimulation::from_snapshot(at_creature, Arc::clone(fight.zone.content()))
+            .err()
+            .unwrap()
+            .message(),
+        "a cast names a target of the wrong kind"
+    );
+}
+
+#[test]
+fn recovery_requires_a_dead_warden_without_rage() {
+    let mut fight = Fight::with_class(wolf_at(3_000), 1, 0);
+    let content = Arc::clone(fight.zone.content());
+    fight.tick();
+    let mut dead = fight.zone.snapshot().unwrap();
+    dead.players[0].combat.health = 0;
+    let restore = |resource: u16, ticks: u16| {
+        let mut state = dead.clone();
+        state.players[0].combat.abilities.resource = resource;
+        state.players[0].combat.abilities.resource_ticks = ticks;
+        ZoneSimulation::from_snapshot(state, Arc::clone(&content)).map(|_| ())
+    };
+    assert!(restore(0, 0).is_ok());
+    for (resource, ticks) in [(20, 0), (0, 5)] {
+        assert_eq!(
+            restore(resource, ticks).unwrap_err().message(),
+            "a dead Warden has no rage"
+        );
+    }
+}
+
+#[test]
 fn recovery_rejects_auras_no_caster_could_have_put_there() {
     let mut fight = Fight::with_class(wolf_at(3_000), 4, 2);
     fight.use_ability(ids::ARCANE_BARRIER);

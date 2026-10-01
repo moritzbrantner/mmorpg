@@ -586,6 +586,24 @@ impl ZoneSimulation {
             cast.and_then(|cast| cast.target).is_none_or(exists)
                 && auras.iter().all(|aura| exists(aura.caster))
         };
+        // Players cast at creatures and creatures at players.
+        let player_targets = self
+            .players
+            .values()
+            .filter_map(|player| player.cast?.target);
+        let creature_targets = self
+            .creatures
+            .values()
+            .filter_map(|creature| creature.cast?.target);
+        if player_targets
+            .into_iter()
+            .any(|target| !matches!(target, EntityRef::Creature(_)))
+            || creature_targets
+                .into_iter()
+                .any(|target| !matches!(target, EntityRef::Player(_)))
+        {
+            return Err(ZoneError::new("a cast names a target of the wrong kind"));
+        }
         for player in self.players.values() {
             if player.target.is_some_and(|target| !exists(target)) {
                 return Err(ZoneError::new("player target does not exist"));
@@ -771,6 +789,13 @@ fn validate_player_abilities(
     validate_auras(&abilities.auras)?;
     if !alive && (abilities.cast.is_some() || !abilities.auras.is_empty()) {
         return Err(ZoneError::new("the dead neither cast nor keep auras"));
+    }
+    // Death drains rage and its decay clock.
+    if !alive
+        && class.resource() == crate::ResourceKind::Rage
+        && (abilities.resource != 0 || abilities.resource_ticks != 0)
+    {
+        return Err(ZoneError::new("a dead Warden has no rage"));
     }
     Ok(())
 }
