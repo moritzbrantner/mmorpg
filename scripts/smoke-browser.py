@@ -762,7 +762,8 @@ class BrowserAcceptance(unittest.TestCase):
           window.__lootSource.latestProjection = window.__lootLatest;
         }""")
         self.page.get_by_role("button", name="Characters", exact=True).click()
-        self.enter_world()
+        # Still paused: the class choice of this third entry waits for a tick.
+        self.enter_world(ticking=False)
         expect(self.page.locator("#copper-status")).to_have_text("Copper: 0")
         expect(rewards).not_to_contain_text("Torn Fur")
         expect(self.page.locator("#loot-feedback")).to_have_text("")
