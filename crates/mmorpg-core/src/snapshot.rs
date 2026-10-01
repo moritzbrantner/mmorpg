@@ -13,7 +13,7 @@ use crate::content::within_content_range;
 use crate::creature::{CreatureState, Life, MAX_THREAT_ENTRIES};
 use crate::entity::body_id;
 use crate::rng::ZoneRng;
-use crate::unit::{MAX_UNIT_LEVEL, PLAYER_START_LEVEL, player_max_health};
+use crate::unit::{PLAYER_START_LEVEL, player_max_health};
 use crate::zone::{
     Axis, MAX_PENDING_INTENTS, PLAYER_HALF_EXTENTS, PlayerState, physics_error, vector,
 };
@@ -64,6 +64,8 @@ pub struct ThreatEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalPlayerCombat {
     pub level: u8,
+    /// Current-level XP; zero at the starter cap.
+    pub experience: u32,
     /// Zero means dead.
     pub health: u32,
     pub target: Option<EntityRef>,
@@ -86,6 +88,7 @@ impl Default for CanonicalPlayerCombat {
     fn default() -> Self {
         Self {
             level: PLAYER_START_LEVEL,
+            experience: 0,
             health: player_max_health(PLAYER_START_LEVEL),
             target: None,
             auto_attack: false,
@@ -172,6 +175,7 @@ impl ZoneSimulation {
                     spawn_slot: state.spawn_slot,
                     combat: CanonicalPlayerCombat {
                         level: state.level,
+                        experience: state.experience,
                         health: state.health,
                         target: state.target,
                         auto_attack: state.auto_attack,
@@ -295,7 +299,7 @@ impl ZoneSimulation {
             return Err(ZoneError::new("snapshot contains duplicate spawn slot"));
         }
         let combat = player.combat;
-        if !(1..=MAX_UNIT_LEVEL).contains(&combat.level)
+        if !crate::progression::valid_progression(combat.level, combat.experience)
             || combat.health > player_max_health(combat.level)
         {
             return Err(ZoneError::new("player unit state is out of range"));
@@ -328,6 +332,7 @@ impl ZoneSimulation {
                 last_sequence: player.last_sequence,
                 spawn_slot: player.spawn_slot,
                 level: combat.level,
+                experience: combat.experience,
                 health: combat.health,
                 target: combat.target,
                 auto_attack: combat.auto_attack,

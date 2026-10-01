@@ -57,6 +57,8 @@ pub fn exhaustive_projection(
         zone_id: canonical.zone_id,
         tick: canonical.tick,
         viewer: ViewerState {
+            experience: combat.experience,
+            experience_to_next_level: mmorpg_core::experience_to_next_level(combat.level).unwrap(),
             health: combat.health,
             max_health: player_max_health(combat.level),
             level: combat.level,

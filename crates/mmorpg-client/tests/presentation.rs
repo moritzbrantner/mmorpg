@@ -25,6 +25,8 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
         acknowledged_sequence: 1,
         viewer_id: 1,
         viewer: ViewerState {
+            experience: 0,
+            experience_to_next_level: 100,
             health: 50,
             max_health: 50,
             level: 1,

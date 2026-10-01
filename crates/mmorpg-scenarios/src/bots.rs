@@ -153,6 +153,7 @@ pub enum ExpectKind {
     VisibleCount,
     Area,
     Health,
+    Progression,
     Target,
     Event,
     Unit,
@@ -169,6 +170,7 @@ impl ExpectKind {
             Self::VisibleCount => "visible_count",
             Self::Area => "area",
             Self::Health => "health",
+            Self::Progression => "progression",
             Self::Target => "target",
             Self::Event => "event",
             Self::Unit => "unit",
@@ -186,6 +188,7 @@ impl ExpectKind {
             | Self::VisibleCount
             | Self::Area
             | Self::Health
+            | Self::Progression
             | Self::Target => false,
         }
     }
@@ -209,6 +212,8 @@ pub struct Expectation {
     pub area: Option<String>,
     /// The bot's own exact health (`health` expectations).
     pub health: Option<u32>,
+    pub level: Option<u8>,
+    pub experience: Option<u32>,
     /// The unit a `target`, `event` or `unit` expectation is about.
     pub entity: Option<UnitSpec>,
     /// The feedback event kind of an `event` expectation.
@@ -324,6 +329,9 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             ExpectKind::VisibleCount => expectation.count.is_some(),
             ExpectKind::Area => expectation.area.is_some(),
             ExpectKind::Health => expectation.health.is_some(),
+            ExpectKind::Progression => {
+                expectation.level.is_some() && expectation.experience.is_some()
+            }
             ExpectKind::Target => expectation.entity.is_some(),
             ExpectKind::Event => expectation.event.is_some(),
             ExpectKind::Unit => {
@@ -991,6 +999,19 @@ impl Runner<'_> {
                     Err(format!("got {shown}"))
                 }
             }
+            ExpectKind::Progression => {
+                let shown = format!(
+                    "level={} xp={}/{}",
+                    view.viewer.level, view.viewer.experience, view.viewer.experience_to_next_level
+                );
+                if Some(view.viewer.level) == expectation.level
+                    && Some(view.viewer.experience) == expectation.experience
+                {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
             ExpectKind::Target => {
                 let expected = self.resolve_unit(expectation.entity.as_ref())?;
                 let actual = view.viewer.target;
@@ -1098,6 +1119,7 @@ fn describe(expectation: &Expectation) -> String {
         ExpectKind::VisibleCount => format!("{bot} visible_count"),
         ExpectKind::Area => format!("{bot} area {target}"),
         ExpectKind::Health => format!("{bot} health"),
+        ExpectKind::Progression => format!("{bot} progression"),
         ExpectKind::Target => format!("{bot} target {}", unit_text(expectation)),
         ExpectKind::Event => {
             let event = expectation

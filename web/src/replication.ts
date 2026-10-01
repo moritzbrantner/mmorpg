@@ -1,4 +1,4 @@
-/** Player-visible protocol v5 only. Canonical recovery state never enters rendering. */
+/** Player-visible protocol v6 only. Canonical recovery state never enters rendering. */
 import { entityKindFromCode, sameEntity, type EntityKind, type EntityRef } from "./entity-ref";
 
 export type { EntityKind, EntityRef } from "./entity-ref";
@@ -37,6 +37,8 @@ export type EntityState = {
 
 /** The viewer's own exact state. */
 export type ViewerState = {
+  experience: number;
+  experienceToNextLevel: number;
   health: number;
   maxHealth: number;
   level: number;
@@ -81,16 +83,16 @@ export type ZoneSnapshot = {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 5;
-const SCHEMA_VERSION = 5;
+const WIRE_VERSION = 6;
+const SCHEMA_VERSION = 6;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
-/** Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 15, target 5, two counts. */
-const FIXED_BYTES = 55;
+/** Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 23, target 5, two counts. */
+const FIXED_BYTES = 63;
 const ENTITY_BYTES = 21;
 const MAX_EVENTS = 16;
-/** (1 077 − 55) / 21: records that fit without events. */
+/** (1 077 − 63) / 21: records that fit without events. */
 const MAX_ENTITIES = 48;
 const BUFFER_CAPACITY = 32;
 
@@ -264,9 +266,14 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   const health = reader.u32();
   const maxHealth = reader.u32();
   const level = reader.u8();
+  const experience = reader.u32();
+  const experienceToNextLevel = reader.u32();
   const [dead = false, inCombat = false, autoAttacking = false] = reader.flags(3);
   const target = reader.entity();
-  if (level === 0 || health > maxHealth || dead !== (health === 0)) {
+  if (level < 1 || level > 10
+    || (level === 10 && (experience !== 0 || experienceToNextLevel !== 0))
+    || (level < 10 && (experienceToNextLevel === 0 || experience >= experienceToNextLevel))
+    || health > maxHealth || dead !== (health === 0)) {
     throw new Error("Inconsistent viewer state");
   }
   const targetOfTarget = reader.entity();
@@ -294,7 +301,7 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   if (first?.kind !== "player" || first.entityId !== viewerId) throw new Error("Projection must start with the viewer");
   return {
     zoneId, tick, contentRevision, acknowledgedSequence, viewerId,
-    viewer: { health, maxHealth, level, dead, inCombat, autoAttacking, target },
+    viewer: { experience, experienceToNextLevel, health, maxHealth, level, dead, inCombat, autoAttacking, target },
     targetOfTarget, events, entities,
   };
 }

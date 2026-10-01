@@ -18,7 +18,7 @@ use crate::{MAX_PLAYER_PROJECTION_BYTES, ProtocolError};
 /// Content revision, acknowledged sequence and viewer ID after the prefix.
 const HEADER_BYTES: usize = COMMON_HEADER_BYTES + 8 + 4 + 4;
 /// Health, maximum health, level, flags and the viewer's target.
-const SELF_BYTES: usize = 4 + 4 + 1 + 1 + ENTITY_REF_BYTES;
+const SELF_BYTES: usize = 4 + 4 + 1 + 8 + 1 + ENTITY_REF_BYTES;
 /// The target's own target.
 const TARGET_BYTES: usize = ENTITY_REF_BYTES;
 /// Every section's fixed part: header, self, target, event count (`u8`)
@@ -29,13 +29,13 @@ pub const EVENT_RECORD_BYTES: usize = 2 + 2 * ENTITY_REF_BYTES + 2;
 /// Kind, ID, appearance, `3 × i16` position, `3 × i8` velocity, `u16`
 /// facing, level, health percent and flags.
 pub const ENTITY_RECORD_BYTES: usize = 1 + 4 + 2 + 6 + 3 + 2 + 1 + 1 + 1;
-/// Records that fit the budget without events: (1,077 − 55) / 21 = 48.
+/// Records that fit the budget without events: (1,077 − 63) / 21 = 48.
 pub const MAX_WIRE_ENTITIES: usize =
     (MAX_PLAYER_PROJECTION_BYTES - PLAYER_SNAPSHOT_FIXED_BYTES) / ENTITY_RECORD_BYTES;
 const MAX_EVENT_SECTION_BYTES: usize = MAX_EVENTS_PER_PLAYER * EVENT_RECORD_BYTES;
 
 // With a full event section, the viewer and its target always fit:
-// 55 + 16 × 14 + 2 × 21 = 321 ≤ 1,077 bytes.
+// 63 + 16 × 14 + 2 × 21 = 329 ≤ 1,077 bytes.
 const _: () = assert!(
     PLAYER_SNAPSHOT_FIXED_BYTES + MAX_EVENT_SECTION_BYTES + 2 * ENTITY_RECORD_BYTES
         <= MAX_PLAYER_PROJECTION_BYTES
@@ -88,6 +88,8 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
     payload.extend_from_slice(&viewer.health.to_be_bytes());
     payload.extend_from_slice(&viewer.max_health.to_be_bytes());
     payload.push(viewer.level);
+    payload.extend_from_slice(&viewer.experience.to_be_bytes());
+    payload.extend_from_slice(&viewer.experience_to_next_level.to_be_bytes());
     payload.push(flag_byte(&[
         viewer.dead,
         viewer.in_combat,
@@ -178,9 +180,16 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     let health = u32::from_be_bytes(take(payload, &mut offset)?);
     let max_health = u32::from_be_bytes(take(payload, &mut offset)?);
     let level = read_u8(payload, &mut offset)?;
+    let experience = u32::from_be_bytes(take(payload, &mut offset)?);
+    let experience_to_next_level = u32::from_be_bytes(take(payload, &mut offset)?);
     let [dead, in_combat, auto_attacking] = read_flags(read_u8(payload, &mut offset)?)?;
     let target = decode_entity_ref(payload, &mut offset)?;
-    if level == 0 || health > max_health || dead != (health == 0) {
+    if !(1..=10).contains(&level)
+        || (level == 10 && (experience != 0 || experience_to_next_level != 0))
+        || (level < 10 && (experience_to_next_level == 0 || experience >= experience_to_next_level))
+        || health > max_health
+        || dead != (health == 0)
+    {
         return Err(ProtocolError::new("viewer state is inconsistent"));
     }
     let target_of_target = decode_entity_ref(payload, &mut offset)?;
@@ -224,6 +233,8 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         zone_id,
         tick,
         viewer: ViewerState {
+            experience,
+            experience_to_next_level,
             health,
             max_health,
             level,
@@ -327,6 +338,8 @@ mod tests {
             zone_id: ZoneId::new(42),
             tick: 99,
             viewer: ViewerState {
+                experience: 37,
+                experience_to_next_level: 100,
                 health: 38,
                 max_health: 50,
                 level: 1,
@@ -430,7 +443,7 @@ mod tests {
     }
 
     fn fixture_bytes() -> Vec<u8> {
-        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v5.hex").trim();
+        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v6.hex").trim();
         (0..fixture.len())
             .step_by(2)
             .map(|offset| u8::from_str_radix(&fixture[offset..offset + 2], 16).unwrap())
@@ -438,7 +451,7 @@ mod tests {
     }
 
     /// Byte offsets of the fixture's sections.
-    const EVENTS: usize = 52;
+    const EVENTS: usize = 60;
     const ENTITY_COUNT: usize = EVENTS + 1 + 7 * EVENT_RECORD_BYTES;
     const FIRST_ENTITY: usize = ENTITY_COUNT + 2;
 
@@ -482,10 +495,10 @@ mod tests {
             (0, 4, "unsupported snapshot wire version"),
             (1, 1, "unexpected snapshot scope"),
             (3, 4, "unsupported core snapshot schema version"),
-            (41, 0b1000, "reserved flag bits are set"),
-            (41, 0b111, "viewer state is inconsistent"),
-            (42, 9, "unknown entity kind"),
-            (47, 0, "an absent entity must have ID 0"),
+            (49, 0b1000, "reserved flag bits are set"),
+            (49, 0b111, "viewer state is inconsistent"),
+            (50, 9, "unknown entity kind"),
+            (55, 0, "an absent entity must have ID 0"),
             (EVENTS, 17, "snapshot exceeds the per-player event capacity"),
             (EVENTS + 1, 9, "unknown event kind"),
             (EVENTS + 2, 2, "event flags are invalid"),
@@ -528,6 +541,33 @@ mod tests {
     }
 
     #[test]
+    fn progression_decoder_rejects_invalid_self_state_and_legacy_bytes() {
+        let legacy = include_str!("../../../fixtures/protocol/player-snapshot-v5.hex");
+        let bytes: Vec<_> = legacy
+            .trim()
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect();
+        assert!(decode_snapshot(&bytes).is_err());
+        for (level, experience, threshold) in [
+            (1, 100, 100),
+            (1, 0, 0),
+            (10, 1, 0),
+            (10, 0, 100),
+            (11, 0, 0),
+        ] {
+            let mut snapshot = fixture_snapshot();
+            snapshot.viewer.level = level;
+            snapshot.viewer.experience = experience;
+            snapshot.viewer.experience_to_next_level = threshold;
+            assert!(decode_snapshot(&pack_snapshot(&snapshot).unwrap().payload).is_err());
+        }
+    }
+
+    #[test]
     fn snapshot_decoder_rejects_counts_and_sizes_above_the_budget_before_allocation() {
         let mut encoded = encode_snapshot(&ZoneSnapshot {
             events: Vec::new(),
@@ -560,7 +600,7 @@ mod tests {
                 EVENT_RECORD_BYTES,
                 ENTITY_RECORD_BYTES
             ),
-            (55, 14, 21)
+            (63, 14, 21)
         );
         assert_eq!(MAX_WIRE_ENTITIES, 48);
         let viewer_id = u32::MAX;
@@ -614,7 +654,9 @@ mod tests {
             viewer: ViewerState {
                 health: u32::MAX,
                 max_health: u32::MAX,
-                level: u8::MAX,
+                level: 9,
+                experience: 899,
+                experience_to_next_level: 900,
                 dead: false,
                 in_combat: true,
                 auto_attacking: true,
@@ -625,15 +667,15 @@ mod tests {
             entities,
         };
         let packed = pack_snapshot(&snapshot).unwrap();
-        // (1,077 − 55 − 16 × 14) / 21 = 38 records fit beside a full event section.
-        assert_eq!(packed.packed_entities, 38);
+        // (1,077 − 63 − 16 × 14) / 21 = 37 records fit beside a full event section.
+        assert_eq!(packed.packed_entities, 37);
         assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
         assert!(
             packed.payload.len() + SESSION_SNAPSHOT_HEADER_BYTES + DATAGRAM_SAFETY_MARGIN_BYTES
                 <= MEASURED_MIN_DATAGRAM_BYTES
         );
         let decoded = decode_snapshot(&packed.payload).unwrap();
-        assert_eq!(decoded.entities[..], snapshot.entities[..38]);
+        assert_eq!(decoded.entities[..], snapshot.entities[..37]);
         assert_eq!(
             decoded.entities[1].entity(),
             target,

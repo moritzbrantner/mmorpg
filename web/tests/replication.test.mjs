@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodeSnapshot, findEntity, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
 import { NO_FLAGS, playerEntity, testSnapshot } from "./support/snapshots.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v5.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v6.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
 const player = (entityId, x, facing = 0) => playerEntity(entityId, [x, 90, 0], [21, 0, 0], facing);
 const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapshot({
@@ -13,16 +13,28 @@ const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapsh
 const VIEWER = { kind: "player", id: 7 };
 const WOLF = { kind: "creature", id: 108 };
 /** Byte offsets of the fixture's sections (docs/PROTOCOL.md). */
-const EVENTS = 52;
+const EVENTS = 60;
 const ENTITY_COUNT = EVENTS + 1 + 7 * 14;
 const FIRST_ENTITY = ENTITY_COUNT + 2;
 
 describe("Rust/browser snapshot contract", () => {
+  test("rejects invalid progression and the actual legacy v5 fixture", () => {
+    const legacy = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v5.hex", import.meta.url), "utf8").trim();
+    expect(() => decodeSnapshot(Uint8Array.from(Buffer.from(legacy, "hex")))).toThrow("version");
+    for (const [level, experience, threshold] of [[1, 100, 100], [1, 0, 0], [10, 1, 0], [10, 0, 100], [11, 0, 0]]) {
+      const bytes = fixture.slice();
+      const view = new DataView(bytes.buffer);
+      view.setUint8(40, level);
+      view.setUint32(41, experience);
+      view.setUint32(45, threshold);
+      expect(() => decodeSnapshot(bytes)).toThrow("Inconsistent");
+    }
+  });
   test("decodes the same golden bytes as the Rust encoder", () => {
-    expect(fixture.length).toBe(55 + 7 * 14 + 4 * 21);
+    expect(fixture.length).toBe(63 + 7 * 14 + 4 * 21);
     expect(decodeSnapshot(fixture)).toEqual({
       zoneId: 42, tick: 99n, contentRevision: 3n, acknowledgedSequence: 81, viewerId: 7,
-      viewer: { health: 38, maxHealth: 50, level: 1, dead: false, inCombat: true, autoAttacking: true, target: WOLF },
+      viewer: { experience: 37, experienceToNextLevel: 100, health: 38, maxHealth: 50, level: 1, dead: false, inCombat: true, autoAttacking: true, target: WOLF },
       targetOfTarget: VIEWER,
       events: [
         { kind: "damage-dealt", source: VIEWER, target: WOLF, amount: 7, critical: true },
@@ -81,10 +93,10 @@ describe("Rust/browser snapshot contract", () => {
       [0, 4, "version"],
       [1, 1, "player-visible"],
       [3, 4, "version"],
-      [41, 0b1000, "Reserved"],
-      [41, 0b111, "Inconsistent"],
-      [42, 9, "kind"],
-      [47, 0, "absent"],
+      [49, 0b1000, "Reserved"],
+      [49, 0b111, "Inconsistent"],
+      [50, 9, "kind"],
+      [55, 0, "absent"],
       [EVENTS, 17, "event capacity"],
       [EVENTS + 1, 9, "event kind"],
       [EVENTS + 2, 2, "flags"],

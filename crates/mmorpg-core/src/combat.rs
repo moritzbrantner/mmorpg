@@ -418,6 +418,7 @@ impl ZoneSimulation {
         creature.swing_timer = 0;
         creature.combat_timer = 0;
         let tapper = creature.tapped_by;
+        let level = creature.level;
         let died = ZoneEvent::Died {
             entity,
             killer: Some(killer),
@@ -429,6 +430,9 @@ impl ZoneSimulation {
         recipients.extend(tapper);
         for player_id in recipients {
             self.notify(player_id, died);
+        }
+        if let Some(player_id) = tapper {
+            self.reward_kill_experience(player_id, level, [position.x, position.y, position.z])?;
         }
         Ok(())
     }

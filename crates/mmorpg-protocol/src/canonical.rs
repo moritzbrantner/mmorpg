@@ -80,6 +80,7 @@ fn encode_player(
     payload.extend_from_slice(&player.spawn_slot.to_be_bytes());
     let combat = &player.combat;
     payload.push(combat.level);
+    payload.extend_from_slice(&combat.experience.to_be_bytes());
     payload.extend_from_slice(&combat.health.to_be_bytes());
     encode_entity_ref(payload, combat.target);
     payload.push(u8::from(combat.auto_attack));
@@ -221,6 +222,7 @@ fn decode_player(
     let last_sequence = u32::from_be_bytes(take(payload, offset)?);
     let spawn_slot = u16::from_be_bytes(take(payload, offset)?);
     let level = read_u8(payload, offset)?;
+    let experience = u32::from_be_bytes(take(payload, offset)?);
     let health = u32::from_be_bytes(take(payload, offset)?);
     let target = decode_entity_ref(payload, offset)?;
     let auto_attack = read_bool(payload, offset)?;
@@ -269,6 +271,7 @@ fn decode_player(
         spawn_slot,
         combat: CanonicalPlayerCombat {
             level,
+            experience,
             health,
             target,
             auto_attack,
@@ -389,6 +392,7 @@ mod tests {
                     last_sequence: 81,
                     spawn_slot: 3,
                     combat: CanonicalPlayerCombat {
+                        experience: 63,
                         level: 2,
                         health: 17,
                         target: Some(wolf),
@@ -542,7 +546,7 @@ mod tests {
         let encoded = encode_canonical_snapshot(&snapshot()).unwrap();
         // Player 7's auto-attack flag follows its target reference.
         let player = 16 + 24 + 2;
-        let auto_attack = player + 39 + 1 + 4 + 5;
+        let auto_attack = player + 39 + 1 + 4 + 4 + 5;
         let intents = auto_attack + 1 + 8;
         let mut cases = vec![
             (auto_attack, 2, "boolean field must be 0 or 1"),
