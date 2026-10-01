@@ -5,6 +5,7 @@ import { RELIEF_GRID, RELIEF_PACKAGE_DIRECTORY } from "../scripts/relief-package
 import { encodeCommand } from "../src/command-wire";
 import { decodeSnapshot, type EntityState } from "../src/replication";
 import { BagState } from "../src/world/units/bag-state";
+import { LootState } from "../src/world/units/loot-state";
 import { createLocalWorld } from "../src/world/local-world";
 import { LocalZoneSource, type LocalZoneHandle } from "../src/world/local-zone-source";
 import type { Prop } from "../src/world/scenery";
@@ -22,7 +23,9 @@ const RUN_UNITS_PER_TICK = 21;
 function self(source: LocalZoneSource): EntityState {
   const projection = source.latestProjection();
   const entity = projection?.entities.find((candidate) => candidate.kind === "player" && candidate.entityId === projection.viewerId);
-  if (!entity) throw new Error("The viewer is missing from its projection");
+  if (!entity) {
+    throw new Error("The viewer is missing from its projection");
+  }
   return entity;
 }
 
@@ -37,7 +40,10 @@ describe("WASM local zone host", () => {
     const { source } = createLocalWorld(wasm);
     source.join();
     const bag = new BagState();
+    const loot = new LootState();
     bag.update(source.latestProjection()!);
+    loot.reset(source.latestProjection());
+    loot.update(source.latestProjection()!);
     const movement = new Map([[0, [1, 0]], [36, [1, 49152]], [121, [1, 32768]],
       [131, [1, 49152]], [375, [1, 32768]], [395, [0, 32768]]]);
     for (let tick = 0; tick < 912; tick += 1) {
@@ -45,7 +51,9 @@ describe("WASM local zone host", () => {
       if (move) {
         source.sendCommand({ kind: "move", forward: move[0] === 0 ? 0 : 1, strafe: 0, facing: move[1] ?? 0 });
       }
-      if (tick === 1) { source.sendCommand({ kind: "start-attack" }); }
+      if (tick === 1) {
+        source.sendCommand({ kind: "start-attack" });
+      }
       if (tick === 380) {
         source.sendCommand({ kind: "select-target", target: { kind: "creature", id: 108 } });
         source.sendCommand({ kind: "start-attack" });
@@ -54,14 +62,29 @@ describe("WASM local zone host", () => {
     }
     const before = source.latestProjection()!;
     expect(before.viewer).toMatchObject({ copper: 0, health: 23, experience: 50 });
-    const sheet = before.loot;
-    if (sheet === null) { throw new Error("Missing authoritative corpse sheet"); }
+    loot.update(before);
+    const sheet = loot.sheet;
+    if (sheet === null) {
+      throw new Error("Missing authoritative corpse sheet");
+    }
     expect(sheet).toEqual({ creatureId: 108, diedAt: 912n, money: 2, item: { itemId: 1, quantity: 2 } });
     source.sendCommand({ kind: "loot", creatureId: sheet.creatureId, diedAt: sheet.diedAt + 1n });
     run(source, 1);
     expect(source.latestProjection()?.events).toContainEqual({ kind: "error", code: "invalid-loot", target: { kind: "creature", id: 108 } });
     expect(source.latestProjection()?.loot).toEqual(sheet);
-    source.sendCommand({ kind: "loot", creatureId: sheet.creatureId, diedAt: sheet.diedAt });
+    loot.update(source.latestProjection()!);
+    const claim = loot.claimIntent();
+    if (claim === null) {
+      throw new Error("The projected corpse did not produce a claim intent");
+    }
+    const command = claim(source.latestProjection()!);
+    if (command === null) {
+      throw new Error("A fresh projected claim was unexpectedly refused locally");
+    }
+    expect(loot.claimIntent()).toBeNull();
+    source.sendCommand(command);
+    expect(loot.copper).toBe(0);
+    expect(loot.sheet).toEqual(sheet);
     // Lose the claim tick's bag sheet. Later projections retain money and absence;
     // the existing periodic bag resend recovers the missed inventory change.
     const frames = source.advance(4 / 30);
@@ -71,6 +94,10 @@ describe("WASM local zone host", () => {
     expect(later.viewer.copper).toBe(2);
     expect(later.loot).toBeNull();
     bag.update(later);
+    loot.update(later);
+    expect(loot.copper).toBe(2);
+    expect(loot.sheet).toBeNull();
+    expect(loot.claimIntent()).toBeNull();
     expect(bag.ready).toBe(false);
     for (let tick = 0; tick < 10 && !bag.ready; tick += 1) {
       run(source, 1); bag.update(source.latestProjection()!);
@@ -81,7 +108,15 @@ describe("WASM local zone host", () => {
     run(source, 1);
     expect(source.latestProjection()?.events).toContainEqual({ kind: "error", code: "empty-loot", target: { kind: "creature", id: 108 } });
     expect(source.latestProjection()?.viewer.copper).toBe(2);
-    source.leave(); source.join();
+    source.leave();
+    loot.reset();
+    expect(loot.copper).toBe(0);
+    expect(loot.sheet).toBeNull();
+    expect(claim(before)).toBeNull();
+    source.join();
+    loot.reset(source.latestProjection());
+    loot.update(source.latestProjection()!);
+    expect(loot.copper).toBe(0);
     expect(source.latestProjection()?.viewer.copper).toBe(0);
   });
   test("shared relief queries and both exported terrain grids consume the saved signed-centimetre field", () => {
