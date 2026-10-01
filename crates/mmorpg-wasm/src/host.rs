@@ -125,10 +125,8 @@ impl LocalZoneHost {
     /// zone refuses an invalid choice with an event in the next tick.
     pub fn join_as(&mut self, class: u8, sex: u8) -> Result<PlayerId, LocalZoneError> {
         let player_id = self.join()?;
-        let choice = mmorpg_protocol::encode_command(mmorpg_core::ZoneCommand::ChooseClass {
-            class,
-            sex,
-        });
+        let choice =
+            mmorpg_protocol::encode_command(mmorpg_core::ZoneCommand::ChooseClass { class, sex });
         if let Err(error) = self.submit(player_id, 1, &choice) {
             self.leave(player_id);
             return Err(error);

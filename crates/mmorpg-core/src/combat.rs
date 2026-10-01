@@ -620,7 +620,10 @@ impl ZoneSimulation {
         for creature in self.creatures.values_mut() {
             creature.forget(entity);
             // A cast at the fallen player fizzles; a released spirit is safe.
-            if creature.cast.is_some_and(|cast| cast.target == Some(entity)) {
+            if creature
+                .cast
+                .is_some_and(|cast| cast.target == Some(entity))
+            {
                 creature.cast = None;
             }
         }
