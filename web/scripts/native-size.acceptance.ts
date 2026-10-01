@@ -43,7 +43,14 @@ assert.equal(JSON.parse(emptyEncodedFlags.stdout).status, "unavailable");
 
 const fixture = mkdtempSync(join(tmpdir(), "mmorpg-native-size-"));
 try {
-  for (const name of ["RUSTC_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_INCREMENTAL"]) {
+  for (const name of [
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTC_BOOTSTRAP",
+    "RUSTC_FORCE_INCREMENTAL",
+    "CARGO_BUILD_RUSTC",
+    "CARGO_INCREMENTAL",
+  ]) {
     const override = run([], { ...process.env, [name]: "undeclared" });
     assert.equal(override.status, 2, override.stderr);
     assert.equal(JSON.parse(override.stdout).status, "unavailable");

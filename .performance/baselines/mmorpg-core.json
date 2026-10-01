@@ -10,7 +10,7 @@
       {
         "id": "mmorpg-core-release-rlib",
         "kind": "native",
-        "identity": "818ef906f0b2883d5e6cf0d381bcb7a2c19a1d65185d4738f69541b381860b2e",
+        "identity": "41c4d627e00c1c9c72ea09014f8d350a6e37766cb99b23b0f11d6eb56f675808",
         "inputs": {
           "id": "mmorpg-core-release-rlib",
           "kind": "native",
@@ -75,7 +75,7 @@
             },
             {
               "path": "web/scripts/native-size.ts",
-              "sha256": "b45259c7e4680f6b683d76fe65d89ba1c7795c30271fee4aee6ec38726c28643"
+              "sha256": "0ab8be6f144bc85f2de5756d691719c2ed10511edb8c9eb042798d8b5bc5664f"
             }
           ]
         },
