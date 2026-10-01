@@ -42,6 +42,12 @@ describe("Greyhaven accepted grass package", () => {
   test("source and derived bytes agree with the complete pinned provenance", async () => {
     expect(record(manifest.producer).commit).toBe(GRASS_PRODUCER_COMMIT);
     expect(record(manifest.consumerAdapter).sha256).toBe(sha256(await readFile(new URL("../scripts/grass-package.ts", import.meta.url))));
+    for (const [filename, hash] of Object.entries(record(record(manifest.consumerAdapter).dependencies))) {
+      if (typeof hash !== "string") {
+        throw new Error("Invalid adapter dependency identity");
+      }
+      expect(sha256(await readFile(path.resolve(import.meta.dir, "../..", filename)))).toBe(hash);
+    }
     for (const group of ["sourceFiles", "outputs"]) {
       for (const [name, value] of Object.entries(record(manifest[group]))) {
         const identity = record(value);

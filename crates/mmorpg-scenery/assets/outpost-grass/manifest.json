@@ -7,7 +7,11 @@
   },
   "consumerAdapter": {
     "source": "web/scripts/grass-package.ts",
-    "sha256": "73f990919e408bb0ba574f732dd8d3f1c709c5169f6326eaa7d8bb750e5a21da"
+    "sha256": "a1800bcd85c7b96064611cb259ee20f0c8d503c473e20a0cd942b68eae87ac4d",
+    "dependencies": {
+      "web/scripts/asset-operation-api.ts": "1b5093ed9ea2a09b278259b746d96dc8f431a08cfbb71afcdc50b182fb488cbd",
+      "web/scripts/asset-source-checkout.ts": "10cf14bd62e5766697b057043bb31b7021b0db4539e180b68eddb6a2c18d3780"
+    }
   },
   "sourceFiles": {
     "source.json": {
