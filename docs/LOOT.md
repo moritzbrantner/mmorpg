@@ -53,3 +53,18 @@ The caller retains the supplied reward and consumes its authoritative claim
 only after success. Settlement itself owns no player identity, eligibility,
 range or duplicate-claim fencing. #103 integrates those preconditions with
 corpse generation, revisions, canonical state and wire recovery under #89.
+
+`ZoneContent::with_loot_tables` (#105) binds an explicit nonzero loot revision
+and a bounded table of already validated `LootTable` values. Template IDs must
+exist in the zone and be unique; binding sorts them, while weighted outcomes
+retain their authored order. Missing template lookup returns `None`. An empty
+but explicitly revisioned catalog is valid and differs from unbound content.
+Immutable queries expose the revision and ordered rules without allowing mutation.
+
+Bound content uses fingerprint domain `mmorpg.zone-content/v3`: the existing v2
+content fingerprint, loot revision and every ordered rule field enter identity.
+Thus changing any money bound, outcome kind, item, quantity bound or weight
+refuses recovery against the old identity. Binding retains the declared RNG seed
+and introduces no reward generation or simulation reads. Unbound content keeps
+its existing v2 fingerprint exactly; Greyhaven remains revision 4 and unbound
+until #103 activates the catalog with corpse authority.

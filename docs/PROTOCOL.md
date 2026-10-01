@@ -143,7 +143,7 @@ After the common prefix:
 4. player count (`u16`, at most 512), then player records;
 5. creature count (`u16`, at most 1,024), then creature records in creature-ID order.
 
-Content is referenced, not embedded: the revision and the fingerprint (FNV-1a 64 over a canonical encoding of every content table, colliders included, plus catalog, starter grant and declared RNG seed) identify the exact `ZoneContent`, and `ZoneSimulation::from_snapshot` fails closed unless the supplied content has both (the content-addressed checkpoint rule in [ARCHITECTURE.md](ARCHITECTURE.md#snapshots-and-compatibility)). Static colliders, NPCs and world-limit bodies come from that content during recovery.
+Content is referenced, not embedded: the revision and the fingerprint (FNV-1a 64 over a canonical encoding of every content table, colliders included, plus item catalog, starter grant, declared RNG seed and any explicitly bound loot catalog) identify the exact `ZoneContent`, and `ZoneSimulation::from_snapshot` fails closed unless the supplied content has both (the content-addressed checkpoint rule in [ARCHITECTURE.md](ARCHITECTURE.md#snapshots-and-compatibility)). Static colliders, NPCs and world-limit bodies come from that content during recovery.
 
 A player record starts with 39 movement bytes, 80 inventory bytes and then its unit state:
 

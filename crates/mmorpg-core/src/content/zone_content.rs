@@ -1,7 +1,7 @@
 //! The complete immutable content of one zone and its identity.
 //!
 //! A zone's content is its physical definition plus its named areas, creature
-//! templates, creature spawns, NPCs and graveyard. [`ZoneContent::new`]
+//! templates, creature spawns, NPCs, graveyard and optional loot rules. [`ZoneContent::new`]
 //! validates the tables once and computes a fingerprint over a canonical byte
 //! encoding of all of them. Canonical snapshots record the revision and
 //! fingerprint instead of embedding the content, and recovery refuses content
@@ -14,8 +14,8 @@ use super::units::{
 use super::{MAX_CONTENT_COORDINATE_UNITS, ZoneDefinition};
 use crate::unit::{CORPSE_TICKS, MAX_SWING_DAMAGE, MAX_UNIT_LEVEL};
 use crate::{
-    CreatureId, CreatureTemplateId, MAX_PLAYERS_PER_ZONE, NpcId, PLAYER_HALF_EXTENTS_UNITS,
-    ZoneAreas, ZoneError,
+    CreatureId, CreatureTemplateId, LootOutcome, LootTable, MAX_PLAYERS_PER_ZONE, NpcId,
+    PLAYER_HALF_EXTENTS_UNITS, ZoneAreas, ZoneError,
 };
 
 /// Immutable, validated zone content, shared between zones through `Arc`.
@@ -29,6 +29,8 @@ pub struct ZoneContent {
     graveyard: [i32; 2],
     fingerprint: u64,
     rng_seed: u64,
+    loot_revision: u64,
+    loot_tables: Vec<(CreatureTemplateId, LootTable)>,
 }
 
 /// A body as `(centre, half extents)` in units.
@@ -117,6 +119,8 @@ impl ZoneContent {
             graveyard,
             fingerprint: 0,
             rng_seed: 0,
+            loot_revision: 0,
+            loot_tables: Vec::new(),
         };
         content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
@@ -137,6 +141,8 @@ impl ZoneContent {
             graveyard: [feet[0], feet[2]],
             fingerprint: 0,
             rng_seed: 0,
+            loot_revision: 0,
+            loot_tables: Vec::new(),
         };
         content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
@@ -226,6 +232,55 @@ impl ZoneContent {
         self.rng_seed
     }
 
+    /// Binds validated loot rules to recovery identity without changing the
+    /// simulation seed. Missing templates have no loot table. Revision zero
+    /// is reserved for content that has never bound a loot catalog.
+    pub fn with_loot_tables(
+        mut self,
+        revision: u64,
+        mut tables: Vec<(CreatureTemplateId, LootTable)>,
+    ) -> Result<Self, ZoneError> {
+        if revision == 0 {
+            return Err(ZoneError::new("loot catalog revision must be nonzero"));
+        }
+        if tables.len() > MAX_CREATURE_TEMPLATES {
+            return Err(ZoneError::new("zone loot content capacity reached"));
+        }
+        tables.sort_by_key(|(template, _)| *template);
+        if tables.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return Err(ZoneError::new("duplicate loot template id"));
+        }
+        if tables
+            .iter()
+            .any(|(template, _)| self.creature_template(*template).is_none())
+        {
+            return Err(ZoneError::new("loot table names an unknown template"));
+        }
+        self.loot_revision = revision;
+        self.loot_tables = tables;
+        self.fingerprint = self.compute_fingerprint();
+        Ok(self)
+    }
+
+    #[must_use]
+    pub const fn loot_revision(&self) -> u64 {
+        self.loot_revision
+    }
+
+    /// Ordered by creature template ID; outcome order remains authored.
+    #[must_use]
+    pub fn loot_tables(&self) -> &[(CreatureTemplateId, LootTable)] {
+        &self.loot_tables
+    }
+
+    #[must_use]
+    pub fn loot_table(&self, template: CreatureTemplateId) -> Option<&LootTable> {
+        self.loot_tables
+            .binary_search_by_key(&template, |(template, _)| *template)
+            .ok()
+            .map(|index| &self.loot_tables[index].1)
+    }
+
     fn compute_fingerprint(&self) -> u64 {
         let mut hash = Fnv1a::new();
         hash.bytes(b"mmorpg.zone-content/v2");
@@ -241,6 +296,41 @@ impl ZoneContent {
         for slot in crate::Inventory::starter().slots() {
             hash.u16(slot.map_or(0, |stack| stack.item().get()));
             hash.u16(slot.map_or(0, |stack| stack.quantity()));
+        }
+        let base_fingerprint = hash.finish();
+        if self.loot_revision == 0 {
+            return base_fingerprint;
+        }
+        let mut hash = Fnv1a::new();
+        hash.bytes(b"mmorpg.zone-content/v3");
+        hash.u64(base_fingerprint);
+        hash.u64(self.loot_revision);
+        hash.len(self.loot_tables.len());
+        for (template, table) in &self.loot_tables {
+            hash.u16(template.get());
+            for bound in table.money_range() {
+                hash.u32(bound);
+            }
+            hash.len(table.outcomes().len());
+            for outcome in table.outcomes() {
+                match *outcome {
+                    LootOutcome::Nothing { weight } => {
+                        hash.u8(0);
+                        hash.u16(weight);
+                    }
+                    LootOutcome::Item {
+                        weight,
+                        item,
+                        quantity,
+                    } => {
+                        hash.u8(1);
+                        hash.u16(weight);
+                        hash.u16(item.get());
+                        hash.u16(quantity[0]);
+                        hash.u16(quantity[1]);
+                    }
+                }
+            }
         }
         hash.finish()
     }
