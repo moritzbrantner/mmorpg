@@ -7,7 +7,7 @@ description: Run one iteration of the mmorpg multi-agent loop — review open ag
 
 You are the loop driver (Claude Opus). The contract for issues, labels and roles is `docs/AGENT_TASKS.md`; the rules every implementer follows are `AGENTS.md`. Read both at the start of every run, and `docs/STARTER_ZONE.md` before writing a new spec.
 
-**Sol is offline by default.** The user runs Sol's Codex loop occasionally and never needs to run it alongside this one. Never wait for Sol: keep the game moving with Opus and Sonnet, and treat `agent:sol` issues as a backlog Sol works through whenever it is started. If Sol does run at the same time, the `in-progress` label is the lock; never touch an `in-progress` Sol issue or push to a Sol branch.
+**Sol is offline by default.** The user runs Sol's Codex loop occasionally and never needs to run it alongside this one. Never wait for Sol: keep the game moving with Opus and Sonnet, and treat `agent:sol` issues as a backlog Sol works through whenever it is started. The `agent:*` label partitions issues, so the loop driver (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task. Never touch `in-progress` on a Sol issue or push to a Sol branch.
 
 One run = the steps below, in order, then a short report. Keep chat output to the report; put spec content into issues and review content into PR comments.
 
@@ -16,14 +16,15 @@ One run = the steps below, in order, then a short report. Keep chat output to th
 - `git fetch` and work from `origin/main` (GIT-001). Never edit the user's checked-out branch; use a worktree for any change you make yourself.
 - Make sure the labels in `docs/AGENT_TASKS.md` exist (`gh label create … || true`).
 - Collect state:
-  - `gh pr list --state open --json number,title,headRefName,author,labels,isDraft,url`
-  - `gh issue list --label agent-task --state open --json number,title,labels,body`
+  - `gh pr list --state open --limit 200 --json number,title,headRefName,author,labels,isDraft,url`
+  - `gh issue list --label agent-task --state open --limit 200 --json number,title,labels,body`
+- **Recover stale locks:** an `agent:opus` or `agent:sonnet` issue labelled `in-progress` with no open PR and no live background agent from this session loses `in-progress`, with a one-line comment, so it becomes dispatchable again. Never touch `in-progress` on `agent:sol` issues; report a Sol issue that has been `in-progress` for over 48 hours with no PR or branch push.
 
 ## 1. Review open PRs
 
 For each open, non-draft PR that closes an `agent-task` issue:
 
-1. **CI:** `gh pr checks <n>`. If pending, skip it this run. If red, comment the failing check and log excerpt, then stop on this PR.
+1. **CI:** `gh pr checks <n>`. If pending, skip it this run. If a check failed, treat it as a "changes needed" verdict: comment the failing check and log excerpt, then re-dispatch the owning agent with that list, the same path as review failures (step 4 below). For a Sol PR, leave the comment; Sol's next run fixes its own PRs first.
 2. **Codex:** read the review comments and threads from `chatgpt-codex-connector` (`gh api repos/{owner}/{repo}/pulls/<n>/comments`, `.../reviews`, and the issue comments). Require a completed connector review covering the current head commit; the review-summary issue comment may record completion even when there are no findings. Skip this PR while that review is absent or running. Every finding must be fixed or answered in the thread. If the head changed after the completed review, comment `@codex review` when no current-head review is running and skip until it completes.
 3. **Spec:** compare the diff with the issue's Decisions, Acceptance and Out of scope:
    - formats match exactly;
@@ -34,7 +35,7 @@ For each open, non-draft PR that closes an `agent-task` issue:
    
    Also check the `AGENTS.md` invariants (authority boundaries, determinism, fail-closed versions).
 4. **Verdict:**
-   - **Ready:** `gh pr merge <n> --merge --delete-branch`. If auto mode denies the merge, do not work around it; list the PR as "ready for you to merge" in the report.
+   - **Ready:** record the head SHA that CI, Codex and the spec review covered and merge with `gh pr merge <n> --merge --delete-branch --match-head-commit <sha>`. If the head moved, do not merge; re-review next run. If auto mode denies the merge, do not work around it; list the PR as "ready for you to merge" in the report.
    - **Changes needed:** one PR comment with a numbered, concrete list. For a PR by Sonnet, dispatch Sonnet again with that list (step 4). For a PR by Opus, re-dispatch the Opus agent with that list (step 4); never fix it inline as well. For Sol, leave the comment; Sol's next run fixes its own PRs first.
 
 Never merge PRs in foundation repositories (3d-lab, game-server, physics-engine, …); list them for the user.
