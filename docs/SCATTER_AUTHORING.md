@@ -78,7 +78,9 @@ consumer filtering implementation for producer evidence.
 
 The adapter also emits `accepted.props.rs` and `selected.props.rs`, exact
 centimetre coordinates and original transforms suitable for Rust inclusion.
-The manifest records their hashes plus the consumer adapter's own source hash.
+The manifest records their hashes plus the consumer adapter's own source hash
+and its checkout/public-export helper dependencies. The relief authoring
+package shares this small public producer boundary.
 Sub-centimetre coordinates fail closed rather than being rounded. The selected
 include is compiled into `mmorpg-scenery`; the accepted include supplies the
 independent original-placement regression check. No JSON parser or asset-tooling

@@ -1,25 +1,13 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { assertCleanSourceCheckout } from "./asset-source-checkout";
+import { ASSET_AUTHORING_COMMIT, createPinnedAssetOperationCaller, record, sha256 } from "./asset-operation-api";
+
+export { record, sha256 } from "./asset-operation-api";
 
 export const GRASS_PACKAGE_DIRECTORY = path.resolve(import.meta.dir, "../../crates/mmorpg-scenery/assets/outpost-grass");
-export const GRASS_PRODUCER_COMMIT = "1e79d74ee0a62cd29706ed3254a0293c91d996ba";
-
-export function record(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Expected an authoring record");
-  }
-  // JSON records and verified module namespaces establish this boundary.
-  return value as Record<string, unknown>;
-}
-
-export function sha256(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
+export const GRASS_PRODUCER_COMMIT = ASSET_AUTHORING_COMMIT;
 
 export function savedMask(bytes: Uint8Array, columns: number, rows: number): Uint8Array {
   const text = Buffer.from(bytes).toString("utf8");
@@ -53,38 +41,10 @@ function rustPlacements(instances: unknown[], transforms: unknown[]): Uint8Array
   return Buffer.from(`[\n${lines.join("\n")}\n]\n`);
 }
 
-/** Resolve only declared public exports from the verified, pinned producer. */
-async function producerExports(checkout: string) {
-  const packageJson = record(JSON.parse(await readFile(path.join(checkout, "package.json"), "utf8")));
-  const exports = record(packageJson.exports);
-  const modules = new Map<string, Record<string, unknown>>();
-  for (const subpath of ["./operations", "./operations/store", "./operations/instances/masks", "./instance-set", "./image/rgba8"]) {
-    const entry = exports[subpath];
-    if (typeof entry !== "string" || !entry.startsWith("./")) {
-      throw new Error(`Producer has no public ${subpath} export`);
-    }
-    const filename = path.resolve(checkout, entry);
-    if (!filename.startsWith(`${checkout}${path.sep}`)) {
-      throw new Error("Producer export escapes the source checkout");
-    }
-    const loaded: unknown = await import(pathToFileURL(filename).href);
-    modules.set(subpath, record(loaded));
-  }
-  return async (subpath: string, name: string, ...args: unknown[]): Promise<unknown> => {
-    const fn = modules.get(subpath)?.[name];
-    if (typeof fn !== "function") {
-      throw new Error(`Producer has no callable public ${subpath}/${name}`);
-    }
-    // Call signatures belong to the pinned public producer API. Its results
-    // remain unknown until its validators or this package's checks accept them.
-    return await Reflect.apply(fn, undefined, args);
-  };
-}
-
 export async function buildGrassPackage(checkout: string, directory = GRASS_PACKAGE_DIRECTORY) {
   checkout = path.resolve(checkout);
-  assertCleanSourceCheckout(checkout, GRASS_PRODUCER_COMMIT);
-  const call = await producerExports(checkout);
+  const call = await createPinnedAssetOperationCaller(checkout, GRASS_PRODUCER_COMMIT,
+    ["./operations", "./operations/store", "./operations/instances/masks", "./instance-set", "./image/rgba8"]);
   const names = ["source.json", "accepted.instances.json", "transforms.json", "exclusion.txt"] as const;
   const inputs = new Map<string, Buffer>();
   for (const name of names) {
@@ -158,7 +118,9 @@ export async function buildGrassPackage(checkout: string, directory = GRASS_PACK
       ["accepted.props.rs", rustPlacements(accepted.instances, transforms)],
       ["selected.props.rs", rustPlacements(selected.instances, selectedTransforms)],
     ]);
-    const consumerAdapter = { source: "web/scripts/grass-package.ts", sha256: sha256(await readFile(new URL("./grass-package.ts", import.meta.url))) };
+    const consumerAdapter = { source: "web/scripts/grass-package.ts", sha256: sha256(await readFile(new URL("./grass-package.ts", import.meta.url))),
+      dependencies: { "web/scripts/asset-operation-api.ts": sha256(await readFile(new URL("./asset-operation-api.ts", import.meta.url))),
+        "web/scripts/asset-source-checkout.ts": sha256(await readFile(new URL("./asset-source-checkout.ts", import.meta.url))) } };
     const manifest = { schemaVersion: 1, producer: source.producer, consumerAdapter, sourceFiles: Object.fromEntries(names.map((name) => [name, { sha256: sha256(inputs.get(name)!), byteLength: inputs.get(name)!.length }])),
       build, result, outputs: Object.fromEntries([...outputFiles].map(([name, bytes]) => [name, { sha256: sha256(bytes), byteLength: bytes.length }])),
       evidence: { repeatedFilterMatches: true, coldReplayMatches: true, sourceCount: accepted.instances.length, keptCount: selected.instances.length, candidatesGenerated: 0 } };

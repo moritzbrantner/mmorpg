@@ -75,7 +75,7 @@ jobs:
       - name: Install web dependencies
         working-directory: web
         run: bun install --frozen-lockfile
-      - name: Check out the pinned exclusion-mask producer
+      - name: Check out the pinned saved-mask producer
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: moritzbrantner/asset-tooling
@@ -84,6 +84,8 @@ jobs:
           persist-credentials: false
       - name: Reproduce the accepted Greyhaven grass package
         run: bun web/scripts/package-grass.ts artifacts/asset-tooling-mask-source --check
+      - name: Reproduce the authored Greyhaven relief package
+        run: bun web/scripts/package-relief.ts artifacts/asset-tooling-mask-source --check
       - name: Typecheck the asset authoring adapter
         working-directory: web
         run: bunx --no-install tsc --noEmit -p tsconfig.assets.json
