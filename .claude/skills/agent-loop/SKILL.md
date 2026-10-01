@@ -66,7 +66,7 @@ Write at most two new specs per run.
   
   For a "changes needed" re-dispatch, give the PR number and the numbered list instead. Run at most one Sonnet task at a time.
 - **`agent:opus`**: implement it yourself in a worktree following the same rules, or skip it this run if steps 1–3 already used the run.
-- **`agent:sol`**: you cannot launch Sol. In the report, name the issue and give the user the line to paste: `Pick up #N per AGENTS.md and docs/AGENT_TASKS.md; one branch, one PR.`
+- **`agent:sol`**: you cannot launch Sol. Sol runs the Codex `implementer-loop` skill (`.agents/skills/implementer-loop/`), which picks up the next `spec:ready` + `agent:sol` issue and fixes Sol's PRs on its own. In the report, name the issue Sol should be working on, and remind the user to run that skill if no Sol PR or `in-progress` label appeared since the last run.
 
 ## 5. Report
 
