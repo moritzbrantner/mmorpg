@@ -15,6 +15,7 @@ mod creature;
 mod entity;
 mod events;
 mod interest;
+mod progression;
 mod projection;
 pub mod rng;
 mod snapshot;
@@ -40,6 +41,7 @@ pub use creature::{
 pub use entity::{CreatureId, CreatureTemplateId, EntityKind, EntityRef, NpcId};
 pub use events::{ErrorCode, MAX_EVENTS_PER_PLAYER, ZoneEvent};
 pub use interest::{InterestMaintenanceStats, InterestQueryStats, PlayerProjection};
+pub use progression::{MAX_PLAYER_LEVEL, experience_to_next_level, kill_experience};
 pub use projection::{EntityFlags, EntitySnapshot, ViewerState, ZoneSnapshot};
 pub use snapshot::{
     CanonicalCreatureSnapshot, CanonicalPlayerCombat, CanonicalPlayerSnapshot,
