@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use physics_engine::{Aabb, RigidBody, StepStats, Vec3i, World, WorldConfig};
+use physics_engine::{Aabb, RigidBody, Vec3i, World, WorldConfig};
 
 use crate::creature::CreatureState;
 use crate::entity::{WORLD_LIMIT_BODY_BASE, body_id};
@@ -125,6 +125,16 @@ impl PlayerState {
     }
 }
 
+/// Diagnostic work for the latest attempted tick. Creation and recovery start
+/// at zero. These counters never enter canonical state or player projections.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ZoneTickWork {
+    /// Living creatures whose AI decision was evaluated, including idle units.
+    pub creature_ai_evaluations: usize,
+    /// The engine's own report, present only after a successful physics step.
+    pub physics: Option<physics_engine::StepStats>,
+}
+
 pub struct ZoneSimulation {
     pub(crate) zone_id: ZoneId,
     pub(crate) tick: u64,
@@ -135,7 +145,7 @@ pub struct ZoneSimulation {
     pub(crate) creatures: BTreeMap<CreatureId, CreatureState>,
     pub(crate) interest: InterestIndex,
     pub(crate) interest_work: InterestMaintenanceStats,
-    last_physics_step_stats: Option<StepStats>,
+    pub(crate) tick_work: ZoneTickWork,
 }
 
 impl ZoneSimulation {
@@ -218,7 +228,7 @@ impl ZoneSimulation {
             creatures: BTreeMap::new(),
             interest,
             interest_work: InterestMaintenanceStats::default(),
-            last_physics_step_stats: None,
+            tick_work: ZoneTickWork::default(),
         })
     }
 
@@ -254,12 +264,9 @@ impl ZoneSimulation {
         self.interest_work
     }
 
-    /// Engine-owned diagnostics from the latest completed physics call.
-    /// Absent before stepping, after recovery, or when a tick attempt fails before
-    /// completing physics. Never part of canonical recovery or player projections.
     #[must_use]
-    pub const fn last_physics_step_stats(&self) -> Option<StepStats> {
-        self.last_physics_step_stats
+    pub const fn tick_work(&self) -> ZoneTickWork {
+        self.tick_work
     }
 
     pub fn add_player(&mut self, player_id: PlayerId) -> Result<(), ZoneError> {
@@ -384,18 +391,18 @@ impl ZoneSimulation {
     /// Events of the previous tick are cleared first, so each player's queue
     /// holds exactly this tick's events until the next tick starts.
     pub fn advance_tick(&mut self) -> Result<(), ZoneError> {
-        self.last_physics_step_stats = None;
         let now = self
             .tick
             .checked_add(1)
             .ok_or_else(|| ZoneError::new("zone tick overflow"))?;
+        self.tick_work = ZoneTickWork::default();
         for player in self.players.values_mut() {
             player.events.clear();
         }
         self.consume_intents()?;
         self.decide_creatures()?;
         self.drive_players()?;
-        self.last_physics_step_stats = Some(self.world.step(1).map_err(physics_error)?.stats);
+        self.tick_work.physics = Some(self.world.step(1).map_err(physics_error)?.stats);
         // A jump intent is consumed by the tick that evaluated it, grounded or not.
         for player in self.players.values_mut() {
             player.jump_pending = false;

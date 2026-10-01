@@ -310,13 +310,13 @@ fn exhausted_tick_does_not_move_physics() {
 fn physics_diagnostics_reuse_fixed_bounds_without_entering_recovery_state() {
     let mut zone = ZoneSimulation::with_definition(ZoneId::new(1), definition()).unwrap();
     zone.add_player(1).unwrap();
-    assert_eq!(zone.last_physics_step_stats(), None);
+    assert_eq!(zone.tick_work().physics, None);
     zone.advance_tick().unwrap();
-    let bootstrap = zone.last_physics_step_stats().unwrap();
+    let bootstrap = zone.tick_work().physics.unwrap();
     assert_eq!(bootstrap.work.fixed_sweep_bound_preparations, 8);
     assert!(bootstrap.work.fixed_sweep_bound_reuses > 0);
     zone.advance_tick().unwrap();
-    let warm = zone.last_physics_step_stats().unwrap();
+    let warm = zone.tick_work().physics.unwrap();
     assert_eq!(warm.work.fixed_sweep_bound_preparations, 0);
     assert_eq!(warm.work.staged_state_capacity_growths, 0);
     assert_eq!(warm.work.broad_phase_capacity_growths, 0);
@@ -324,14 +324,15 @@ fn physics_diagnostics_reuse_fixed_bounds_without_entering_recovery_state() {
     let snapshot = zone.snapshot().unwrap();
     let mut restored =
         ZoneSimulation::from_snapshot(snapshot.clone(), Arc::clone(zone.content())).unwrap();
-    assert_eq!(restored.last_physics_step_stats(), None);
+    assert_eq!(restored.tick_work().physics, None);
     assert_eq!(restored.snapshot().unwrap(), snapshot);
     restored.advance_tick().unwrap();
     zone.advance_tick().unwrap();
     assert_eq!(restored.snapshot().unwrap(), zone.snapshot().unwrap());
     assert_eq!(
         restored
-            .last_physics_step_stats()
+            .tick_work()
+            .physics
             .unwrap()
             .work
             .fixed_sweep_bound_preparations,

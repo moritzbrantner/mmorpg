@@ -178,7 +178,8 @@ fn measure(
         zone.advance_tick()?;
         tick_time += start.elapsed();
         let work = zone
-            .last_physics_step_stats()
+            .tick_work()
+            .physics
             .ok_or("missing physics diagnostics")?
             .work;
         physics_queries += work.broad_phase_queries;

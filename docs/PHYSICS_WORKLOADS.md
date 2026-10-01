@@ -50,7 +50,7 @@ translational `World`. Upstream #252/#255/#256's parked/contact wake changes bel
 to other solver paths and do not establish MMORPG sleep/wake or f64 adoption.
 
 The existing workload now aggregates engine-owned `StepStats.work` through
-`ZoneSimulation::last_physics_step_stats()`. These latest-call diagnostics reset
+`ZoneSimulation::tick_work().physics`. These latest-call diagnostics reset
 on construction/recovery and at the start of a tick attempt; they never enter
 canonical state or player projections. Work is accumulated immediately around
 primary-zone ticks, so a reconstruction cannot erase earlier measurements. The
@@ -108,3 +108,7 @@ RUSTFLAGS, workload v1, committed locks; shared Linux AMD EPYC 9V74 workspace.
 Debug checks disable debug symbols/incremental caches. Installed conventions were
 retained unchanged; live central policy was inspected at `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
 This completes another semantics-preserving adoption slice, not MMORPG #46's solver migration.
+
+Integration preserves main PR #60 combat workload diagnostics and reuses its existing
+`ZoneTickWork.physics` surface. All 24 traces and deterministic work counts were
+rechecked after integration; the older baseline accessor was measurement-only.
