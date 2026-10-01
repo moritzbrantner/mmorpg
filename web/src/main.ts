@@ -48,6 +48,7 @@ import { GameControls, type GameAction } from "./input/game-controls";
 import { cancelCast, useAbilitySlot } from "./world/units/abilities";
 import "./character-selection-layout.css";
 import "./character-creation.css";
+import "./class-hud.css";
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -181,6 +182,7 @@ const worldView = new WorldView(renderer, camera, {
   objective: requireElement<HTMLElement>("#objective"),
   unitStatus: requireElement<HTMLElement>("#unit-status"),
   combatFeedback: requireElement<HTMLElement>("#combat-feedback"),
+  classHud: requireElement<HTMLElement>("#class-hud"),
   experienceBar: requireElement<HTMLProgressElement>("#experience-bar"),
   experienceStatus: requireElement<HTMLElement>("#experience-status"),
   progressionFeedback: requireElement<HTMLElement>("#progression-feedback"),

@@ -6,6 +6,7 @@ import { POSE_LIMITS, poseFor, type LocomotionState } from "../src/world/charact
 import { auraPolarity, undescribedAbilities } from "../src/world/units/ability-presentation";
 import { cooldownSeconds, formatRemaining, slotState, sweepDegrees, targetDistanceUnits, tooltipText } from "../src/world/units/ability-state";
 import { auraLabel, auraTimer, sortAuras } from "../src/world/units/aura-display";
+import { errorText } from "../src/world/units/combat-hud";
 import { castBarView } from "../src/world/units/cast-bar";
 import { combatTexts, damageIsPeriodic, viewerInterrupted } from "../src/world/units/combat-text";
 import { SpellEffects, effectNodes, type Anchor } from "../src/world/units/spell-effects";
@@ -360,5 +361,25 @@ describe("caster poses", () => {
     effects.spawn(snapshot({ events: [{ kind: "ability-used", source: me, target: wolf, ability: 1 }] }), 5, () => null);
     expect(effects.viewerAction(snapshot(), 5.1)).toMatchObject({ pose: "swing", hold: false });
     expect(effects.viewerAction(snapshot(), 5.5)).toBeNull();
+  });
+});
+
+describe("error messages", () => {
+  const codes = [
+    "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target", "too-many-intents",
+    "invalid-inventory-move", "inventory-full", "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
+    "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
+  ] as const;
+
+  test("every code reads as a sentence", () => {
+    for (const code of codes) {
+      expect(errorText(code, snapshot())).toMatch(/^[A-Z].*[.]$/);
+    }
+  });
+
+  test("a resource shortage names the class resource", () => {
+    expect(errorText("not-enough-resource", snapshot())).toBe("Not enough mana.");
+    expect(errorText("not-enough-resource", snapshot({}, { resource: { kind: "rage", value: 0, max: 100 } }))).toBe("Not enough rage.");
+    expect(errorText("not-enough-resource", snapshot({}, { resource: null }))).toBe("Not enough resource.");
   });
 });
