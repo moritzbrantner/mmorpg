@@ -107,14 +107,14 @@ fn main() -> Result<(), ClientError> {
         scenery.content_revision,
     ))?;
     let player_id = session.player_id();
-    // The class choice is the first command; a resumed session keeps it.
-    session.send_choose_class(options.class.code(), options.sex.code())?;
+    let class_choice = (options.class.code(), options.sex.code());
     if options.smoke {
         return runtime.block_on(async {
-            // Wait for the zone to take the class choice, then render the
-            // resumed authoritative world.
+            // Choose the class until the zone confirms it (a datagram may be
+            // lost), then render the resumed authoritative world.
             let mut chosen = None;
             for _ in 0..90 {
+                session.send_choose_class(class_choice.0, class_choice.1)?;
                 chosen = session.receive_snapshot().await?.viewer.class;
                 if chosen.is_some() {
                     break;
@@ -133,7 +133,11 @@ fn main() -> Result<(), ClientError> {
             Ok(())
         });
     }
-    let (input_sender, input_receiver) = watch::channel(PlayerInput::default());
+    // The session sends the class choice until a projection confirms it.
+    let (input_sender, input_receiver) = watch::channel(PlayerInput {
+        class_choice: Some(class_choice),
+        ..PlayerInput::default()
+    });
     let (update_sender, update_receiver) = watch::channel(NetworkUpdate::Waiting);
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
     let mut task = runtime.spawn(async move {

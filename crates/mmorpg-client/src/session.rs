@@ -36,6 +36,10 @@ pub struct PlayerInput {
     pub ability: u8,
     pub ability_uses: u32,
     pub cancels: u32,
+    /// The class and sex wire values to choose. The session resends the
+    /// choice under fresh sequences until a projection confirms a class, so
+    /// a lost datagram cannot leave the character classless.
+    pub class_choice: Option<(u8, u8)>,
 }
 
 #[derive(Clone)]
@@ -56,6 +60,7 @@ pub enum NetworkUpdate {
 /// a jump, then a move.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Outgoing {
+    choose: Option<(u8, u8)>,
     select: Option<Option<EntityRef>>,
     attack: Option<bool>,
     release: bool,
@@ -67,6 +72,9 @@ struct Outgoing {
 
 impl Outgoing {
     fn deliver(self, session: &mut ClientSession) -> Result<(), SessionError> {
+        if let Some((class, sex)) = self.choose {
+            session.send_choose_class(class, sex)?;
+        }
         if let Some(target) = self.select {
             session.send_select_target(target)?;
         }
@@ -125,6 +133,8 @@ struct Outbox {
     sent: Option<(i8, i8, u16)>,
     sent_at: Instant,
     presses: Presses,
+    /// A projection showed the character with a class.
+    class_confirmed: bool,
 }
 
 impl Outbox {
@@ -133,7 +143,14 @@ impl Outbox {
             sent: None,
             sent_at: now,
             presses: Presses::of(input),
+            class_confirmed: false,
         }
+    }
+
+    /// Reads a received projection: once it shows a class, the choice is
+    /// never sent again, also after a reconnect (the zone keeps it).
+    fn observe(&mut self, snapshot: &ZoneSnapshot) {
+        self.class_confirmed |= snapshot.viewer.class.is_some();
     }
 
     fn movement(&mut self, input: PlayerInput, now: Instant) -> (i8, i8, u16) {
@@ -159,6 +176,8 @@ impl Outbox {
             facing_changed && now.saturating_duration_since(self.sent_at) >= FACING_INTERVAL;
         let movement = (intent_changed || facing_due).then(|| self.movement(input, now));
         Outgoing {
+            // The heartbeat alone retries the class choice.
+            choose: None,
             select: (pressed.selections != handled.selections).then_some(input.target),
             attack: (pressed.attack_requests != handled.attack_requests).then_some(input.attack),
             release: pressed.releases != handled.releases,
@@ -169,10 +188,12 @@ impl Outbox {
         }
     }
 
-    /// Periodic resend of the current intent; pending presses are left to
-    /// [`Outbox::changes`], so none is ever sent twice.
+    /// Periodic resend of the current intent and of an unconfirmed class
+    /// choice; pending presses are left to [`Outbox::changes`], so none is
+    /// ever sent twice.
     fn heartbeat(&mut self, input: PlayerInput, now: Instant) -> Outgoing {
         Outgoing {
+            choose: input.class_choice.filter(|_| !self.class_confirmed),
             movement: Some(self.movement(input, now)),
             ..Outgoing::default()
         }
@@ -222,6 +243,7 @@ pub async fn run_session(
             snapshot = session.receive_snapshot() => match snapshot {
                 Ok(snapshot) => {
                     if last_tick.is_none_or(|tick| snapshot.tick > tick) {
+                        outbox.observe(&snapshot);
                         last_tick = Some(snapshot.tick);
                         last_snapshot = Instant::now();
                         publish(updates, &session, snapshot);
@@ -246,6 +268,7 @@ pub async fn run_session(
                 _ = &mut shutdown => return Ok(()),
                 snapshot = session.reconnect() => snapshot?,
             };
+            outbox.observe(&snapshot);
             last_tick = Some(snapshot.tick);
             last_snapshot = Instant::now();
             publish(updates, &session, snapshot);
@@ -446,6 +469,64 @@ mod tests {
             outbox.changes(held(1, 0, 600, 0), start + 5 * TICK),
             only_move(1, 0, 600)
         );
+    }
+
+    #[test]
+    fn the_class_choice_repeats_with_every_heartbeat_until_a_projection_confirms_it() {
+        use mmorpg_core::{ClassChoice, PlayerClass, Sex, ZoneId};
+        let now = Instant::now();
+        let input = PlayerInput {
+            class_choice: Some((2, 0)),
+            ..PlayerInput::default()
+        };
+        let mut outbox = Outbox::new(input, now);
+        let expected = Outgoing {
+            choose: Some((2, 0)),
+            ..only_move(0, 0, 0)
+        };
+        // A lost datagram is retried: each heartbeat sends it again, and
+        // input changes never carry it.
+        assert_eq!(outbox.heartbeat(input, now), expected);
+        assert_eq!(outbox.heartbeat(input, now + TICK), expected);
+        assert_eq!(
+            outbox
+                .changes(PlayerInput { jumps: 1, ..input }, now)
+                .choose,
+            None
+        );
+        let mut snapshot = mmorpg_core::ZoneSnapshot {
+            content_revision: 6,
+            acknowledged_sequence: 1,
+            viewer_id: 1,
+            schema_version: mmorpg_core::SNAPSHOT_SCHEMA_VERSION,
+            zone_id: ZoneId::new(1),
+            tick: 1,
+            viewer: mmorpg_core::ViewerState::default(),
+            cooldowns: Vec::new(),
+            auras: Vec::new(),
+            target_of_target: None,
+            target_detail: mmorpg_core::TargetDetail::default(),
+            inventory_revision: 1,
+            inventory: None,
+            loot: None,
+            events: Vec::new(),
+            entities: Vec::new(),
+        };
+        outbox.observe(&snapshot);
+        assert_eq!(
+            outbox.heartbeat(input, now + 2 * TICK),
+            expected,
+            "still classless"
+        );
+        snapshot.viewer.class = Some(ClassChoice {
+            class: PlayerClass::Arcanist,
+            sex: Sex::Female,
+        });
+        outbox.observe(&snapshot);
+        assert_eq!(outbox.heartbeat(input, now + 3 * TICK), only_move(0, 0, 0));
+        // A reconnect keeps the confirmation: the zone keeps the class.
+        outbox.resume(input);
+        assert_eq!(outbox.heartbeat(input, now + 4 * TICK), only_move(0, 0, 0));
     }
 
     #[test]
