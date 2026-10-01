@@ -9,6 +9,12 @@ export const RELIEF_GRID = { originXzUnits: [-3500, -1300], stepUnits: 50, colum
 const GLYPHS: Readonly<Record<string, number>> = { ".": 0, "1": 64, "2": 128, "3": 192, "X": 255 };
 const MEDIA = "application/vnd.moritzbrantner.rgba8+json";
 
+function rustField(heights: readonly number[]): Uint8Array {
+  const rows = Array.from({ length: RELIEF_GRID.rows }, (_, row) =>
+    `        ${heights.slice(row * RELIEF_GRID.columns, (row + 1) * RELIEF_GRID.columns).join(", ")},`);
+  return Buffer.from(`HeightField {\n    origin: [${RELIEF_GRID.originXzUnits.join(", ")}],\n    step: ${RELIEF_GRID.stepUnits},\n    columns: ${RELIEF_GRID.columns},\n    rows: ${RELIEF_GRID.rows},\n    heights: &[\n${rows.join("\n")}\n    ],\n}\n`);
+}
+
 export function reliefMask(bytes: Uint8Array): Uint8Array {
   const lines = Buffer.from(bytes).toString("utf8").split("\n");
   if (lines.pop() !== "" || lines.length !== RELIEF_GRID.rows || lines.some((line) => line.length !== RELIEF_GRID.columns || /[^.123X]/.test(line))) {
@@ -105,6 +111,7 @@ export async function buildReliefPackage(checkout: string, directory = RELIEF_PA
     const outputs = new Map<string, Uint8Array>([
       ["source.rgba8.json", sourceBytes], ["flatten.rgba8.json", maskBytes], ["flattened.rgba8.json", outputBytes],
       ["flattened.heights.json", Buffer.from(`${JSON.stringify({ schemaVersion: 1, ...RELIEF_GRID, heights: flattened })}\n`)],
+      ["source.heights.rs", rustField(heights)], ["flattened.heights.rs", rustField(flattened)],
     ]);
     const consumerAdapter = { source: "web/scripts/relief-package.ts", sha256: sha256(await readFile(new URL("./relief-package.ts", import.meta.url))),
       dependencies: { "web/scripts/asset-operation-api.ts": sha256(await readFile(new URL("./asset-operation-api.ts", import.meta.url))),
@@ -140,14 +147,16 @@ async function replaceReliefOutputs(directory: string, outputs: Map<string, Uint
   try {
     for (const [name, bytes] of outputs) {
       const filename = path.join(directory, name);
-      const previous = await readFile(filename);
-      if (previous.equals(Buffer.from(bytes))) {
+      const previous = await existingOutput(filename);
+      if (previous?.equals(Buffer.from(bytes))) {
         continue;
       }
       const staged = path.join(staging, name);
       await writeFile(staged, bytes);
       assert.deepEqual(await readFile(staged), Buffer.from(bytes), "staged package bytes must validate before replacement");
-      await writeFile(path.join(staging, `${name}.previous`), previous);
+      if (previous) {
+        await writeFile(path.join(staging, `${name}.previous`), previous);
+      }
       changed.push(name);
     }
     const replaced: string[] = [];
@@ -159,11 +168,27 @@ async function replaceReliefOutputs(directory: string, outputs: Map<string, Uint
       }
     } catch (error) {
       for (const name of replaced.reverse()) {
-        await rename(path.join(staging, `${name}.previous`), path.join(directory, name));
+        const previous = path.join(staging, `${name}.previous`);
+        if (await existingOutput(previous)) {
+          await rename(previous, path.join(directory, name));
+        } else {
+          await rm(path.join(directory, name));
+        }
       }
       throw error;
     }
   } finally {
     await rm(staging, { recursive: true, force: true });
+  }
+}
+
+async function existingOutput(filename: string): Promise<Buffer | undefined> {
+  try {
+    return await readFile(filename);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
   }
 }

@@ -18,7 +18,7 @@
   },
   "consumerAdapter": {
     "source": "web/scripts/relief-package.ts",
-    "sha256": "9dc772e7ac5921a3da7d94b2f63ab88a7f95782d32a2330c1dfa3055c8d2de02",
+    "sha256": "afcc7f272f3735a84576ba7ed6d245e3c16ecac2fe967bf9728a3c55fb290137",
     "dependencies": {
       "web/scripts/asset-operation-api.ts": "1b5093ed9ea2a09b278259b746d96dc8f431a08cfbb71afcdc50b182fb488cbd",
       "web/scripts/asset-source-checkout.ts": "10cf14bd62e5766697b057043bb31b7021b0db4539e180b68eddb6a2c18d3780"
@@ -152,6 +152,14 @@
     "flattened.heights.json": {
       "sha256": "1f8ed6b6ad59b109d82dd1d503a0915f32af61199491f21c30418c6c1f1b9fb1",
       "byteLength": 41375
+    },
+    "source.heights.rs": {
+      "sha256": "ceeed88bc604521fcf52b96e66594e62bf76b8fc9395cdb5c2e9a53ae46a5d84",
+      "byteLength": 62466
+    },
+    "flattened.heights.rs": {
+      "sha256": "9fbe7818f4854dbe711bc8d7ab90d6e727bb30b2c247fda1e5af11e11783dc29",
+      "byteLength": 61162
     }
   },
   "evidence": {

@@ -587,6 +587,64 @@ mod tests {
 
     #[test]
     #[ignore = "requires a GPU; scripts/smoke-native.py runs this explicitly"]
+    fn authored_outpost_relief_approaches_render_on_the_native_gpu() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let scenery = greyhaven_vale_scenery();
+            for [x, z] in [
+                [1_050, 650],
+                [250, 950],
+                [-850, 1_050],
+                [-1_100, 2_950],
+                [1_050, 2_950],
+            ] {
+                assert_eq!(scenery.height_at(x, z), 0);
+            }
+            let world = WorldScene::new(&scenery);
+            for (name, view) in [
+                (
+                    "relief",
+                    CameraView {
+                        eye: [20.0, 8.0, 39.0],
+                        target: [0.0, 0.0, 18.0],
+                    },
+                ),
+                (
+                    "hub",
+                    CameraView {
+                        eye: [5.0, 8.5, 31.0],
+                        target: [-14.0, 3.0, 4.0],
+                    },
+                ),
+            ] {
+                let pixels = offscreen_pixels(&world, &[], view).await.unwrap();
+                let colours: std::collections::BTreeSet<_> = pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+                    .collect();
+                assert!(colours.len() > 100, "{name} must show the rendered Outpost");
+                save_smoke_frame(&format!("outpost-relief-{name}.ppm"), &pixels);
+                println!("authored Outpost {name} frame: {} colours", colours.len());
+            }
+        });
+    }
+
+    fn save_smoke_frame(name: &str, pixels: &[u8]) {
+        if let Some(directory) = std::env::var_os("MMORPG_SMOKE_FRAME_DIR") {
+            let directory = std::path::PathBuf::from(directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            let mut ppm = b"P6\n640 360\n255\n".to_vec();
+            for pixel in pixels.as_chunks::<4>().0 {
+                ppm.extend_from_slice(&pixel[..3]);
+            }
+            std::fs::write(directory.join(name), ppm).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a GPU; scripts/smoke-native.py runs this explicitly"]
     fn projected_health_bars_change_gpu_pixels() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
@@ -621,19 +679,7 @@ mod tests {
                 let pixels = offscreen_pixels(&world, &presentation.scene(now, view), view)
                     .await
                     .unwrap();
-                if let Some(directory) = std::env::var_os("MMORPG_SMOKE_FRAME_DIR") {
-                    let directory = std::path::PathBuf::from(directory);
-                    std::fs::create_dir_all(&directory).unwrap();
-                    let mut ppm = b"P6\n640 360\n255\n".to_vec();
-                    for pixel in pixels.as_chunks::<4>().0 {
-                        ppm.extend_from_slice(&pixel[..3]);
-                    }
-                    std::fs::write(
-                        directory.join(if damaged { "damaged.ppm" } else { "full.ppm" }),
-                        ppm,
-                    )
-                    .unwrap();
-                }
+                save_smoke_frame(if damaged { "damaged.ppm" } else { "full.ppm" }, &pixels);
                 frames.push(pixels);
             }
             let changed = frames[0]

@@ -70,6 +70,10 @@ def main():
                     "cargo", "test", "--locked", "-p", "mmorpg-client", "--lib",
                     "projected_health_bars_change_gpu_pixels", "--", "--ignored", "--nocapture",
                 ], cwd=root, check=True, timeout=120)
+                subprocess.run([
+                    "cargo", "test", "--locked", "-p", "mmorpg-client", "--lib",
+                    "authored_outpost_relief_approaches_render_on_the_native_gpu", "--", "--ignored", "--nocapture",
+                ], cwd=root, check=True, timeout=120)
                 if args.window:
                     subprocess.run([*command, "--frames", "120"], cwd=root, check=True, timeout=30)
             except BaseException:
