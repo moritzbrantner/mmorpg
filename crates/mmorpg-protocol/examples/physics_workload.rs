@@ -157,6 +157,16 @@ fn measure(
     let mut canonical_bytes = 0;
     let mut checksum = 0xcbf2_9ce4_8422_2325_u64;
     let mut inspected = 0;
+    let mut physics_queries = 0;
+    let mut sweep_preparations = 0;
+    let mut fixed_preparations = 0;
+    let mut fixed_reuses = 0;
+    let mut dynamic_preparations = 0;
+    let mut staging_growths = 0;
+    let mut broad_phase_growths = 0;
+    let mut fixed_cache_peak_bytes = 0;
+    let mut staged_bodies = 0;
+    let mut body_map_rebuilds = 0;
     for tick in 0..TICKS {
         commands(&mut zone, name, moving, tick)?;
         if let Some(reference) = &mut recovered {
@@ -167,6 +177,21 @@ fn measure(
         let start = Instant::now();
         zone.advance_tick()?;
         tick_time += start.elapsed();
+        let work = zone
+            .tick_work()
+            .physics
+            .ok_or("missing physics diagnostics")?
+            .work;
+        physics_queries += work.broad_phase_queries;
+        sweep_preparations += work.sweep_bound_preparations;
+        fixed_preparations += work.fixed_sweep_bound_preparations;
+        fixed_reuses += work.fixed_sweep_bound_reuses;
+        dynamic_preparations += work.dynamic_sweep_bound_preparations;
+        staging_growths += work.staged_state_capacity_growths;
+        broad_phase_growths += work.broad_phase_capacity_growths;
+        fixed_cache_peak_bytes = fixed_cache_peak_bytes.max(work.fixed_bound_cache_capacity_bytes);
+        staged_bodies += work.staged_bodies;
+        body_map_rebuilds += work.body_map_rebuilds;
         inspected += zone.interest_maintenance_stats().units_inspected - before.units_inspected;
         let start = Instant::now();
         let canonical = zone.snapshot()?;
@@ -208,7 +233,7 @@ fn measure(
         trace.flush()?;
     }
     println!(
-        "{{\"schema\":\"mmorpg.physics-workload/v1\",\"workload\":\"{name}\",\"trial\":{trial},\"players\":{count},\"moving_controllers\":{moving},\"completed_ticks\":{TICKS},\"tick_ms\":{},\"projection_ms\":{},\"encoding_ms\":{},\"checkpoint_ms\":{},\"projection_bytes\":{projection_bytes},\"canonical_bytes\":{canonical_bytes},\"trace_fnv1a64\":\"{checksum:016x}\",\"units_inspected_for_maintenance\":{inspected}}}",
+        "{{\"schema\":\"mmorpg.physics-workload/v1\",\"workload\":\"{name}\",\"trial\":{trial},\"players\":{count},\"moving_controllers\":{moving},\"completed_ticks\":{TICKS},\"tick_ms\":{},\"projection_ms\":{},\"encoding_ms\":{},\"checkpoint_ms\":{},\"projection_bytes\":{projection_bytes},\"canonical_bytes\":{canonical_bytes},\"trace_fnv1a64\":\"{checksum:016x}\",\"units_inspected_for_maintenance\":{inspected},\"physics_queries\":{physics_queries},\"sweep_bound_preparations\":{sweep_preparations},\"fixed_bound_preparations\":{fixed_preparations},\"fixed_bound_reuses\":{fixed_reuses},\"dynamic_bound_preparations\":{dynamic_preparations},\"staged_bodies\":{staged_bodies},\"body_map_rebuilds\":{body_map_rebuilds},\"staging_capacity_growths\":{staging_growths},\"broad_phase_capacity_growths\":{broad_phase_growths},\"fixed_cache_peak_payload_bytes\":{fixed_cache_peak_bytes}}}",
         tick_time.as_secs_f64() * 1_000.0,
         projection_time.as_secs_f64() * 1_000.0,
         encoding_time.as_secs_f64() * 1_000.0,

@@ -43,7 +43,7 @@ Fingerprint: Rust 1.98.1, `x86_64-unknown-linux-gnu`, release profile, empty `RU
 
 ## Maintenance pin refresh (#61)
 
-The consumer now pins physics-engine
+PR #62 advanced the consumer pin to physics-engine
 `16833b766629c354a6a5925b991eeb74208a242d`. This separately adopts retained
 translational staging capacity (#229), broad-phase vector capacity (#230) and
 dependency-valid fixed bounds (#249), after the first maintenance adoption above.
@@ -103,3 +103,85 @@ unchanged headless bot/control-plane scenarios, native GPU readback/session resu
 journeys. The isolated Python runner used Playwright 1.57.0's Ubuntu 24.04 Chromium
 build on this Ubuntu 26.04 host (explicit platform selection because that pinned
 runner does not recognize Ubuntu 26.04). No acceptance test was skipped.
+
+## Additional engine work and recovery evidence (#70)
+
+Consumer baseline `676fab2632c209bdaffc9ac0cdce376acb32f484` pins
+`0baf3411419fc250273caec24d64654cb30c28ec`; the original candidate measurements use
+`1d62f70e3588b80e51746ed7d05bb8bbd0bfbfdb`, an ancestor of the retained
+`16833b766629c354a6a5925b991eeb74208a242d` pin from PR #62. Both contain the
+same translational maintenance implementation; subsequent commits change other
+solver paths. This PR retains the newer pin and lock from main. MMORPG still uses the
+translational `World`. Upstream #252/#255/#256's parked/contact wake changes belong
+to other solver paths and do not establish MMORPG sleep/wake or f64 adoption.
+
+The existing workload now aggregates engine-owned `StepStats.work` through
+`ZoneSimulation::tick_work().physics`. These latest-call diagnostics reset
+on construction/recovery and at the start of a tick attempt; they never enter
+canonical state or player projections. Work is accumulated immediately around
+primary-zone ticks, so a reconstruction cannot erase earlier measurements. The
+fixed cache metric is peak vector payload, not RSS or full-world memory.
+
+[Raw observations and trace SHA-256 evidence](physics-adoption-work-2026-10-01.json)
+cover nine trials per workload per pin, each completing 120 ticks. Both release
+binaries were prebuilt. Two alternating-order blocks plus a third block were run;
+the third candidate output and candidate trace capture were repeated after truncated
+files, as recorded in the fingerprint. All 24 complete canonical/projection binary
+traces match byte for byte. Across every trial, publication bytes, recovery checks,
+interest maintenance, query counts and staged-body counts match. No scenario or
+protocol golden was regenerated. Successful steps reconstruct zero body maps on
+both pins.
+
+Baseline fixed preparation is derived from each engine report's
+`(body_count - dynamic_bodies) * broad_phase_queries`: that implementation prepares
+every fixed body per actual query. This includes fixed NPCs, unlike counting only
+content colliders. Candidate preparations and reuse are direct upstream counters.
+Baseline capacity-growth/reuse counters are unavailable and are not invented.
+
+| Workload | Fixed preparations before | After | Reused | Before tick ms | After tick ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| quiet-128 | 6 | 6 | 0 | 1.360 | 1.402 |
+| quiet-512 | 6 | 6 | 0 | 7.669 | 7.358 |
+| sparse-512-k1 | 1,440 | 6 | 1,434 | 27.922 | 28.608 |
+| sparse-512-k8 | 1,440 | 6 | 1,434 | 27.767 | 26.912 |
+| supported-512 | 68,292 | 252 | 68,040 | 54.947 | 50.700 |
+| crowded-64 | 2,310 | 6 | 2,304 | 3.432 | 3.471 |
+| mutation-recovery-32 | 1,440 | 12 | 1,428 | 0.869 | 0.845 |
+| vale-units-16 | 111,186 | 261 | 110,925 | 18.077 | 17.723 |
+
+Values include bootstrap and measure 120 ticks; timings are advisory medians.
+Supported-512 avoids 99.63% of fixed preparations; Vale units avoid 99.77%.
+Mutation/recovery prepares 12 fixed bounds because the deliberate teleport creates
+a new world; the tick-60 shadow recovery is outside the measured primary world.
+Quiet calls already avoid preparation after bootstrap. All-N active staging,
+dynamic-bound preparation, sorting and game-owned scans remain. The candidate
+retains 28,224 bytes of fixed-cache payload for supported-512 and 29,232 for Vale
+units, including nine fixed NPCs. Warmed equal-capacity calls avoid staging and
+broad-phase growth; the focused consumer test verifies reuse plus cold-cache recovery
+with unchanged canonical continuation.
+
+Validation: workspace format, Clippy, all-feature tests and build; core/protocol/WASM
+wasm32 build; all bot and control-plane scenarios; native host/client GPU smoke;
+148 Bun tests, TypeScript/Vite production build and all nine real Chromium smoke
+journeys. Native smoke rendered 2,320 colors and resumed connection epoch 2.
+The first release WASM build emitted an empty object file; a rebuild and subsequent
+default build/tests passed without source or gate changes. Chromium 143.0.7499.4
+headless shell came from the official Chrome-for-Testing mirror because the
+Playwright CDN returned unavailable HTML. Native GPU uses Mesa software Vulkan.
+
+Fingerprint: Rust 1.98.1, x86_64-unknown-linux-gnu, release/default features and empty
+RUSTFLAGS, workload v1, committed locks; shared Linux AMD EPYC 9V74 workspace.
+Debug checks disable debug symbols/incremental caches. Installed conventions were
+retained unchanged; live central policy was inspected at `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
+This completes another semantics-preserving adoption slice, not MMORPG #46's solver migration.
+
+Integration preserves main PR #60 combat workload diagnostics and reuses its existing
+`ZoneTickWork.physics` surface. All 24 traces and deterministic work counts were
+rechecked after integration; the older baseline accessor was measurement-only.
+
+After integration with PR #62, the retained `16833b7` pin passed workspace
+format/Clippy/all-feature tests/build and core/protocol/WASM compilation. Three
+fresh trials per workload reproduce all 24 PR #62 traces byte for byte and match
+every original candidate non-timing work field. These rows are retained under
+`retained_pin_verification` in the raw evidence file; original measurements
+continue to identify their original engine revision.
