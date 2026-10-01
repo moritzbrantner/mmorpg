@@ -4,14 +4,15 @@ import type { ContentCatalog } from "./catalog";
 import { UnitAnimator, poseFor, type LocomotionState } from "./character-animation";
 import { archerNodes } from "./archer-asset";
 import { OTHER_PLAYER_LOOK, humanoidHeadwearNodes, humanoidNodes, humanoidStance, type HumanoidLook, type UnitPlacement } from "./humanoid";
-import { PLACEHOLDER_BODY_MODEL } from "./units/creature-bodies";
+import { CREATURE_MODEL } from "./units/creature-models";
 
 /**
  * Unit rendering by projected entity. A registry maps each entity kind to a
  * model, and the model reads the whole projected entity, so it can pick a
  * body by appearance (template ID) and stand on its own half height. Players
- * are animated humanoids (Rangers use the packaged archer mesh); creatures and NPCs are placeholder bodies
- * (`units/creature-bodies.ts`) until they get models of their own.
+ * are animated humanoids (Rangers use the packaged archer mesh); creatures and NPCs get a
+ * procedural model by family or role (`units/creature-models.ts`), falling back to the
+ * placeholder box of `units/creature-bodies.ts` for unknown templates.
  */
 export type { UnitPlacement } from "./humanoid";
 
@@ -92,8 +93,8 @@ export const PLAYER_MODEL: UnitModel = {
 
 export const UNIT_MODELS: UnitModels = {
   player: PLAYER_MODEL,
-  creature: PLACEHOLDER_BODY_MODEL,
-  npc: PLACEHOLDER_BODY_MODEL,
+  creature: CREATURE_MODEL,
+  npc: CREATURE_MODEL,
 };
 
 /** The model that draws a projected entity. */
