@@ -157,7 +157,9 @@ export function decodeCatalog(json: string): ContentCatalog {
     const record = object(value, ["id", "name"], `area ${index}`);
     return { id: int(record.id, `area ${index} id`, 0, 0xffff), name: text(record.name, `area ${index} name`) };
   });
-  if (root.itemCatalogRevision !== "1") fail("unsupported item catalog revision");
+  if (root.itemCatalogRevision !== "1") {
+    fail("unsupported item catalog revision");
+  }
   const items = list(root.items, "items", 256).map((value, index) => {
     const record = object(value, ["id", "name", "maxStack"], `item ${index}`);
     return {

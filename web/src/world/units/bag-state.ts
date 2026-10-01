@@ -18,7 +18,13 @@ export class BagState {
   get feedback(): string { return this.#feedback; }
   get revision(): bigint { return this.#revision; }
   get status(): string {
-    return !this.ready ? "Waiting for your bag…" : this.#dead ? "You cannot move items while dead." : "Select a stack, then its destination.";
+    if (!this.ready) {
+      return "Waiting for your bag…";
+    }
+    if (this.#dead) {
+      return "You cannot move items while dead.";
+    }
+    return "Select a stack, then its destination.";
   }
 
   reset(snapshot: ZoneSnapshot | null = null): void {
@@ -35,7 +41,9 @@ export class BagState {
   update(snapshot: ZoneSnapshot): boolean {
     const identity = `${snapshot.zoneId}:${snapshot.contentRevision}:${snapshot.viewerId}`;
     if ((this.#identity !== null && this.#identity !== identity) || snapshot.tick <= this.#tick ||
-        snapshot.inventoryRevision < this.#revision) return false;
+        snapshot.inventoryRevision < this.#revision) {
+      return false;
+    }
     this.#identity = identity;
     this.#tick = snapshot.tick;
     this.#revision = snapshot.inventoryRevision;
@@ -49,11 +57,21 @@ export class BagState {
       }
     }
     for (const event of snapshot.events) {
-      if (event.kind !== "error") continue;
-      if (event.code === "invalid-inventory-move") this.#feedback = "That bag move was refused. Your items are unchanged.";
-      if (event.code === "inventory-full") this.#feedback = "That stack is full. Your items are unchanged.";
-      if (event.code === "you-are-dead") this.#feedback = "You cannot move items while dead.";
-      if (event.code === "too-many-intents") this.#feedback = "Too many actions. Try the bag move again.";
+      if (event.kind !== "error") {
+        continue;
+      }
+      if (event.code === "invalid-inventory-move") {
+        this.#feedback = "That bag move was refused. Your items are unchanged.";
+      }
+      if (event.code === "inventory-full") {
+        this.#feedback = "That stack is full. Your items are unchanged.";
+      }
+      if (event.code === "you-are-dead") {
+        this.#feedback = "You cannot move items while dead.";
+      }
+      if (event.code === "too-many-intents") {
+        this.#feedback = "Too many actions. Try the bag move again.";
+      }
       if (["invalid-inventory-move", "inventory-full", "you-are-dead", "too-many-intents"].includes(event.code)) {
         this.#sentRevision = null;
       }
@@ -65,7 +83,9 @@ export class BagState {
     const stack = this.#slots?.[source];
     if (!this.canMove || !Number.isInteger(source) || source < 0 || source >= 16 ||
         !Number.isInteger(destination) || destination < 0 || destination >= 16 ||
-        !stack || !Number.isInteger(quantity) || quantity < 1 || quantity > stack.quantity) return null;
+        !stack || !Number.isInteger(quantity) || quantity < 1 || quantity > stack.quantity) {
+      return null;
+    }
     this.#feedback = "Move sent. Waiting for the zone.";
     this.#sentRevision = this.#revision;
     return { kind: "move-item", source, destination, quantity };

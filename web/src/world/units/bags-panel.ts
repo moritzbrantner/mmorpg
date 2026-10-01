@@ -54,19 +54,26 @@ export class BagsPanel {
     this.#selected = null;
     this.#elements.panel.hidden = true;
     this.#elements.toggle.setAttribute("aria-expanded", "false");
-    if (snapshot) this.#state.update(snapshot);
+    if (snapshot) {
+      this.#state.update(snapshot);
+    }
     this.#render();
   }
 
   toggle(): void {
-    if (!this.#elements.panel.hidden) { this.close(); return; }
+    if (!this.#elements.panel.hidden) {
+      this.close();
+      return;
+    }
     this.#elements.panel.hidden = false;
     this.#elements.toggle.setAttribute("aria-expanded", "true");
     this.#elements.close.focus();
   }
 
   close(): boolean {
-    if (this.#elements.panel.hidden) return false;
+    if (this.#elements.panel.hidden) {
+      return false;
+    }
     this.#elements.panel.hidden = true;
     this.#elements.toggle.setAttribute("aria-expanded", "false");
     this.#elements.toggle.focus();
@@ -75,18 +82,26 @@ export class BagsPanel {
 
   update(snapshot: ZoneSnapshot): void {
     const revision = this.#state.revision;
-    if (!this.#state.update(snapshot)) return;
-    if (revision !== this.#state.revision || !this.#state.canMove) this.#selected = null;
+    if (!this.#state.update(snapshot)) {
+      return;
+    }
+    if (revision !== this.#state.revision || !this.#state.canMove) {
+      this.#selected = null;
+    }
     this.#render();
   }
 
   #click(slot: number): void {
-    if (!this.#state.canMove) return;
+    if (!this.#state.canMove) {
+      return;
+    }
     if (this.#selected === slot) {
       this.#selected = null;
     } else if (this.#selected === null) {
       const stack = this.#state.slots?.[slot];
-      if (!stack) return;
+      if (!stack) {
+        return;
+      }
       this.#selected = slot;
       this.#elements.quantity.value = String(stack.quantity);
       this.#elements.quantity.max = String(stack.quantity);
@@ -104,17 +119,31 @@ export class BagsPanel {
 
   #render(): void {
     const { status, feedback, selection, quantity } = this.#elements;
-    if (status.textContent !== this.#state.status) status.textContent = this.#state.status;
-    if (feedback.textContent !== this.#state.feedback) feedback.textContent = this.#state.feedback;
+    if (status.textContent !== this.#state.status) {
+      status.textContent = this.#state.status;
+    }
+    if (feedback.textContent !== this.#state.feedback) {
+      feedback.textContent = this.#state.feedback;
+    }
     quantity.disabled = this.#selected === null || !this.#state.canMove;
     const hint = this.#selected === null ? "Choose an occupied slot." : `Move from slot ${this.#selected + 1}. Choose a quantity and destination.`;
-    if (selection.textContent !== hint) selection.textContent = hint;
+    if (selection.textContent !== hint) {
+      selection.textContent = hint;
+    }
     for (const [slot, button] of this.#buttons.entries()) {
       const stack = this.#state.slots?.[slot];
       const item = stack ? this.#catalog?.items.get(stack.itemId) : null;
-      if (stack && !item) throw new Error("Projected item is missing from the content catalog.");
-      const text = `Slot ${slot + 1} · ${stack ? `${item?.name} × ${stack.quantity}` : this.#state.slots ? "Empty" : "Waiting"}`;
-      if (button.textContent !== text) button.textContent = text;
+      if (stack && !item) {
+        throw new Error("Projected item is missing from the content catalog.");
+      }
+      let content = this.#state.slots ? "Empty" : "Waiting";
+      if (stack) {
+        content = `${item?.name} × ${stack.quantity}`;
+      }
+      const text = `Slot ${slot + 1} · ${content}`;
+      if (button.textContent !== text) {
+        button.textContent = text;
+      }
       button.disabled = !this.#state.canMove;
       button.setAttribute("aria-pressed", String(this.#selected === slot));
     }
