@@ -16,7 +16,7 @@ export const HEALTHY_VIEWER: ViewerState = {
 /** A projection with a healthy viewer, no target and no events. */
 export function testSnapshot(
   fields: Pick<ZoneSnapshot, "zoneId" | "tick" | "contentRevision" | "acknowledgedSequence" | "viewerId" | "entities"> &
-    Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events">>,
+    Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events" | "inventoryRevision" | "inventory">>,
 ): ZoneSnapshot {
-  return { viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [], ...fields };
+  return { inventoryRevision: 1n, inventory: null, viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [], ...fields };
 }

@@ -14,7 +14,8 @@ export type WorldCommand =
   | { kind: "select-target"; target: EntityRef | null }
   | { kind: "start-attack" }
   | { kind: "stop-attack" }
-  | { kind: "release-spirit" };
+  | { kind: "release-spirit" }
+  | { kind: "move-item"; source: number; destination: number; quantity: number };
 
 const COMMAND_WIRE_VERSION = 2;
 const MOVE_TAG = 1;
@@ -23,6 +24,7 @@ const SELECT_TARGET_TAG = 3;
 const START_ATTACK_TAG = 4;
 const STOP_ATTACK_TAG = 5;
 const RELEASE_SPIRIT_TAG = 6;
+const MOVE_ITEM_TAG = 7;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
@@ -45,6 +47,20 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       view.setInt8(2, command.forward);
       view.setInt8(3, command.strafe);
       view.setUint16(4, command.facing);
+      return payload;
+    }
+    case "move-item": {
+      if (![command.source, command.destination].every((slot) => Number.isInteger(slot) && slot >= 0 && slot <= 255)
+        || !Number.isInteger(command.quantity) || command.quantity < 0 || command.quantity > 65_535) {
+        throw new Error("Bag move fields must fit u8 slots and a u16 quantity.");
+      }
+      const payload = new Uint8Array(6);
+      const view = new DataView(payload.buffer);
+      view.setUint8(0, COMMAND_WIRE_VERSION);
+      view.setUint8(1, MOVE_ITEM_TAG);
+      view.setUint8(2, command.source);
+      view.setUint8(3, command.destination);
+      view.setUint16(4, command.quantity);
       return payload;
     }
     case "jump":

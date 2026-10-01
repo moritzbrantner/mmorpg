@@ -11,6 +11,7 @@ use mmorpg_core::{
 };
 
 use crate::ProtocolError;
+use crate::inventory::{decode_inventory, encode_inventory};
 use crate::wire::{
     CANONICAL_SNAPSHOT_SCOPE, decode_common_header, decode_entity_ref, decode_event,
     decode_u8_count, decode_u16_count, encode_common_header, encode_entity_ref, encode_event,
@@ -22,6 +23,7 @@ const SELECT_TARGET_INTENT: u8 = 1;
 const START_ATTACK_INTENT: u8 = 2;
 const STOP_ATTACK_INTENT: u8 = 3;
 const RELEASE_SPIRIT_INTENT: u8 = 4;
+const MOVE_ITEM_INTENT: u8 = 5;
 const ALIVE: u8 = 1;
 const CORPSE: u8 = 2;
 const DESPAWNED: u8 = 3;
@@ -78,6 +80,9 @@ fn encode_player(
     payload.push(u8::from(player.jump_pending));
     payload.extend_from_slice(&player.last_sequence.to_be_bytes());
     payload.extend_from_slice(&player.spawn_slot.to_be_bytes());
+    payload.extend_from_slice(&player.inventory_revision.to_be_bytes());
+    payload.extend_from_slice(&player.inventory_changed_at.to_be_bytes());
+    encode_inventory(payload, &player.inventory);
     let combat = &player.combat;
     payload.push(combat.level);
     payload.extend_from_slice(&combat.experience.to_be_bytes());
@@ -103,6 +108,16 @@ fn encode_player(
             PlayerIntent::StartAttack => (START_ATTACK_INTENT, None),
             PlayerIntent::StopAttack => (STOP_ATTACK_INTENT, None),
             PlayerIntent::ReleaseSpirit => (RELEASE_SPIRIT_INTENT, None),
+            PlayerIntent::MoveItem {
+                source,
+                destination,
+                quantity,
+            } => {
+                payload.extend_from_slice(&[MOVE_ITEM_INTENT, source, destination]);
+                payload.extend_from_slice(&quantity.to_be_bytes());
+                payload.push(0);
+                continue;
+            }
         };
         payload.push(code);
         encode_entity_ref(payload, target);
@@ -221,6 +236,9 @@ fn decode_player(
     };
     let last_sequence = u32::from_be_bytes(take(payload, offset)?);
     let spawn_slot = u16::from_be_bytes(take(payload, offset)?);
+    let inventory_revision = u64::from_be_bytes(take(payload, offset)?);
+    let inventory_changed_at = u64::from_be_bytes(take(payload, offset)?);
+    let inventory = decode_inventory(payload, offset)?;
     let level = read_u8(payload, offset)?;
     let experience = u32::from_be_bytes(take(payload, offset)?);
     let health = u32::from_be_bytes(take(payload, offset)?);
@@ -239,6 +257,18 @@ fn decode_player(
     let mut intents = Vec::with_capacity(intent_count);
     for _ in 0..intent_count {
         let code = read_u8(payload, offset)?;
+        if code == MOVE_ITEM_INTENT {
+            let [source, destination, high, low, reserved] = take(payload, offset)?;
+            if reserved != 0 {
+                return Err(ProtocolError::new("malformed pending inventory intent"));
+            }
+            intents.push(PlayerIntent::MoveItem {
+                source,
+                destination,
+                quantity: u16::from_be_bytes([high, low]),
+            });
+            continue;
+        }
         let target = decode_entity_ref(payload, offset)?;
         intents.push(match (code, target) {
             (SELECT_TARGET_INTENT, target) => PlayerIntent::SelectTarget(target),
@@ -269,6 +299,9 @@ fn decode_player(
         jump_pending,
         last_sequence,
         spawn_slot,
+        inventory,
+        inventory_revision,
+        inventory_changed_at,
         combat: CanonicalPlayerCombat {
             level,
             experience,
@@ -391,6 +424,14 @@ mod tests {
                     jump_pending: true,
                     last_sequence: 81,
                     spawn_slot: 3,
+                    inventory: {
+                        let mut bag = mmorpg_core::Inventory::default();
+                        bag.insert(mmorpg_core::ItemId::new(1), 27).unwrap();
+                        bag.insert(mmorpg_core::ItemId::new(2), 2).unwrap();
+                        bag
+                    },
+                    inventory_revision: 4,
+                    inventory_changed_at: 88,
                     combat: CanonicalPlayerCombat {
                         experience: 63,
                         level: 2,
@@ -407,6 +448,11 @@ mod tests {
                             PlayerIntent::StartAttack,
                             PlayerIntent::StopAttack,
                             PlayerIntent::ReleaseSpirit,
+                            PlayerIntent::MoveItem {
+                                source: 1,
+                                destination: 15,
+                                quantity: 4,
+                            },
                         ],
                         // The decoder checks structure; core checks that only a full queue drops.
                         intents_dropped: true,
@@ -434,6 +480,9 @@ mod tests {
                     jump_pending: false,
                     last_sequence: 0,
                     spawn_slot: 0,
+                    inventory: mmorpg_core::Inventory::default(),
+                    inventory_revision: 1,
+                    inventory_changed_at: 0,
                     combat: CanonicalPlayerCombat::default(),
                 },
             ],
@@ -546,7 +595,7 @@ mod tests {
         let encoded = encode_canonical_snapshot(&snapshot()).unwrap();
         // Player 7's auto-attack flag follows its target reference.
         let player = 16 + 24 + 2;
-        let auto_attack = player + 39 + 1 + 4 + 4 + 5;
+        let auto_attack = player + 39 + 80 + 1 + 4 + 4 + 5;
         let intents = auto_attack + 1 + 8;
         let mut cases = vec![
             (auto_attack, 2, "boolean field must be 0 or 1"),
@@ -555,8 +604,13 @@ mod tests {
         ];
         // The third intent (StartAttack) carries no target.
         cases.push((intents + 1 + 2 * 6 + 1, 2, "malformed pending intent"));
-        // The dropped-intent flag follows the five intents.
-        cases.push((intents + 1 + 5 * 6, 2, "boolean field must be 0 or 1"));
+        // The dropped-intent flag follows the six intents.
+        cases.push((intents + 1 + 6 * 6, 2, "boolean field must be 0 or 1"));
+        cases.push((
+            intents + 1 + 5 * 6 + 5,
+            1,
+            "malformed pending inventory intent",
+        ));
         for (offset, value, message) in cases {
             let mut invalid = encoded.clone();
             invalid[offset] = value;

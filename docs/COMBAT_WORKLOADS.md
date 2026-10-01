@@ -105,3 +105,24 @@ idle-16 3,204,720 → 3,250,800; fights-8 981,271 → 1,004,311; fights-32
 5,406,543 → 5,498,703; crowded-64 24,499,402 → 24,671,752. The crowded
 fixture packs 570 fewer lower-priority entity records under the unchanged budget;
 its events and work counts are retained. No physics or gameplay-work ceiling rises.
+
+
+Snapshot v7 adds nine bytes per projection for inventory revision/presence and a
+64-byte bag sheet on admission, changes and every tenth tick. These fixtures do
+not move bags, so 36 sheets are published per recipient over 360 ticks. The byte
+ceiling adds precisely this deterministic overhead; every AI, physics,
+maintenance, candidate and combat-event count remains unchanged from v6. The
+content identity changes to Greyhaven revision 4 (catalog/grant included), while
+its declared RNG seed preserves the revision-3 random stream.
+
+| Workload | v6 projection bytes | v7 projection bytes | Largest v7 bytes |
+| --- | ---: | ---: | ---: |
+| vale-idle-16 | 3,250,800 | 3,339,504 | 640 |
+| vale-fights-8 | 1,004,311 | 1,048,663 | 535 |
+| vale-fights-32 | 5,498,703 | 5,676,111 | 745 |
+| vale-crowded-fights-64 | 24,671,752 | 24,409,546 | 1,074 |
+
+The crowded fixture packs 29,382 fewer lower-priority entities because bag sheets
+share the unchanged 1,077-byte budget. Feedback records are retained. Recovery,
+packed/reference parity and a second cold run still compare all 360 ticks; the
+new inventory-resume scenario separately covers bag mutation and reconnect.

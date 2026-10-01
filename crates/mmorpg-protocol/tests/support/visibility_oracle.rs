@@ -53,6 +53,10 @@ pub fn exhaustive_projection(
         content_revision: canonical.content_revision,
         acknowledged_sequence: observer.last_sequence,
         viewer_id: observer.player_id,
+        inventory_revision: observer.inventory_revision,
+        inventory: (canonical.tick == observer.inventory_changed_at
+            || canonical.tick.is_multiple_of(10))
+        .then(|| observer.inventory.clone()),
         schema_version: canonical.schema_version,
         zone_id: canonical.zone_id,
         tick: canonical.tick,

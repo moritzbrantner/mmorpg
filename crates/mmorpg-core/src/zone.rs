@@ -78,6 +78,9 @@ pub(crate) struct PlayerState {
     pub(crate) spawn_slot: u16,
     pub(crate) level: u8,
     pub(crate) experience: u32,
+    pub(crate) inventory: crate::Inventory,
+    pub(crate) inventory_revision: u64,
+    pub(crate) inventory_changed_at: u64,
     /// Zero means dead.
     pub(crate) health: u32,
     pub(crate) target: Option<EntityRef>,
@@ -99,7 +102,7 @@ pub(crate) struct PlayerState {
 }
 
 impl PlayerState {
-    pub(crate) fn new(spawn_slot: u16) -> Self {
+    pub(crate) fn new(spawn_slot: u16, tick: u64) -> Self {
         Self {
             facing: 0,
             forward: Axis::Zero,
@@ -109,6 +112,9 @@ impl PlayerState {
             spawn_slot,
             level: PLAYER_START_LEVEL,
             experience: 0,
+            inventory: crate::Inventory::starter(),
+            inventory_revision: 1,
+            inventory_changed_at: tick,
             health: player_max_health(PLAYER_START_LEVEL),
             target: None,
             auto_attack: false,
@@ -224,7 +230,7 @@ impl ZoneSimulation {
             zone_id,
             tick: 0,
             world,
-            rng: ZoneRng::seeded(content.fingerprint(), zone_id),
+            rng: ZoneRng::seeded(content.rng_seed(), zone_id),
             content,
             players: BTreeMap::new(),
             creatures: BTreeMap::new(),
@@ -295,7 +301,8 @@ impl ZoneSimulation {
 
         self.interest.insert(entity, position.x, position.z);
         self.interest_work.bucket_inserts += 1;
-        self.players.insert(player_id, PlayerState::new(spawn_slot));
+        self.players
+            .insert(player_id, PlayerState::new(spawn_slot, self.tick));
         Ok(())
     }
 
@@ -368,6 +375,15 @@ impl ZoneSimulation {
             ZoneCommand::StartAttack => Some(PlayerIntent::StartAttack),
             ZoneCommand::StopAttack => Some(PlayerIntent::StopAttack),
             ZoneCommand::ReleaseSpirit => Some(PlayerIntent::ReleaseSpirit),
+            ZoneCommand::MoveItem {
+                source,
+                destination,
+                quantity,
+            } => Some(PlayerIntent::MoveItem {
+                source,
+                destination,
+                quantity,
+            }),
         };
         if let Some(intent) = intent {
             if player.intents.len() < MAX_PENDING_INTENTS {

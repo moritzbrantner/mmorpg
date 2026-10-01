@@ -1,4 +1,4 @@
-//! Greyhaven Vale unit content (revision 3): creature templates, spawns,
+//! Greyhaven Vale unit content (revision 4): creature templates, spawns,
 //! NPCs and graveyard follow the design contract and stay clear of geometry,
 //! of each other and of the hub spawn plaza.
 use std::collections::BTreeMap;
@@ -9,14 +9,15 @@ use mmorpg_core::{
     NpcRole, ZoneCommand, ZoneId, ZoneSimulation,
 };
 
-/// Pins every content table of revision 3. Changing creatures, NPCs,
+/// Pins every content table of revision 4. Changing creatures, NPCs,
 /// colliders or areas requires a new revision and a new recorded value.
-const FINGERPRINT: u64 = 0x3cbc_808b_be89_b29c;
+const FINGERPRINT: u64 = 0x5738_a86d_e795_e940;
 
 #[test]
 fn the_content_identity_is_pinned() {
     let content = greyhaven_vale::content();
-    assert_eq!(content.revision(), 3);
+    assert_eq!(content.revision(), 4);
+    assert_eq!(content.rng_seed(), 0x3cbc_808b_be89_b29c);
     assert_eq!(
         content.definition(),
         &greyhaven_vale::greyhaven_vale_definition()

@@ -301,6 +301,20 @@ impl ClientSession {
         self.send_command(ZoneCommand::ReleaseSpirit)
     }
 
+    /// Queues a move within the player's own authoritative bag.
+    pub fn send_move_item(
+        &mut self,
+        source: u8,
+        destination: u8,
+        quantity: u16,
+    ) -> Result<(), SessionError> {
+        self.send_command(ZoneCommand::MoveItem {
+            source,
+            destination,
+            quantity,
+        })
+    }
+
     fn send_command(&mut self, command: ZoneCommand) -> Result<(), SessionError> {
         let sequence = self
             .sequence

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodeSnapshot, findEntity, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
 import { NO_FLAGS, playerEntity, testSnapshot } from "./support/snapshots.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v6.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v7.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
 const player = (entityId, x, facing = 0) => playerEntity(entityId, [x, 90, 0], [21, 0, 0], facing);
 const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapshot({
@@ -13,11 +13,30 @@ const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapsh
 const VIEWER = { kind: "player", id: 7 };
 const WOLF = { kind: "creature", id: 108 };
 /** Byte offsets of the fixture's sections (docs/PROTOCOL.md). */
-const EVENTS = 60;
+const EVENTS = 133;
 const ENTITY_COUNT = EVENTS + 1 + 7 * 14;
 const FIRST_ENTITY = ENTITY_COUNT + 2;
 
 describe("Rust/browser snapshot contract", () => {
+  test("validates bag slots, sheet presence and revisions, including the legacy v6 fixture", () => {
+    const legacy = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v6.hex", import.meta.url), "utf8").trim();
+    expect(() => decodeSnapshot(Uint8Array.from(Buffer.from(legacy, "hex")))).toThrow("version");
+    const zeroRevision = fixture.slice();
+    zeroRevision.fill(0, 60, 68);
+    expect(() => decodeSnapshot(zeroRevision)).toThrow("revision");
+    const invalidFlag = fixture.slice();
+    invalidFlag[68] = 2;
+    expect(() => decodeSnapshot(invalidFlag)).toThrow("Reserved");
+    for (const [slot, item, quantity] of [[0, 0, 3], [0, 3, 1], [0, 1, 0], [0, 1, 21], [1, 2, 2]]) {
+      const bytes = fixture.slice();
+      const view = new DataView(bytes.buffer);
+      view.setUint16(69 + slot * 4, item);
+      view.setUint16(71 + slot * 4, quantity);
+      expect(() => decodeSnapshot(bytes)).toThrow("inventory stack");
+    }
+    const omitted = new Uint8Array([...fixture.slice(0, 68), 0, ...fixture.slice(133)]);
+    expect(decodeSnapshot(omitted)).toMatchObject({ inventoryRevision: 9n, inventory: null });
+  });
   test("rejects invalid progression and the actual legacy v5 fixture", () => {
     const legacy = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v5.hex", import.meta.url), "utf8").trim();
     expect(() => decodeSnapshot(Uint8Array.from(Buffer.from(legacy, "hex")))).toThrow("version");
@@ -31,11 +50,13 @@ describe("Rust/browser snapshot contract", () => {
     }
   });
   test("decodes the same golden bytes as the Rust encoder", () => {
-    expect(fixture.length).toBe(63 + 7 * 14 + 4 * 21);
+    expect(fixture.length).toBe(72 + 64 + 7 * 14 + 4 * 21);
     expect(decodeSnapshot(fixture)).toEqual({
-      zoneId: 42, tick: 99n, contentRevision: 3n, acknowledgedSequence: 81, viewerId: 7,
+      zoneId: 42, tick: 99n, contentRevision: 4n, acknowledgedSequence: 81, viewerId: 7,
       viewer: { experience: 37, experienceToNextLevel: 100, health: 38, maxHealth: 50, level: 1, dead: false, inCombat: true, autoAttacking: true, target: WOLF },
       targetOfTarget: VIEWER,
+      inventoryRevision: 9n,
+      inventory: [{ itemId: 1, quantity: 3 }, { itemId: 2, quantity: 1 }, ...Array(13).fill(null), { itemId: 1, quantity: 20 }],
       events: [
         { kind: "damage-dealt", source: VIEWER, target: WOLF, amount: 7, critical: true },
         { kind: "damage-taken", source: WOLF, target: VIEWER, amount: 3, critical: false },
@@ -75,7 +96,7 @@ describe("Rust/browser snapshot contract", () => {
   test("decodes every error code of the Rust wire in order", () => {
     const codes = [
       "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target",
-      "too-many-intents",
+      "too-many-intents", "invalid-inventory-move", "inventory-full",
     ];
     codes.forEach((code, index) => {
       const bytes = fixture.slice();

@@ -109,6 +109,71 @@ impl LocalHost {
 }
 
 #[tokio::test]
+async fn bag_intents_cross_real_transport_and_resume_without_losing_items() {
+    let zone_id = ZoneId::new(1);
+    let local = LocalHost::start(
+        mmorpg_game_server::build_zone_host([zone_id], 120).unwrap(),
+        zone_id,
+    );
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut session = ClientSession::connect(
+            &local.url,
+            Some(&local.certificate),
+            zone_id,
+            greyhaven_vale::REVISION,
+        )
+        .await?;
+        session.send_move_item(0, 15, 2)?;
+        let mut changed = None;
+        for _ in 0..30 {
+            let snapshot = session.receive_snapshot().await?;
+            if snapshot.inventory_revision == 2 && snapshot.inventory.is_some() {
+                changed = snapshot.inventory;
+                break;
+            }
+        }
+        let changed = changed.ok_or("the authority did not publish the moved bag")?;
+        assert_eq!(changed.slots()[0].unwrap().quantity(), 1);
+        assert_eq!(changed.slots()[15].unwrap().quantity(), 2);
+        let player_id = session.player_id();
+        session.reconnect().await?;
+        assert_eq!(session.player_id(), player_id);
+        let mut recovered = false;
+        for _ in 0..30 {
+            let snapshot = session.receive_snapshot().await?;
+            if let Some(inventory) = snapshot.inventory {
+                assert_eq!(inventory, changed);
+                assert_eq!(snapshot.inventory_revision, 2);
+                recovered = true;
+                break;
+            }
+        }
+        assert!(
+            recovered,
+            "resume recovers the durable bag from a periodic sheet"
+        );
+        session.send_move_item(15, 0, 2)?;
+        let mut merged = false;
+        for _ in 0..30 {
+            let snapshot = session.receive_snapshot().await?;
+            if snapshot.inventory_revision == 3
+                && let Some(inventory) = snapshot.inventory
+            {
+                assert_eq!(inventory.slots()[0].unwrap().quantity(), 3);
+                assert!(inventory.slots()[15].is_none());
+                merged = true;
+                break;
+            }
+        }
+        assert!(merged);
+        Ok::<(), ClientError>(())
+    })
+    .await;
+    local.stop().await;
+    result.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn clients_share_authority_resume_identity_and_reject_wrong_content() {
     let zone_id = ZoneId::new(1);
     let host = mmorpg_game_server::build_zone_host([zone_id], 120).unwrap();
@@ -374,10 +439,17 @@ async fn a_budget_packed_crowded_projection_reaches_a_client() {
         let mut previous_tick = None;
         for _ in 0..10 {
             let snapshot = session.receive_snapshot().await?;
-            assert_eq!(snapshot.entities.len(), MAX_WIRE_ENTITIES);
+            let sheet_bytes = if snapshot.inventory.is_some() { 64 } else { 0 };
+            let expected_entities =
+                (MAX_PLAYER_PROJECTION_BYTES - PLAYER_SNAPSHOT_FIXED_BYTES - sheet_bytes)
+                    / ENTITY_RECORD_BYTES;
+            assert_eq!(snapshot.entities.len(), expected_entities);
             assert_eq!(snapshot.entities[0].id, session.player_id());
             assert_eq!(snapshot.entities[0].kind, EntityKind::Player);
-            assert_eq!(mmorpg_protocol::encode_snapshot(&snapshot)?.len(), largest);
+            assert_eq!(
+                mmorpg_protocol::encode_snapshot(&snapshot)?.len(),
+                PLAYER_SNAPSHOT_FIXED_BYTES + sheet_bytes + expected_entities * ENTITY_RECORD_BYTES
+            );
             assert!(
                 previous_tick < Some(snapshot.tick),
                 "the session stays open"
@@ -413,6 +485,8 @@ async fn fragmented_projection_reaches_the_native_client() {
         content_revision: revision,
         acknowledged_sequence: 0,
         viewer_id: player_id,
+        inventory_revision: 1,
+        inventory: None,
         viewer: ViewerState {
             experience: 0,
             experience_to_next_level: 100,

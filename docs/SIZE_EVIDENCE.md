@@ -30,3 +30,18 @@ A capture explicitly has no requested comparison; it proves only the absolute bu
 This completes one native-library adoption for coding-tooling#160. It does not roll the capability out to the native client, zone-host executable, WASM bundle or other repositories.
 
 Resolved shared policy sourceRevision: `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
+
+
+The #83 inventory/schema-v7 change intentionally advances the reviewed baseline
+to **1,818,308 bytes**, SHA-256
+`ffc794c54ef39595ae7e11be36ad441aeeee520cdeb38de0e1b98dd29529bbee`.
+Its build identity is identical to the initial 1,736,620-byte baseline. The
+81,688-byte cumulative increase exceeded the 65,536-byte growth gate; the failed
+comparison is retained in
+[the raw observation](../.performance/observations/inventory-v7-growth.json).
+The preceding #82 pure catalog/bag archive measured 1,784,858 bytes, so #83 adds
+33,450 bytes for authoritative bags, queued moves, snapshots and declared RNG
+seed identity. The new APIs and stored records explain expected feature growth;
+this archive includes Rust metadata and is not a linked-code cost estimate.
+The absolute 2 MiB and per-baseline 64 KiB budgets remain unchanged. The explicit
+capture passed the absolute budget, and the ordinary gate never updated evidence.

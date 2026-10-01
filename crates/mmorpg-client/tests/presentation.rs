@@ -24,6 +24,8 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
         content_revision: greyhaven_vale::REVISION,
         acknowledged_sequence: 1,
         viewer_id: 1,
+        inventory_revision: 1,
+        inventory: None,
         viewer: ViewerState {
             experience: 0,
             experience_to_next_level: 100,

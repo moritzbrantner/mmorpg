@@ -78,7 +78,7 @@ The workspace provides:
 - units, targeting, auto-attack with an integer hit table, death, corpses, respawn, release spirit, out-of-combat regeneration and tapping, driven by queued intents whose refusals are feedback events, never session errors;
 - deterministic creature AI (wander, aggro through the interest index, family assist, chase, leash and evade) with a canonical zone RNG, and recovery continuation proven tick by tick mid-chase, mid-swing, after a death and during an evade;
 - the Greyhaven Vale starter-zone content revision (hub, woods, farm, lake and hollow colliders, a validated spawn plaza, open road corridors, named areas, 59 creature spawns of seven templates, nine NPCs and a graveyard), hosted by the zone host and the browser's WASM local host, and rendered by both clients from presentation-only `mmorpg-scenery` (props, relief terrain, water) plus placeholder creature and NPC bodies;
-- strict Rust/browser snapshot v6 and command v2 compatibility tests (self, target and event sections, compact priority-ordered unit records, facing, viewer identity, golden command bytes) and bounded client interpolation;
+- strict Rust/browser snapshot v7 and command v2 compatibility tests (self, target and event sections, compact priority-ordered unit records, facing, viewer identity, golden command bytes) and bounded client interpolation;
 - player projections capped by deterministic relevance priority and packed by section priority into a measured single-datagram byte budget;
 - native session resume with preserved player identity, command sequencing and connection-epoch resets;
 - [headless deterministic scenario runners](docs/SCENARIOS.md) for scripted bots against the real zone host path, including a Wolfrun Woods hunt that fights, dies and releases its spirit, and for control-plane lease/handoff sequences with invariant checks after every step;
@@ -118,7 +118,7 @@ Start the complete local native development environment with:
 
 Building the page requires the Rust toolchain from `rust-toolchain.toml` (with the `wasm32-unknown-unknown` target) and the `wasm-bindgen` CLI at the crate's exact version: `cargo install wasm-bindgen-cli --version =0.2.129 --locked`. `bun test` and `bun run build` compile the module first; the generated bindings are ignored build output.
 
-The standalone host, the native client and the browser's WASM local host share the Rust Greyhaven Vale content (`mmorpg_core::greyhaven_vale`). Snapshot schema/wire version 6 carries the viewer's own state, its target's target, bounded feedback events and compact, priority-ordered unit records within a one-datagram byte budget, and command wire version 2 carries `Move`, `Jump`, `SelectTarget`, `StartAttack`, `StopAttack` and `ReleaseSpirit`; v5 snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
+The standalone host, the native client and the browser's WASM local host share the Rust Greyhaven Vale content (`mmorpg_core::greyhaven_vale`). Snapshot schema/wire version 7 carries the viewer's own state, its target's target, bounded feedback events and compact, priority-ordered unit records within a one-datagram byte budget, and command wire version 2 carries `Move`, `Jump`, `SelectTarget`, `StartAttack`, `StopAttack`, `ReleaseSpirit` and `MoveItem`; v6 and earlier snapshots, v1 commands and old recovery bundles require an explicit migration decision. See [the wire specification](docs/PROTOCOL.md).
 
 ## Scaling model
 
@@ -139,7 +139,7 @@ The [starter progression rules](docs/PROGRESSION.md) define the shared XP curve
 and level-difference kill rewards. The zone awards and projects durable XP; the browser displays its XP bar and level-up feedback from that state.
 
 [Starter inventory rules](docs/INVENTORY.md) define the immutable item catalog
-and atomic 16-slot bags. Player-owned state and browser bags remain #83 and #84.
+and atomic 16-slot bags. Player-owned bags, queued moves and recoverable self sheets are implemented; browser bags remain #84.
 
 Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative durable state; queries read it. Do not introduce event sourcing by default. Zone hot loops must not synchronously depend on a distributed database. Durable character/world persistence and zone checkpoint storage are separate upcoming boundaries.
 
@@ -175,7 +175,7 @@ bun test
 bun run build
 ```
 
-Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v6.hex` and `fixtures/protocol/commands-v2.hex`.
+Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v7.hex` and `fixtures/protocol/commands-v2.hex`.
 
 ## Run a standalone zone host
 

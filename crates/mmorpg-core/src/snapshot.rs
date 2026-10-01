@@ -29,6 +29,11 @@ pub enum PlayerIntent {
     StartAttack,
     StopAttack,
     ReleaseSpirit,
+    MoveItem {
+        source: u8,
+        destination: u8,
+        quantity: u16,
+    },
 }
 
 /// A creature's decision state.
@@ -114,6 +119,9 @@ pub struct CanonicalPlayerSnapshot {
     pub jump_pending: bool,
     pub last_sequence: u32,
     pub spawn_slot: u16,
+    pub inventory: crate::Inventory,
+    pub inventory_revision: u64,
+    pub inventory_changed_at: u64,
     pub combat: CanonicalPlayerCombat,
 }
 
@@ -173,6 +181,9 @@ impl ZoneSimulation {
                     jump_pending: state.jump_pending,
                     last_sequence: state.last_sequence,
                     spawn_slot: state.spawn_slot,
+                    inventory: state.inventory.clone(),
+                    inventory_revision: state.inventory_revision,
+                    inventory_changed_at: state.inventory_changed_at,
                     combat: CanonicalPlayerCombat {
                         level: state.level,
                         experience: state.experience,
@@ -299,6 +310,11 @@ impl ZoneSimulation {
             return Err(ZoneError::new("snapshot contains duplicate spawn slot"));
         }
         let combat = player.combat;
+        if player.inventory_revision == 0 || player.inventory_changed_at > self.tick {
+            return Err(ZoneError::new(
+                "player inventory revision or change tick is invalid",
+            ));
+        }
         if !crate::progression::valid_progression(combat.level, combat.experience)
             || combat.health > player_max_health(combat.level)
         {
@@ -331,6 +347,9 @@ impl ZoneSimulation {
                 jump_pending: player.jump_pending,
                 last_sequence: player.last_sequence,
                 spawn_slot: player.spawn_slot,
+                inventory: player.inventory,
+                inventory_revision: player.inventory_revision,
+                inventory_changed_at: player.inventory_changed_at,
                 level: combat.level,
                 experience: combat.experience,
                 health: combat.health,

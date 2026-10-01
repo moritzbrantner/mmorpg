@@ -71,8 +71,41 @@ impl ZoneSimulation {
                 None
             }
             // Dead players can only release their spirit.
-            PlayerIntent::SelectTarget(_) | PlayerIntent::StartAttack if !alive => {
+            PlayerIntent::SelectTarget(_)
+            | PlayerIntent::StartAttack
+            | PlayerIntent::MoveItem { .. }
+                if !alive =>
+            {
                 Some((ErrorCode::YouAreDead, None))
+            }
+            PlayerIntent::MoveItem {
+                source,
+                destination,
+                quantity,
+            } => {
+                let player = self
+                    .players
+                    .get_mut(&player_id)
+                    .ok_or_else(|| ZoneError::new("inventory owner is absent"))?;
+                let mut candidate = player.inventory.clone();
+                match candidate.move_stack(usize::from(source), usize::from(destination), quantity)
+                {
+                    Err(crate::InventoryError::NoCapacity) => {
+                        Some((ErrorCode::InventoryFull, None))
+                    }
+                    Err(_) => Some((ErrorCode::InvalidInventoryMove, None)),
+                    Ok(()) if candidate == player.inventory => None,
+                    Ok(()) => {
+                        if let Some(revision) = player.inventory_revision.checked_add(1) {
+                            player.inventory = candidate;
+                            player.inventory_revision = revision;
+                            player.inventory_changed_at = self.tick + 1;
+                            None
+                        } else {
+                            Some((ErrorCode::InvalidInventoryMove, None))
+                        }
+                    }
+                }
             }
             PlayerIntent::SelectTarget(None) => {
                 self.update_player(player_id, |player| {

@@ -28,6 +28,7 @@ pub struct ZoneContent {
     npcs: Vec<Npc>,
     graveyard: [i32; 2],
     fingerprint: u64,
+    rng_seed: u64,
 }
 
 /// A body as `(centre, half extents)` in units.
@@ -115,7 +116,9 @@ impl ZoneContent {
             npcs,
             graveyard,
             fingerprint: 0,
+            rng_seed: 0,
         };
+        content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
         Ok(content)
     }
@@ -133,7 +136,9 @@ impl ZoneContent {
             npcs: Vec::new(),
             graveyard: [feet[0], feet[2]],
             fingerprint: 0,
+            rng_seed: 0,
         };
+        content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
         content
     }
@@ -207,7 +212,41 @@ impl ZoneContent {
         self.graveyard
     }
 
+    /// An authored RNG seed is part of recovery identity, while economy-only
+    /// content changes may intentionally preserve the existing random stream.
+    #[must_use]
+    pub fn with_rng_seed(mut self, seed: u64) -> Self {
+        self.rng_seed = seed;
+        self.fingerprint = self.compute_fingerprint();
+        self
+    }
+
+    #[must_use]
+    pub const fn rng_seed(&self) -> u64 {
+        self.rng_seed
+    }
+
     fn compute_fingerprint(&self) -> u64 {
+        let mut hash = Fnv1a::new();
+        hash.bytes(b"mmorpg.zone-content/v2");
+        hash.u64(self.compute_simulation_fingerprint());
+        hash.u64(self.rng_seed);
+        hash.u64(crate::ITEM_CATALOG_REVISION);
+        hash.len(crate::ITEM_CATALOG.len());
+        for item in crate::ITEM_CATALOG {
+            hash.u16(item.id.get());
+            hash.text(item.name);
+            hash.u16(item.max_stack);
+        }
+        for slot in crate::Inventory::starter().slots() {
+            hash.u16(slot.map_or(0, |stack| stack.item().get()));
+            hash.u16(slot.map_or(0, |stack| stack.quantity()));
+        }
+        hash.finish()
+    }
+
+    // Preserve the pre-inventory default seed for unchanged physical/unit content.
+    fn compute_simulation_fingerprint(&self) -> u64 {
         let mut hash = Fnv1a::new();
         hash.bytes(b"mmorpg.zone-content/v1");
         let definition = &self.definition;

@@ -32,8 +32,36 @@ full bags, atomic overflow, split/merge/swap behavior and a bounded matrix of
 There is no randomness, persistence I/O, wall clock or heap allocation in
 these operations.
 
-Player-owned inventories, queued movement intents, canonical recovery and the
-loss-recoverable self sheet remain #83; browser bags remain #84. This pure-rule
-slice changes no current zone state, content fingerprint, command or snapshot
-version and grants no items through a client command. The authority integration
-must bind the catalog revision/content to recovery before inventories persist.
+## Authority and recovery (#83)
+
+Each admitted player starts with three Torn Fur in slot 0 and one Worn Dagger
+in slot 1. The grant is deterministic core content; no client grant command
+exists. A fresh admission gets a fresh bag. Reconnect within the session grace
+preserves its bag; durable character saves remain #30/#40.
+
+`MoveItem` uses the existing bounded sequenced intent queue. It resolves against
+the sender's own bag at tick step 1. Dead players cannot move items. Invalid
+moves and exhausted revisions report `InvalidInventoryMove`; an overfull target
+reports `InventoryFull`. Refusals and validated same-slot no-ops leave bag revision
+unchanged. A changed bag increments its nonzero `u64` revision and records the
+resulting tick. Overflow refuses the entire move. Death, release and reconnect
+never grant or remove items.
+
+Canonical snapshots preserve ordered slots, revision, last-change tick and
+pending moves. Recovery rejects invalid catalog stacks, zero revision or future
+change ticks. Catalog revision, item names/limits, starter grant and declared RNG
+seed enter content identity. Greyhaven content revision 4 deliberately preserves
+the revision-3 RNG seed, preventing an economy-only change from rerolling combat.
+Older snapshots/recovery bundles require explicit migration or fresh state.
+
+Every projection repeats bag revision. It includes the complete 64-byte sheet
+on admission/change ticks and every ten ticks; missing sheets mean retain prior
+state. Dropped changes recover on the next periodic sheet (about 330 ms).
+Projection queries never mutate authority. Snapshot v7 retains the 1,077-byte
+budget and packs fewer low-priority entities when a sheet is present; see
+[PROTOCOL.md](PROTOCOL.md).
+
+Core recovery/loss fixtures, the `inventory-resume` real-session scenario, a real
+native WebTransport move/resume/merge test, and the browser WASM adapter prove
+ownership, sequenced moves and periodic recovery. Browser bags presentation
+remains #84; loot, money, equipment effects and vendors remain their own slices.

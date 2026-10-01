@@ -85,6 +85,9 @@ fn initial_zone(name: &str, count: usize) -> Result<ZoneSimulation, Box<dyn Erro
             jump_pending: false,
             last_sequence: 0,
             spawn_slot: u16::try_from(index)?,
+            inventory: mmorpg_core::Inventory::default(),
+            inventory_revision: 1,
+            inventory_changed_at: 0,
             combat: CanonicalPlayerCombat::default(),
         });
     }

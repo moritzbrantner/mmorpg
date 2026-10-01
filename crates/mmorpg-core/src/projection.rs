@@ -89,6 +89,10 @@ pub struct ZoneSnapshot {
     pub viewer: ViewerState,
     /// The viewer's target's own target, if any.
     pub target_of_target: Option<EntityRef>,
+    /// Always repeated; an absent sheet must not be mistaken for an empty bag.
+    pub inventory_revision: u64,
+    /// Complete self bag on admission/change ticks and every ten ticks.
+    pub inventory: Option<crate::Inventory>,
     /// Feedback the viewer received this tick.
     pub events: Vec<ZoneEvent>,
     pub entities: Vec<EntitySnapshot>,
@@ -166,6 +170,10 @@ impl ZoneSimulation {
                     target: viewer.target,
                 },
                 target_of_target: viewer.target.and_then(|target| self.target_of(target)),
+                inventory_revision: viewer.inventory_revision,
+                inventory: (self.tick == viewer.inventory_changed_at
+                    || self.tick.is_multiple_of(crate::INVENTORY_RESEND_TICKS))
+                .then(|| viewer.inventory.clone()),
                 events: viewer.events.clone(),
                 entities,
             },

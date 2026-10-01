@@ -62,7 +62,7 @@ health; existing level-based melee damage applies automatically. XP and level
 are character-durable facts copied into canonical recovery state. Session
 identity remains separate; no persistence I/O occurs during awards.
 
-Snapshot schema/wire version 6 carries canonical player XP and exact self
+Snapshot schema/wire version 7 carries canonical player XP and exact self
 XP/threshold in every projection, so lost cosmetic events cannot erase progress.
 The browser decoder accepts this state; the XP bar and level-up feedback display
 it through #76. Public API tests kill two level-1 wolves to reach level 2, restore at 50 XP,
