@@ -38,7 +38,7 @@ impl ZoneSimulation {
                 None => continue,
             };
             for intent in intents {
-                self.apply_intent(player_id, intent)?;
+                self.apply_intent(player_id, intent, self.tick + 1)?;
             }
             // The dropped intents followed every queued one.
             if dropped {
@@ -54,7 +54,12 @@ impl ZoneSimulation {
         Ok(())
     }
 
-    fn apply_intent(&mut self, player_id: PlayerId, intent: PlayerIntent) -> Result<(), ZoneError> {
+    fn apply_intent(
+        &mut self,
+        player_id: PlayerId,
+        intent: PlayerIntent,
+        now: u64,
+    ) -> Result<(), ZoneError> {
         let Some(player) = self.players.get(&player_id) else {
             return Ok(());
         };
@@ -68,6 +73,14 @@ impl ZoneSimulation {
             PlayerIntent::ReleaseSpirit if alive => Some((ErrorCode::NotDead, None)),
             PlayerIntent::ReleaseSpirit => {
                 self.release_spirit(player_id)?;
+                None
+            }
+            PlayerIntent::ChooseClass { class, sex } => self.choose_class(player_id, class, sex),
+            PlayerIntent::UseAbility { ability, target } => {
+                self.use_ability(player_id, ability, target, now)?
+            }
+            PlayerIntent::CancelCast => {
+                self.cancel_cast(player_id);
                 None
             }
             // Dead players can only release their spirit.
@@ -158,7 +171,7 @@ impl ZoneSimulation {
         Ok(())
     }
 
-    fn update_player(
+    pub(crate) fn update_player(
         &mut self,
         player_id: PlayerId,
         update: impl FnOnce(&mut crate::zone::PlayerState),
@@ -274,10 +287,12 @@ impl ZoneSimulation {
         let Some(player) = self.players.get(&player_id) else {
             return Ok(());
         };
-        if player.swing_timer > 0 {
+        // A stunned player's ready swing waits.
+        if player.swing_timer > 0 || crate::aura::has_kind(&player.auras, crate::AuraKind::Stun) {
             return Ok(());
         }
         let (level, error_ready) = (player.level, player.error_cooldown == 0);
+        let swing_ticks = crate::aura::hasted_swing(PLAYER_SWING_TICKS, &player.auras);
         let from = self.player_position(player_id)?;
         let to = self
             .world
@@ -301,7 +316,7 @@ impl ZoneSimulation {
             return Ok(());
         }
         self.update_player(player_id, |player| {
-            player.swing_timer = PLAYER_SWING_TICKS;
+            player.swing_timer = swing_ticks;
             player.combat_timer = COMBAT_LINGER_TICKS;
         });
         self.attack_creature(player_id, creature_id, player_damage(level), now)
@@ -327,36 +342,147 @@ impl ZoneSimulation {
             return Ok(());
         }
         let swing = roll_swing(&mut self.rng, damage);
+        match swing {
+            Swing::Miss => {
+                let Some(creature) = self.creatures.get_mut(&creature_id) else {
+                    return Ok(());
+                };
+                creature.combat_timer = COMBAT_LINGER_TICKS;
+                creature.add_threat(source, 0);
+                self.notify(player_id, ZoneEvent::Miss { source, target });
+                self.engage(creature_id, source, true)
+            }
+            Swing::Hit { amount, critical } => {
+                self.update_player(player_id, |player| {
+                    if let Some(choice) = player.class
+                        && choice.class.resource() == crate::ResourceKind::Rage
+                    {
+                        player.resource.gain(
+                            crate::ResourceKind::Rage,
+                            player.level,
+                            crate::class::RAGE_PER_HIT_DEALT,
+                        );
+                    }
+                });
+                self.player_damages_creature(
+                    player_id,
+                    creature_id,
+                    u32::from(amount),
+                    critical,
+                    now,
+                )
+            }
+        }
+    }
+
+    /// Damage from a player to a living creature, by a swing, an ability or
+    /// an aura: evading creatures ignore it; otherwise it lands, the first
+    /// damaging player taps the creature, threat rises by the damage, a
+    /// breakable root breaks, and the creature dies or engages the player.
+    pub(crate) fn player_damages_creature(
+        &mut self,
+        player_id: PlayerId,
+        creature_id: CreatureId,
+        amount: u32,
+        critical: bool,
+        now: u64,
+    ) -> Result<(), ZoneError> {
+        let source = EntityRef::Player(player_id);
+        let target = EntityRef::Creature(creature_id);
+        let Some(creature) = self.creatures.get(&creature_id) else {
+            return Ok(());
+        };
+        if !creature.is_alive() {
+            return Ok(());
+        }
+        if matches!(creature.ai, CreatureAi::Evading { .. }) {
+            self.notify(player_id, ZoneEvent::Evade { source, target });
+            return Ok(());
+        }
+        let amount = self.absorb(target, source, amount);
+        self.update_player(player_id, |player| {
+            player.combat_timer = COMBAT_LINGER_TICKS;
+        });
         let Some(creature) = self.creatures.get_mut(&creature_id) else {
             return Ok(());
         };
         creature.combat_timer = COMBAT_LINGER_TICKS;
-        let event = match swing {
-            Swing::Miss => {
-                creature.add_threat(source, 0);
-                ZoneEvent::Miss { source, target }
-            }
-            Swing::Hit { amount, critical } => {
-                let dealt = u32::from(amount).min(creature.health);
-                creature.health -= dealt;
-                creature.add_threat(source, dealt);
-                creature.tapped_by.get_or_insert(player_id);
-                ZoneEvent::DamageDealt {
-                    source,
-                    target,
-                    amount: u16::try_from(dealt).unwrap_or(u16::MAX),
-                    critical,
-                }
-            }
-        };
+        let dealt = amount.min(creature.health);
+        creature.health -= dealt;
+        creature.add_threat(source, dealt);
+        creature.tapped_by.get_or_insert(player_id);
         let dead = creature.health == 0;
-        self.notify(player_id, event);
+        self.notify(
+            player_id,
+            ZoneEvent::DamageDealt {
+                source,
+                target,
+                amount: u16::try_from(dealt).unwrap_or(u16::MAX),
+                critical,
+            },
+        );
         if dead {
             return self.creature_dies(creature_id, source, now);
         }
+        self.break_roots(target);
         // Being attacked engages an idle creature (and its family); an
         // engaged one already has the attacker on its threat table.
         self.engage(creature_id, source, true)
+    }
+
+    /// Damage from a creature to a living player, by a swing or an ability:
+    /// shields absorb first, a Warden gains rage for the hit, a breakable
+    /// root breaks, and the player may die.
+    pub(crate) fn creature_damages_player(
+        &mut self,
+        creature_id: CreatureId,
+        player_id: PlayerId,
+        amount: u32,
+        critical: bool,
+    ) -> Result<(), ZoneError> {
+        let source = EntityRef::Creature(creature_id);
+        let target = EntityRef::Player(player_id);
+        if !self
+            .players
+            .get(&player_id)
+            .is_some_and(|player| player.is_alive())
+        {
+            return Ok(());
+        }
+        let left = self.absorb(target, source, amount);
+        let Some(player) = self.players.get_mut(&player_id) else {
+            return Ok(());
+        };
+        player.combat_timer = COMBAT_LINGER_TICKS;
+        if let Some(choice) = player.class
+            && choice.class.resource() == crate::ResourceKind::Rage
+        {
+            player.resource.gain(
+                crate::ResourceKind::Rage,
+                player.level,
+                crate::class::RAGE_PER_HIT_TAKEN,
+            );
+        }
+        if left == 0 && amount > 0 {
+            return Ok(());
+        }
+        let dealt = left.min(player.health);
+        player.health -= dealt;
+        let dead = player.health == 0;
+        push_event(
+            &mut player.events,
+            ZoneEvent::DamageTaken {
+                source,
+                target,
+                amount: u16::try_from(dealt).unwrap_or(u16::MAX),
+                critical,
+            },
+        );
+        if dead {
+            return self.player_dies(player_id, source);
+        }
+        self.break_roots(target);
+        Ok(())
     }
 
     fn creature_swing(&mut self, creature_id: CreatureId) -> Result<(), ZoneError> {
@@ -370,7 +496,12 @@ impl ZoneSimulation {
         }
         creature.swing_timer = creature.swing_timer.saturating_sub(1);
         creature.combat_timer = creature.combat_timer.saturating_sub(1);
-        if creature.ai != CreatureAi::Engaged || creature.swing_timer > 0 {
+        // Casting and stunned creatures hold their ready swing.
+        if creature.ai != CreatureAi::Engaged
+            || creature.swing_timer > 0
+            || creature.cast.is_some()
+            || crate::aura::has_kind(&creature.auras, crate::AuraKind::Stun)
+        {
             return Ok(());
         }
         let Some(target @ EntityRef::Player(player_id)) = creature.top_threat() else {
@@ -400,29 +531,19 @@ impl ZoneSimulation {
             creature.swing_timer = template.swing_ticks;
             creature.combat_timer = COMBAT_LINGER_TICKS;
         }
-        let Some(player) = self.players.get_mut(&player_id) else {
-            return Ok(());
-        };
-        player.combat_timer = COMBAT_LINGER_TICKS;
-        let event = match swing {
-            Swing::Miss => ZoneEvent::Miss { source, target },
-            Swing::Hit { amount, critical } => {
-                let dealt = u32::from(amount).min(player.health);
-                player.health -= dealt;
-                ZoneEvent::DamageTaken {
-                    source,
-                    target,
-                    amount: u16::try_from(dealt).unwrap_or(u16::MAX),
-                    critical,
-                }
+        match swing {
+            Swing::Miss => {
+                let Some(player) = self.players.get_mut(&player_id) else {
+                    return Ok(());
+                };
+                player.combat_timer = COMBAT_LINGER_TICKS;
+                push_event(&mut player.events, ZoneEvent::Miss { source, target });
+                Ok(())
             }
-        };
-        let dead = player.health == 0;
-        push_event(&mut player.events, event);
-        if dead {
-            self.player_dies(player_id, source)?;
+            Swing::Hit { amount, critical } => {
+                self.creature_damages_player(creature_id, player_id, u32::from(amount), critical)
+            }
         }
-        Ok(())
     }
 
     /// The creature leaves a corpse without a physics body; its tap stays.
@@ -460,6 +581,7 @@ impl ZoneSimulation {
         creature.threat.clear();
         creature.swing_timer = 0;
         creature.combat_timer = 0;
+        creature.reset_abilities();
         creature.loot = creature.tapped_by.and(loot);
         let tapper = creature.tapped_by;
         let level = creature.level;
@@ -497,12 +619,26 @@ impl ZoneSimulation {
             .map_err(physics_error)?;
         for creature in self.creatures.values_mut() {
             creature.forget(entity);
+            // A cast at the fallen player fizzles; a released spirit is safe.
+            if creature.cast.is_some_and(|cast| cast.target == Some(entity)) {
+                creature.cast = None;
+            }
         }
+        self.forget_caster(entity);
         self.update_player(player_id, |player| {
             player.health = 0;
             player.auto_attack = false;
             player.swing_timer = 0;
             player.calm_ticks = 0;
+            // Death clears every aura and cast; rage drains.
+            player.cast = None;
+            player.auras.clear();
+            if let Some(choice) = player.class
+                && choice.class.resource() == crate::ResourceKind::Rage
+            {
+                player.resource.value = 0;
+                player.resource.ticks = 0;
+            }
         });
         self.notify(
             player_id,
@@ -534,6 +670,12 @@ impl ZoneSimulation {
         for (player_id, player) in &mut self.players {
             if !player.is_alive() {
                 continue;
+            }
+            if let Some(choice) = player.class {
+                let in_combat = player.combat_timer > 0 || threatened.contains(player_id);
+                player
+                    .resource
+                    .advance(choice.class.resource(), player.level, in_combat);
             }
             let max_health = player_max_health(player.level);
             // Calm time only counts while there is health to regain, so a

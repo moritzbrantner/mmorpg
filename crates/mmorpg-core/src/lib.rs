@@ -7,8 +7,12 @@
 //! [`ZoneSimulation::advance_tick`]. Physics integration and collision stay in
 //! `physics-engine`; wire formats live in `mmorpg-protocol`.
 
+pub mod ability;
 mod ai;
 mod areas;
+mod aura;
+mod casting;
+mod class;
 mod combat;
 mod content;
 mod corpse_loot;
@@ -26,7 +30,14 @@ pub mod trig;
 pub mod unit;
 mod zone;
 
+pub use ability::{
+    ABILITY_CATALOG, ABILITY_CATALOG_REVISION, Ability, AbilityEffect, AbilityId, AbilityRange,
+    AbilityUser, AuraKind, AuraSpec, CastTime, GLOBAL_COOLDOWN_TICKS, MAX_AURAS, MAX_COOLDOWNS,
+    ability_by_id,
+};
 pub use areas::{Area, AreaId, MAX_AREA_NAME_BYTES, MAX_ZONE_AREAS, ZoneAreas};
+pub use aura::{Aura, CastState, Cooldown};
+pub use class::{ClassChoice, PlayerClass, ResourceKind, Sex};
 pub use content::greyhaven_vale::{self, greyhaven_vale_definition};
 pub use content::{
     CreatureBehaviour, CreatureFamily, CreatureSpawn, CreatureTemplate,
@@ -54,10 +65,14 @@ pub use loot::{
     LootTableError, MAX_LOOT_OUTCOMES, loot_table, settle_loot,
 };
 pub use progression::{MAX_PLAYER_LEVEL, experience_to_next_level, kill_experience};
-pub use projection::{EntityFlags, EntitySnapshot, ViewerState, ZoneSnapshot};
+pub use projection::{
+    AuraView, CastView, EntityFlags, EntitySnapshot, ResourceView, TargetDetail, ViewerState,
+    ZoneSnapshot,
+};
 pub use snapshot::{
-    CanonicalCreatureSnapshot, CanonicalPlayerCombat, CanonicalPlayerSnapshot,
-    CanonicalZoneSnapshot, CreatureAi, CreatureLife, PlayerIntent, ThreatEntry,
+    CanonicalCreatureAbilities, CanonicalCreatureSnapshot, CanonicalPlayerAbilities,
+    CanonicalPlayerCombat, CanonicalPlayerSnapshot, CanonicalZoneSnapshot, CreatureAi,
+    CreatureLife, PlayerIntent, ThreatEntry,
 };
 pub use zone::{MAX_PENDING_INTENTS, ZoneSimulation, ZoneTickWork};
 
@@ -69,7 +84,7 @@ pub type PlayerId = u32;
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
 /// Core schema of canonical and player-visible snapshots.
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 8;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 9;
 /// Inclusive XZ radius of player-scoped relevance (45 m).
 pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
 /// Deterministic relevance cap of one player projection: the viewer, its
@@ -127,6 +142,21 @@ pub enum ZoneCommand {
         source: u8,
         destination: u8,
         quantity: u16,
+    },
+    /// Uses a class ability at `target`, or at the current selection with
+    /// `None`; self-centred abilities ignore the target. Unknown IDs are
+    /// refused in the tick, not here.
+    UseAbility {
+        ability: u8,
+        target: Option<EntityRef>,
+    },
+    /// Stops the player's own cast or channel.
+    CancelCast,
+    /// Chooses the class (0 Warden, 1 Ranger, 2 Arcanist) and sex (0 female,
+    /// 1 male) once. Invalid or repeated choices are refused in the tick.
+    ChooseClass {
+        class: u8,
+        sex: u8,
     },
 }
 

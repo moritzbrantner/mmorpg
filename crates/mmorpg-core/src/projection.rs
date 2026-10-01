@@ -1,7 +1,8 @@
 //! Player-scoped projections: what one player may see of the zone.
 //!
-//! A projection carries the viewer's own exact state, its target's target,
-//! this tick's events and the relevant units within the interest radius in
+//! A projection carries the viewer's own exact state (including class,
+//! resource, cast, cooldowns and auras), its target's target and the
+//! target's cast and auras, this tick's events and the relevant units within the interest radius in
 //! priority order: the viewer first, then the viewer's current target (alive
 //! or corpse), then ascending `(squared XZ distance, kind, id)`, capped at
 //! [`MAX_VISIBLE_ENTITIES`]. Canonical state never leaves the zone this way.
@@ -43,7 +44,8 @@ pub struct EntityFlags {
 pub struct EntitySnapshot {
     pub kind: EntityKind,
     pub id: u32,
-    /// Creature template ID, NPC ID, or 0 for players (until classes land).
+    /// Creature template ID, NPC ID, or for players 0 without a class and
+    /// otherwise `1 + class × 2 + sex`.
     pub appearance: u16,
     pub position: [i32; 3],
     /// Presentation-only velocity, saturated to the `i8` range per axis.
@@ -63,6 +65,40 @@ impl EntitySnapshot {
     }
 }
 
+/// A class resource as the viewer sees it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResourceView {
+    pub kind: crate::ResourceKind,
+    pub value: u16,
+    pub max: u16,
+}
+
+/// A cast or channel in progress: `elapsed` of `total` ticks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CastView {
+    pub ability: crate::AbilityId,
+    pub elapsed: u16,
+    pub total: u16,
+    pub channel: bool,
+}
+
+/// An aura as players see it; see [`crate::Aura`] for `amount`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AuraView {
+    pub ability: crate::AbilityId,
+    pub kind: crate::AuraKind,
+    pub remaining: u16,
+    pub amount: u16,
+}
+
+/// The viewer's target's cast and auras: empty without a visible living
+/// player or creature target.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TargetDetail {
+    pub cast: Option<CastView>,
+    pub auras: Vec<AuraView>,
+}
+
 /// The viewer's own exact unit state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ViewerState {
@@ -76,6 +112,11 @@ pub struct ViewerState {
     pub in_combat: bool,
     pub auto_attacking: bool,
     pub target: Option<EntityRef>,
+    pub class: Option<crate::ClassChoice>,
+    /// Present exactly when the viewer has a class.
+    pub resource: Option<ResourceView>,
+    pub cast: Option<CastView>,
+    pub global_cooldown: u16,
 }
 
 /// A projection addressed to `viewer_id`. Entities are in priority order: the
@@ -90,8 +131,14 @@ pub struct ZoneSnapshot {
     pub zone_id: ZoneId,
     pub tick: u64,
     pub viewer: ViewerState,
+    /// The viewer's running cooldowns in ability order.
+    pub cooldowns: Vec<crate::Cooldown>,
+    /// The viewer's auras in slot order.
+    pub auras: Vec<AuraView>,
     /// The viewer's target's own target, if any.
     pub target_of_target: Option<EntityRef>,
+    /// The viewer's target's cast and auras.
+    pub target_detail: TargetDetail,
     /// Always repeated; an absent sheet must not be mistaken for an empty bag.
     pub inventory_revision: u64,
     /// Complete self bag on admission/change ticks and every ten ticks.
@@ -174,8 +221,27 @@ impl ZoneSimulation {
                     in_combat: viewer.combat_timer > 0 || threatened.contains(&player_id),
                     auto_attacking: viewer.auto_attack,
                     target: viewer.target,
+                    class: viewer.class,
+                    resource: viewer.class.map(|choice| {
+                        let kind = choice.class.resource();
+                        ResourceView {
+                            kind,
+                            value: viewer.resource.value,
+                            max: kind.max(viewer.level),
+                        }
+                    }),
+                    cast: viewer.cast.and_then(cast_view),
+                    global_cooldown: viewer.global_cooldown,
                 },
+                cooldowns: viewer.cooldowns.clone(),
+                auras: aura_views(&viewer.auras),
                 target_of_target: viewer.target.and_then(|target| self.target_of(target)),
+                target_detail: match viewer.target {
+                    Some(target) if self.visible_to(player_id, target)? => {
+                        self.target_detail(target)
+                    }
+                    _ => TargetDetail::default(),
+                },
                 inventory_revision: viewer.inventory_revision,
                 inventory: (self.tick == viewer.inventory_changed_at
                     || self.tick.is_multiple_of(crate::INVENTORY_RESEND_TICKS))
@@ -189,6 +255,25 @@ impl ZoneSimulation {
             },
             stats,
         })
+    }
+
+    /// A living player's or creature's cast and auras.
+    fn target_detail(&self, target: EntityRef) -> TargetDetail {
+        let (cast, auras) = match target {
+            EntityRef::Player(player_id) => match self.players.get(&player_id) {
+                Some(player) if player.is_alive() => (player.cast, player.auras.as_slice()),
+                _ => return TargetDetail::default(),
+            },
+            EntityRef::Creature(creature_id) => match self.creatures.get(&creature_id) {
+                Some(creature) if creature.is_alive() => (creature.cast, creature.auras.as_slice()),
+                _ => return TargetDetail::default(),
+            },
+            EntityRef::Npc(_) => return TargetDetail::default(),
+        };
+        TargetDetail {
+            cast: cast.and_then(cast_view),
+            auras: aura_views(auras),
+        }
     }
 
     /// Whom a unit targets: a player's selection, an engaged creature's
@@ -229,7 +314,7 @@ impl ZoneSimulation {
                 EntitySnapshot {
                     kind: EntityKind::Player,
                     id: player_id,
-                    appearance: 0,
+                    appearance: player.class.map_or(0, crate::ClassChoice::appearance),
                     position: [position.x, position.y, position.z],
                     velocity: [velocity.x, velocity.y, velocity.z].map(saturate_i8),
                     facing: player.facing,
@@ -315,4 +400,28 @@ impl ZoneSimulation {
             }
         }))
     }
+}
+
+fn cast_view(cast: crate::CastState) -> Option<CastView> {
+    let ability = crate::ability_by_id(cast.ability)?;
+    Some(CastView {
+        ability: cast.ability,
+        elapsed: cast.elapsed,
+        total: ability.cast.ticks(),
+        channel: ability.cast.is_channel(),
+    })
+}
+
+fn aura_views(auras: &[crate::Aura]) -> Vec<AuraView> {
+    auras
+        .iter()
+        .filter_map(|aura| {
+            Some(AuraView {
+                ability: aura.ability,
+                kind: aura.kind()?,
+                remaining: aura.remaining,
+                amount: aura.amount,
+            })
+        })
+        .collect()
 }

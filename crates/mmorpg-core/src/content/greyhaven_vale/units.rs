@@ -237,3 +237,16 @@ pub(super) fn npcs() -> Vec<Npc> {
         })
         .collect()
 }
+
+/// Creature abilities of this revision: Garrick's kit belongs to the quests
+/// and boss step.
+#[must_use]
+pub fn creature_abilities() -> Vec<(CreatureTemplateId, crate::AbilityId)> {
+    vec![
+        (templates::MIREFIN_LURKER, crate::ability::ids::MUCK_BOLT),
+        (
+            templates::REDBRAND_BANDIT,
+            crate::ability::ids::CRUDE_BANDAGE,
+        ),
+    ]
+}

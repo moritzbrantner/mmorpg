@@ -12,6 +12,7 @@ use super::units::{
     MAX_CREATURE_TEMPLATES, MAX_NPCS, MAX_UNIT_NAME_BYTES, MAX_WANDER_RADIUS_UNITS, Npc,
 };
 use super::{MAX_CONTENT_COORDINATE_UNITS, ZoneDefinition};
+use crate::ability::{AbilityId, AbilityUser, ability_by_id};
 use crate::unit::{CORPSE_TICKS, MAX_SWING_DAMAGE, MAX_UNIT_LEVEL};
 use crate::{
     CreatureId, CreatureTemplateId, LootOutcome, LootTable, MAX_PLAYERS_PER_ZONE, NpcId,
@@ -31,6 +32,8 @@ pub struct ZoneContent {
     rng_seed: u64,
     loot_revision: u64,
     loot_tables: Vec<(CreatureTemplateId, LootTable)>,
+    ability_revision: u64,
+    creature_abilities: Vec<(CreatureTemplateId, AbilityId)>,
 }
 
 /// A body as `(centre, half extents)` in units.
@@ -121,6 +124,8 @@ impl ZoneContent {
             rng_seed: 0,
             loot_revision: 0,
             loot_tables: Vec::new(),
+            ability_revision: 0,
+            creature_abilities: Vec::new(),
         };
         content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
@@ -143,6 +148,8 @@ impl ZoneContent {
             rng_seed: 0,
             loot_revision: 0,
             loot_tables: Vec::new(),
+            ability_revision: 0,
+            creature_abilities: Vec::new(),
         };
         content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
@@ -281,7 +288,81 @@ impl ZoneContent {
             .map(|index| &self.loot_tables[index].1)
     }
 
+    /// Binds the ability catalog and each creature template's ability to
+    /// recovery identity without changing the simulation seed. Templates
+    /// without a binding use no ability. Revision zero is reserved for
+    /// content that has never bound the ability catalog.
+    pub fn with_creature_abilities(
+        mut self,
+        revision: u64,
+        mut bindings: Vec<(CreatureTemplateId, AbilityId)>,
+    ) -> Result<Self, ZoneError> {
+        if revision == 0 {
+            return Err(ZoneError::new("ability catalog revision must be nonzero"));
+        }
+        if bindings.len() > MAX_CREATURE_TEMPLATES {
+            return Err(ZoneError::new("zone ability content capacity reached"));
+        }
+        bindings.sort_by_key(|(template, _)| *template);
+        if bindings.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return Err(ZoneError::new("duplicate creature ability template id"));
+        }
+        if bindings
+            .iter()
+            .any(|(template, _)| self.creature_template(*template).is_none())
+        {
+            return Err(ZoneError::new("creature ability names an unknown template"));
+        }
+        if bindings.iter().any(|(_, ability)| {
+            ability_by_id(*ability).is_none_or(|ability| ability.user != AbilityUser::Creature)
+        }) {
+            return Err(ZoneError::new("creature ability names no creature ability"));
+        }
+        self.ability_revision = revision;
+        self.creature_abilities = bindings;
+        self.fingerprint = self.compute_fingerprint();
+        Ok(self)
+    }
+
+    #[must_use]
+    pub const fn ability_revision(&self) -> u64 {
+        self.ability_revision
+    }
+
+    /// Ordered by creature template ID.
+    #[must_use]
+    pub fn creature_abilities(&self) -> &[(CreatureTemplateId, AbilityId)] {
+        &self.creature_abilities
+    }
+
+    /// The ability creatures of `template` use, if content binds one.
+    #[must_use]
+    pub fn creature_ability(&self, template: CreatureTemplateId) -> Option<AbilityId> {
+        self.creature_abilities
+            .binary_search_by_key(&template, |(template, _)| *template)
+            .ok()
+            .map(|index| self.creature_abilities[index].1)
+    }
+
     fn compute_fingerprint(&self) -> u64 {
+        let fingerprint = self.compute_loot_fingerprint();
+        if self.ability_revision == 0 {
+            return fingerprint;
+        }
+        let mut hash = Fnv1a::new();
+        hash.bytes(b"mmorpg.zone-content/v4");
+        hash.u64(fingerprint);
+        hash.u64(self.ability_revision);
+        hash.bytes(&crate::ability::catalog_bytes());
+        hash.len(self.creature_abilities.len());
+        for (template, ability) in &self.creature_abilities {
+            hash.u16(template.get());
+            hash.u8(ability.get());
+        }
+        hash.finish()
+    }
+
+    fn compute_loot_fingerprint(&self) -> u64 {
         let mut hash = Fnv1a::new();
         hash.bytes(b"mmorpg.zone-content/v2");
         hash.u64(self.compute_simulation_fingerprint());

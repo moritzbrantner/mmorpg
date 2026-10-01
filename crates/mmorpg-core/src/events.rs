@@ -8,6 +8,7 @@
 //! health live in state that every projection repeats.
 
 use crate::EntityRef;
+use crate::ability::AbilityId;
 
 /// At most this many events per player and tick.
 pub const MAX_EVENTS_PER_PLAYER: usize = 16;
@@ -45,6 +46,20 @@ pub enum ErrorCode {
     EmptyLoot,
     /// Crediting rewards would overflow the copper balance.
     MoneyOverflow,
+    /// Abilities need a chosen class.
+    NoClass,
+    /// The class has not learned this ability (or it is not a class ability).
+    NotLearned,
+    /// The global cooldown or the ability's cooldown is running.
+    NotReady,
+    /// The resource does not cover the ability's cost.
+    NotEnoughResource,
+    /// Stunned units cannot act.
+    Stunned,
+    /// A cast or channel is already in progress.
+    AlreadyCasting,
+    /// The class choice is unknown or the class was already chosen.
+    InvalidClass,
 }
 
 /// One feedback event addressed to a player.
@@ -84,17 +99,70 @@ pub enum ZoneEvent {
         code: ErrorCode,
         target: Option<EntityRef>,
     },
+    /// `source` began casting or channelling `ability` for `ticks` ticks.
+    CastStarted {
+        source: EntityRef,
+        target: Option<EntityRef>,
+        ability: AbilityId,
+        ticks: u16,
+    },
+    /// `source` resolved `ability`, at `target` unless it is self-centred.
+    AbilityUsed {
+        source: EntityRef,
+        target: Option<EntityRef>,
+        ability: AbilityId,
+    },
+    /// `ability` of `source` healed `target` by `amount` effective health.
+    Healed {
+        source: EntityRef,
+        target: EntityRef,
+        ability: AbilityId,
+        amount: u16,
+    },
+    /// `source` put the aura of `ability` on `target` for `ticks` ticks.
+    AuraApplied {
+        source: EntityRef,
+        target: EntityRef,
+        ability: AbilityId,
+        ticks: u16,
+    },
+    /// The aura of `ability` that `source` put on `target` ended.
+    AuraRemoved {
+        source: EntityRef,
+        target: EntityRef,
+        ability: AbilityId,
+    },
+    /// `target`'s cast or channel of `ability` stopped early, by `source`
+    /// when another unit interrupted it.
+    Interrupted {
+        source: Option<EntityRef>,
+        target: EntityRef,
+        ability: AbilityId,
+    },
+    /// A shield on `target` absorbed `amount` of `source`'s damage.
+    Absorbed {
+        source: EntityRef,
+        target: EntityRef,
+        amount: u16,
+    },
 }
 
 impl ZoneEvent {
     /// Overflow keeps higher priorities: deaths, then damage taken, errors,
-    /// damage dealt, and finally misses and evades.
+    /// damage dealt, ability feedback, and finally misses and evades.
     const fn priority(self) -> u8 {
         match self {
-            Self::Died { .. } => 4,
-            Self::DamageTaken { .. } => 3,
-            Self::Error { .. } => 2,
-            Self::DamageDealt { .. } => 1,
+            Self::Died { .. } => 5,
+            Self::DamageTaken { .. } => 4,
+            Self::Error { .. } => 3,
+            Self::DamageDealt { .. } => 2,
+            Self::CastStarted { .. }
+            | Self::AbilityUsed { .. }
+            | Self::Healed { .. }
+            | Self::AuraApplied { .. }
+            | Self::AuraRemoved { .. }
+            | Self::Interrupted { .. }
+            | Self::Absorbed { .. } => 1,
             Self::Miss { .. } | Self::Evade { .. } => 0,
         }
     }
