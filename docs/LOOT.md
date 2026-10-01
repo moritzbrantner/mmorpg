@@ -119,4 +119,30 @@ projection's identity, tick, living viewer, selected creature and death fence at
 dispatch. It never changes rewards, copper or bags. Refused claims retain the
 received sheet; a later acknowledged projection restores the control even when
 cosmetic refusal feedback was lost. Bag recovery stays in the existing bag cache.
-The DOM window and real Chromium interaction are the separate #109 child of #90.
+The DOM window and real Chromium interaction are delivered by the separate #109 child of #90.
+
+## Browser Loot window (#109)
+
+The Loot toolbar control opens an accessible pane and submits selection intent
+for the current owned corpse, or the nearest visible owned corpse with stable
+ID tie-breaking. Selection uses projected ownership flags; core decides visibility
+and claim reach. Within reach, the pane displays only the received copper and
+optional named item/quantity, and Claim rewards queues the existing fenced intent.
+Repeated clicks while pending cannot produce another action. Full-bag and other
+refusals retain received rewards; specific corpse feedback takes precedence over
+unrelated generic capacity errors. The HUD repeats the viewer's received copper.
+
+WorldView observes every intermediate projection before drawing the latest, so
+catch-up ticks do not lose economic sheets or claim feedback. Complete absence
+clears rewards and disables claiming; target/death changes clear old feedback.
+Bags and Loot open separately, Escape closes the current pane, and leaving clears
+all old state. Entering again starts the existing fresh local character session.
+
+Chromium acceptance runs the actual Greyhaven hunt to death tick 912, claims the
+received two copper/two Torn Fur, rejects a duplicate through the real WASM host,
+and intentionally misses the claim publication before recovering money/loot state
+and the periodic bag. A separate received-projection fixture checks full-bag DOM
+feedback and narrow/short viewport controls; it never changes the host and does
+not replace core's atomic full-bag acceptance. Screenshot artifacts record both
+stages. The `?debug` public world-source hook permits deterministic command/tick
+playback for this acceptance; it exposes no canonical state or direct reward grant.

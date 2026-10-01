@@ -19,6 +19,7 @@ import { SkyLayer } from "./sky";
 import { UnitAnimators, placeWithModel, unitIdentity, unitModel, type UnitContext, type UnitLook } from "./unit-nodes";
 import { BagsPanel, type BagsElements } from "./units/bags-panel";
 import { CombatHud } from "./units/combat-hud";
+import { LootPanel, type LootElements } from "./units/loot-panel";
 import { ProgressionHud } from "./units/progression-hud";
 import { SecondaryClick, attackToggle } from "./units/targeting";
 
@@ -43,6 +44,7 @@ export type WorldViewElements = {
   experienceStatus: HTMLElement;
   progressionFeedback: HTMLElement;
   bags: BagsElements;
+  loot: LootElements;
 };
 
 /** A targeting or attack intent, resolved against the latest projection when it is sent. */
@@ -120,6 +122,7 @@ export class WorldView {
   readonly #combatHud: CombatHud;
   readonly #progressionHud: ProgressionHud;
   readonly #bags: BagsPanel;
+  readonly #loot: LootPanel;
   readonly #intents: Intent[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
@@ -152,6 +155,8 @@ export class WorldView {
     this.#combatHud = new CombatHud(elements.unitStatus, elements.combatFeedback);
     this.#progressionHud = new ProgressionHud(elements.experienceBar, elements.experienceStatus, elements.progressionFeedback);
     this.#bags = new BagsPanel(elements.bags, (command) => this.queueIntent(() => command));
+    this.#loot = new LootPanel(elements.loot, (intent) => this.queueIntent(intent), () => { this.#bags.close(); });
+    elements.bags.toggle.addEventListener("click", () => this.#loot.close(false));
     this.#outbox = new MovementOutbox(this.#input({ keys: new Set(), jumps: 0 }));
   }
 
@@ -163,6 +168,7 @@ export class WorldView {
   load(world: LocalWorld): void {
     const started = performance.now();
     this.#bags.load(world.catalog);
+    this.#loot.load(world.catalog);
     const scenery = world.scenery.scenery;
     this.#presentationFingerprint = scenery.presentationFingerprint;
     this.#reliefAt = world.scenery.reliefAt;
@@ -184,6 +190,7 @@ export class WorldView {
     this.#combatHud.reset();
     this.#progressionHud.reset();
     this.#bags.reset(projection);
+    this.#loot.reset(projection);
     this.#shownArea = null;
     this.#flyTo = null;
     this.#framePending = true;
@@ -209,6 +216,7 @@ export class WorldView {
 
   leave(): void {
     this.#bags.reset();
+    this.#loot.reset();
     this.#endDrag();
     this.#sky.show(false);
     this.#overlay.hide();
@@ -219,7 +227,12 @@ export class WorldView {
     this.#intents.push(intent);
   }
 
-  toggleBags(): void { this.#bags.toggle(); }
+  toggleBags(): void {
+    this.#loot.close(false);
+    this.#bags.toggle();
+  }
+
+  closeLoot(): boolean { return this.#loot.close(); }
 
   closeBags(): boolean { return this.#bags.close(); }
 
@@ -265,6 +278,7 @@ export class WorldView {
     }
     for (const received of source.advance(deltaSeconds)) {
       this.#bags.update(received);
+      this.#loot.update(received);
     }
     const projection = source.latestProjection();
     if (!projection) {
@@ -310,6 +324,7 @@ export class WorldView {
     this.#combatHud.update(projection, catalog, now);
     this.#progressionHud.update(projection, now);
     this.#bags.update(projection);
+    this.#loot.update(projection);
     this.#lastSelf = { x: self.x, z: self.z, facing: self.facing };
     if (this.#framePending) {
       this.#framePending = false;
