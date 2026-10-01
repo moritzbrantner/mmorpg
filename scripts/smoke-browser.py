@@ -428,6 +428,34 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.keyboard.press("F3")
         expect(overlay).to_be_hidden()
 
+    def test_creature_and_npc_models_render_over_the_placeholder_boxes(self):
+        """Debug viewpoints beside a wolf of Wolfrun Woods and a gate guard show the low-poly models,
+        which draw more colours and a different silhouette than the single-colour placeholder boxes."""
+        self.open("?debug")
+        self.enter_world()
+        self.frames(6)
+        # Wolf 108 stands at (-84.5, 4.5) m and guard 6 at (-5, -8) m; wolves wander up to 6 m, so the
+        # camera looks at the spawn point from 5 m away, high enough to see over the grass.
+        views = {
+            "wolf": ([-84.5, 2.0, -1.0], [-84.5, 0.0, 4.5]),
+            "guard": ([-5.0, 1.5, -3.0], [-5.0, 0.0, -8.0]),
+        }
+        shots = {}
+        for name, (eye, target) in views.items():
+            # Heights above the presentation relief at the target.
+            self.page.evaluate("""([eye, target]) => {
+              const ground = window.__valeDebug.reliefAt(target[0] * 100, target[2] * 100) / 100;
+              window.__valeDebug.flyToPose([eye[0], ground + eye[1], eye[2]], [target[0], ground + target[1] + 0.6, target[2]]);
+            }""", [eye, target])
+            self.frames(10)
+            shots[name] = self.world_view()
+            self.page.screenshot(path=str(ARTIFACTS / f"creature-model-{name}.png"))
+            colours = self.canvas_colours()
+            self.assertGreater(colours["distinct"], 400, f"The {name} view must render a varied scene")
+            self.assertGreater(colours["covered"], 0.5, f"The {name} view must draw most of the frame")
+        self.assertNotEqual(shots["wolf"], shots["guard"], "Animal and NPC models render different frames")
+        self.page.evaluate("window.__valeDebug.follow()")
+
     def wait_for_facing_change(self, facing, timeout_frames=60):
         for _ in range(timeout_frames):
             self.frames(2)
