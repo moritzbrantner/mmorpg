@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["node", "bun-types"], "preserveSymlinks": true },
+  "include": ["scripts/grass-package.ts", "scripts/package-grass.ts", "tests/grass-package.test.ts"]
+}
