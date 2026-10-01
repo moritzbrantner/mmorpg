@@ -682,8 +682,8 @@ fn recovery_rejects_aura_amounts_no_player_level_reaches() {
     assert_eq!(checkpoint.players[0].combat.abilities.auras[0].amount, 44);
     assert!(restore(ids::ARCANE_BARRIER, 599, 92).is_ok());
     // Serpent Sting at level 10: 30 + 4 × 9 = 66; Rallying Cry: 30 % of 185 = 56.
-    assert!(restore(ids::SERPENT_STING, 449, 66).is_ok());
-    assert!(restore(ids::RALLYING_CRY, 299, 56).is_ok());
+    // (Amounts are checked before reachability, so these Arcanist-borne
+    // records still fail on their amount alone.)
     for (ability, remaining, amount) in [
         (ids::ARCANE_BARRIER, 599, 93),
         (ids::ARCANE_BARRIER, 599, u16::MAX),
@@ -697,6 +697,124 @@ fn recovery_rejects_aura_amounts_no_player_level_reaches() {
             restore(ability, remaining, amount).unwrap_err().message(),
             "aura state is out of range",
             "{ability:?} {amount}"
+        );
+    }
+}
+
+#[test]
+fn a_pulse_that_breaks_an_earlier_root_skips_no_later_aura() {
+    // Slots on the wolf: Frost Nova's root, Serpent Sting, Concussive Shot.
+    let content = classes::arena(
+        vec![arena::wolf(2_000, [1, 1])],
+        vec![arena::spawn(1, WOLF, [-200, 0])],
+    );
+    let mut zone = ZoneSimulation::with_content(ZoneId::new(9), content).unwrap();
+    zone.add_player(1).unwrap();
+    zone.add_player(2).unwrap();
+    let mut zone = classes::at_level(classes::at_level(zone, 1, 6), 2, 6);
+    let mut sequences = [0_u32; 2];
+    let mut send = |zone: &mut ZoneSimulation, player: u32, command: ZoneCommand| {
+        let sequence = &mut sequences[usize::try_from(player).unwrap() - 1];
+        *sequence += 1;
+        zone.apply_command(player, *sequence, command).unwrap();
+    };
+    let ability = |ability: AbilityId| ZoneCommand::UseAbility {
+        ability: ability.get(),
+        target: Some(TARGET),
+    };
+    send(&mut zone, 1, ZoneCommand::ChooseClass { class: 2, sex: 0 });
+    send(&mut zone, 2, ZoneCommand::ChooseClass { class: 1, sex: 1 });
+    zone.advance_tick().unwrap();
+    send(&mut zone, 1, ability(ids::FROST_NOVA));
+    send(&mut zone, 2, ability(ids::SERPENT_STING));
+    zone.advance_tick().unwrap();
+    let stung = zone.current_tick();
+    for _ in 0..45 {
+        zone.advance_tick().unwrap();
+    }
+    send(&mut zone, 2, ability(ids::CONCUSSIVE_SHOT));
+    zone.advance_tick().unwrap();
+    let snared = zone.current_tick();
+    let kinds = |zone: &ZoneSimulation| {
+        zone.snapshot().unwrap().creatures[0]
+            .abilities
+            .auras
+            .iter()
+            .map(|aura| (aura.ability, aura.remaining))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        kinds(&zone)
+            .iter()
+            .map(|(ability, _)| *ability)
+            .collect::<Vec<_>>(),
+        [ids::FROST_NOVA, ids::SERPENT_STING, ids::CONCUSSIVE_SHOT]
+    );
+    // The first sting pulse (89 ticks after it landed) breaks the root in
+    // slot 0; the snare behind it still counts down that tick.
+    while zone.current_tick() < stung + 89 {
+        zone.advance_tick().unwrap();
+    }
+    let elapsed = u16::try_from(zone.current_tick() - snared + 1).unwrap();
+    assert_eq!(
+        kinds(&zone),
+        [
+            (ids::SERPENT_STING, 450 - 90),
+            (ids::CONCUSSIVE_SHOT, 120 - elapsed),
+        ]
+    );
+}
+
+#[test]
+fn recovery_rejects_auras_no_caster_could_have_put_there() {
+    let mut fight = Fight::with_class(wolf_at(3_000), 4, 2);
+    fight.use_ability(ids::ARCANE_BARRIER);
+    fight.tick();
+    let checkpoint = fight.zone.snapshot().unwrap();
+    let content = Arc::clone(fight.zone.content());
+    let barrier = checkpoint.players[0].combat.abilities.auras[0];
+    let root = mmorpg_core::Aura {
+        ability: ids::FROST_NOVA,
+        remaining: 100,
+        amount: 0,
+        ..barrier
+    };
+    let restore = |player: Vec<mmorpg_core::Aura>, creature: Vec<mmorpg_core::Aura>| {
+        let mut state = checkpoint.clone();
+        state.players[0].combat.abilities.auras = player;
+        state.creatures[0].abilities.auras = creature;
+        ZoneSimulation::from_snapshot(state, Arc::clone(&content)).map(|_| ())
+    };
+    assert!(
+        restore(vec![barrier], vec![root]).is_ok(),
+        "a root on a creature"
+    );
+    for (player, creature) in [
+        // A Warden ability the Arcanist never learned.
+        (
+            vec![mmorpg_core::Aura {
+                ability: ids::RALLYING_CRY,
+                remaining: 299,
+                amount: 30,
+                ..barrier
+            }],
+            vec![],
+        ),
+        // A hostile aura on a player, and a self aura on a creature.
+        (vec![root], vec![]),
+        (vec![], vec![barrier]),
+        // A shield cast by another unit than its bearer.
+        (
+            vec![mmorpg_core::Aura {
+                caster: TARGET,
+                ..barrier
+            }],
+            vec![],
+        ),
+    ] {
+        assert_eq!(
+            restore(player, creature).unwrap_err().message(),
+            "an aura's caster or recipient is unreachable"
         );
     }
 }

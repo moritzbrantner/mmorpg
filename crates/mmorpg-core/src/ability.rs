@@ -266,6 +266,18 @@ impl Ability {
         })
     }
 
+    /// Whether its aura rests on the caster (heal over time, haste, absorb)
+    /// rather than on the creatures it hits.
+    #[must_use]
+    pub const fn aura_on_caster(&self) -> bool {
+        matches!(
+            self.effect,
+            AbilityEffect::HealOverTime { .. }
+                | AbilityEffect::Haste { .. }
+                | AbilityEffect::Absorb { .. }
+        )
+    }
+
     /// Whether the ability needs a hostile unit target (otherwise it is
     /// centred on the caster and ignores any target).
     #[must_use]

@@ -826,25 +826,29 @@ impl ZoneSimulation {
             )
             .collect();
         for unit in units {
-            let mut slot = 0;
-            loop {
-                let auras = match unit {
-                    EntityRef::Player(player_id) => self
-                        .players
-                        .get_mut(&player_id)
-                        .map(|player| &mut player.auras),
-                    EntityRef::Creature(creature_id) => self
-                        .creatures
-                        .get_mut(&creature_id)
-                        .map(|creature| &mut creature.auras),
-                    EntityRef::Npc(_) => None,
-                };
-                let Some(auras) = auras else {
+            // Each aura present at the start of the pass counts down once, in
+            // slot order, even when a pulse removes others (a broken root, an
+            // emptied shield, death): the pass follows identities, not indices.
+            let keys: Vec<_> = self
+                .unit_auras(unit)
+                .map(|auras| {
+                    auras
+                        .iter()
+                        .map(|aura| (aura.ability, aura.caster))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for key in keys {
+                let Some(auras) = self.unit_auras(unit) else {
                     break;
                 };
-                let Some(current) = auras.get_mut(slot) else {
-                    break;
+                let Some(slot) = auras
+                    .iter()
+                    .position(|aura| (aura.ability, aura.caster) == key)
+                else {
+                    continue;
                 };
+                let current = &mut auras[slot];
                 current.remaining = current.remaining.saturating_sub(1);
                 let aura = *current;
                 let spec = aura
@@ -852,8 +856,6 @@ impl ZoneSimulation {
                     .ok_or_else(|| ZoneError::new("aura names an ability without an aura"))?;
                 if aura.remaining == 0 {
                     auras.remove(slot);
-                } else {
-                    slot += 1;
                 }
                 let elapsed = spec.duration - aura.remaining;
                 if spec.period > 0 && elapsed % spec.period == 0 {
@@ -877,6 +879,20 @@ impl ZoneSimulation {
             }
         }
         Ok(())
+    }
+
+    fn unit_auras(&mut self, unit: EntityRef) -> Option<&mut Vec<Aura>> {
+        match unit {
+            EntityRef::Player(player_id) => self
+                .players
+                .get_mut(&player_id)
+                .map(|player| &mut player.auras),
+            EntityRef::Creature(creature_id) => self
+                .creatures
+                .get_mut(&creature_id)
+                .map(|creature| &mut creature.auras),
+            EntityRef::Npc(_) => None,
+        }
     }
 
     fn pulse(

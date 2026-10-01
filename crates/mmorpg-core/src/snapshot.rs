@@ -603,6 +603,43 @@ impl ZoneSimulation {
                 ));
             }
         }
+        // Every aura is reachable: a living player cast it with a learned
+        // ability, on itself for self-centred auras and on a creature otherwise.
+        let reachable = |unit: EntityRef, aura: &Aura| {
+            let EntityRef::Player(caster_id) = aura.caster else {
+                return false;
+            };
+            let learned = self.players.get(&caster_id).is_some_and(|caster| {
+                caster.is_alive()
+                    && caster.class.is_some_and(|choice| {
+                        learned(choice.class, caster.level, aura.ability).is_some()
+                    })
+            });
+            let on_caster =
+                ability_by_id(aura.ability).is_some_and(|ability| ability.aura_on_caster());
+            learned
+                && if on_caster {
+                    unit == aura.caster
+                } else {
+                    matches!(unit, EntityRef::Creature(_))
+                }
+        };
+        let units = self
+            .players
+            .iter()
+            .map(|(&id, player)| (EntityRef::Player(id), &player.auras))
+            .chain(
+                self.creatures
+                    .iter()
+                    .map(|(&id, creature)| (EntityRef::Creature(id), &creature.auras)),
+            );
+        for (unit, auras) in units {
+            if !auras.iter().all(|aura| reachable(unit, aura)) {
+                return Err(ZoneError::new(
+                    "an aura's caster or recipient is unreachable",
+                ));
+            }
+        }
         for creature in self.creatures.values() {
             if creature
                 .tapped_by
