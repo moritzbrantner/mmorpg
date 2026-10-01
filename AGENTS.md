@@ -88,6 +88,20 @@ python3 scripts/smoke-browser.py     # real Chromium against the built web/dist 
 
 - Balance playable-game progress with the distributed foundation. Gameplay slices are welcome but must not break the ownership, fencing, handoff or determinism contracts above.
 
+## Execution scope
+
+These rules govern how work is sliced and when expensive checks run. They never relax Authority, the distributed-world invariants, Determinism or Done means.
+
+- **One task = one branch = one PR.** A task is a tracking issue or plan step (for example in `docs/STARTER_ZONE.md`). Deliver it whole: core rules, protocol, server integration, both presentations, scenarios and docs on one branch, in small commits (GIT-007). Do not split a task into new issues or follow-up PRs on your own; if it cannot land as one PR, stop and propose the split on the issue instead of creating it.
+- **Stay inside the task.** Do not start foundation, tooling, CI, pin-refresh, maintenance or budget work unless the task cannot be completed without it (DEP-003). Note unrelated findings as a TODO (REPO-010) or one line in the PR description; do not open issues for them.
+- **No new ratchets unless the task asks for one.** Do not add size/performance budgets, baselines, evidence collectors or gates on your own initiative. Existing ratchets stay; when a task legitimately moves one, update its baseline in the same PR.
+- **One format bump per task.** Settle command, snapshot and canonical format changes before implementing; a task bumps each version at most once.
+- **Validate in tiers (TEST-015).** While iterating, run the focused commands that `coding-tooling inspect` selects for the touched scope. Run the complete Done-means gate once the branch is complete; after review fixes, rerun the focused commands plus the gate steps whose scope the fixes touched.
+- **Decide and continue.** When a task leaves a design choice open, pick the simplest option consistent with this file, record it in the PR description (or an ADR when consequential, REPO-020) and keep going.
+- **Short PR descriptions.** At most about 15 lines: what changed, format/compatibility changes, one line naming the gate steps that ran, and anything not verified (REPO-017). Leave detailed evidence to CI and the tests.
+
+A task spec names the goal and player-visible result, acceptance checks, the decided format changes, the crates/files expected to change and an explicit out-of-scope list.
+
 ## Shared conventions
 
 General engineering rules (git and merging, commits, testing, ADRs, docs, dependencies, Rust style, …) come from `coding-agent-conventions`, installed in `.conventions/`. Read the rule briefing in `.conventions/index.md` before implementing and open the linked source when a rule applies. Do not edit `.conventions/`; refresh it with `coding-tooling conventions update`. Rules below are repository-specific additions or exceptions.
