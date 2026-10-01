@@ -1,4 +1,4 @@
-/** Player-visible protocol v6 only. Canonical recovery state never enters rendering. */
+/** Player-visible protocol v7 only. Canonical recovery state never enters rendering. */
 import { entityKindFromCode, sameEntity, type EntityKind, type EntityRef } from "./entity-ref";
 
 export type { EntityKind, EntityRef } from "./entity-ref";
@@ -56,7 +56,9 @@ export type ErrorCode =
   | "you-are-dead"
   | "not-dead"
   | "invalid-target"
-  | "too-many-intents";
+  | "too-many-intents"
+  | "invalid-inventory-move"
+  | "inventory-full";
 
 /** Feedback the viewer received in the projection's tick; cosmetic and lossy. */
 export type ZoneEvent =
@@ -64,6 +66,9 @@ export type ZoneEvent =
   | { kind: "miss" | "evade"; source: EntityRef; target: EntityRef }
   | { kind: "died"; entity: EntityRef; killer: EntityRef | null }
   | { kind: "error"; code: ErrorCode; target: EntityRef | null };
+
+/** Wire catalog revision 1, validated against the core's immutable stack limits. */
+export type InventorySlot = { itemId: number; quantity: number } | null;
 
 export type ZoneSnapshot = {
   zoneId: number;
@@ -75,6 +80,9 @@ export type ZoneSnapshot = {
   viewer: ViewerState;
   /** The viewer's target's own target. */
   targetOfTarget: EntityRef | null;
+  inventoryRevision: bigint;
+  /** Complete self bag when present; null means retain prior state, never empty. */
+  inventory: readonly InventorySlot[] | null;
   events: readonly ZoneEvent[];
   /** Priority order: the viewer, its target, then nearest first. */
   entities: readonly EntityState[];
@@ -83,22 +91,22 @@ export type ZoneSnapshot = {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 6;
-const SCHEMA_VERSION = 6;
+const WIRE_VERSION = 7;
+const SCHEMA_VERSION = 7;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
-/** Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 23, target 5, two counts. */
-const FIXED_BYTES = 63;
+/** Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 23, target 5, inventory revision 8/presence 1, two counts. */
+const FIXED_BYTES = 72;
 const ENTITY_BYTES = 21;
 const MAX_EVENTS = 16;
-/** (1 077 − 63) / 21: records that fit without events. */
-const MAX_ENTITIES = 48;
+/** (1 077 − 72) / 21: records that fit without events or a bag sheet. */
+const MAX_ENTITIES = 47;
 const BUFFER_CAPACITY = 32;
 
 const ERROR_CODES: readonly ErrorCode[] = [
   "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target",
-  "too-many-intents",
+  "too-many-intents", "invalid-inventory-move", "inventory-full",
 ];
 
 class Reader {
@@ -277,6 +285,24 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
     throw new Error("Inconsistent viewer state");
   }
   const targetOfTarget = reader.entity();
+  const inventoryRevision = reader.u64();
+  if (inventoryRevision === 0n) throw new Error("Inventory revision must be nonzero");
+  const [hasInventory = false] = reader.flags(1);
+  let inventory: InventorySlot[] | null = null;
+  if (hasInventory) {
+    inventory = [];
+    for (let slot = 0; slot < 16; slot += 1) {
+      const itemId = reader.u16();
+      const quantity = reader.u16();
+      if (itemId === 0 && quantity === 0) {
+        inventory.push(null);
+      } else {
+        const limit = itemId === 1 ? 20 : itemId === 2 ? 1 : 0;
+        if (quantity === 0 || quantity > limit) throw new Error("Invalid inventory stack");
+        inventory.push({ itemId, quantity });
+      }
+    }
+  }
   const eventCount = reader.u8();
   if (eventCount > MAX_EVENTS) throw new Error("Snapshot exceeds the event capacity");
   const events: ZoneEvent[] = [];
@@ -302,7 +328,7 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   return {
     zoneId, tick, contentRevision, acknowledgedSequence, viewerId,
     viewer: { experience, experienceToNextLevel, health, maxHealth, level, dead, inCombat, autoAttacking, target },
-    targetOfTarget, events, entities,
+    targetOfTarget, inventoryRevision, inventory, events, entities,
   };
 }
 

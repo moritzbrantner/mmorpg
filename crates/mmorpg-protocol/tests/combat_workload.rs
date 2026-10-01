@@ -43,9 +43,11 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             report.projection_bytes,
         ];
         for (index, (actual, ceiling)) in actual.into_iter().zip(ceiling).enumerate() {
-            // v6 adds eight self bytes per projection; physics/work fences stay fixed.
+            // v6 adds eight XP bytes per projection. v7 adds nine bag metadata
+            // bytes per projection and 64 bag bytes every ten ticks. These
+            // fixtures never move bags; physics/work fences remain unchanged.
             let ceiling = if index == 6 {
-                ceiling + 8 * fixture.players * TICKS
+                ceiling + 17 * fixture.players * TICKS + 64 * fixture.players * (TICKS / 10)
             } else {
                 ceiling
             };
@@ -64,7 +66,7 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             assert_eq!(report.ai_evaluations, 59 * TICKS);
         }
         if fixture.crowded {
-            assert_eq!(report.max_projection_bytes, 1_071);
+            assert_eq!(report.max_projection_bytes, 1_074);
             assert!(report.candidates_tested > 1_000_000);
         }
     }

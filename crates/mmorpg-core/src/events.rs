@@ -33,6 +33,10 @@ pub enum ErrorCode {
     /// More discrete intents arrived between two ticks than a player may
     /// queue; the excess was dropped.
     TooManyIntents,
+    /// Invalid bag slot, quantity, source or partial swap.
+    InvalidInventoryMove,
+    /// The complete requested quantity cannot fit the destination stack.
+    InventoryFull,
 }
 
 /// One feedback event addressed to a player.

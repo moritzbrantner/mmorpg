@@ -29,13 +29,39 @@ function run(source: LocalZoneSource, ticks: number): void {
 }
 
 describe("WASM local zone host", () => {
+  test("bag moves use queued core authority and missed sheets recover periodically", () => {
+    const { source } = createLocalWorld(wasm);
+    source.join();
+    const initial = source.latestProjection();
+    expect(initial?.inventoryRevision).toBe(1n);
+    expect(initial?.inventory?.[0]).toEqual({ itemId: 1, quantity: 3 });
+    source.sendCommand({ kind: "move-item", source: 0, destination: 15, quantity: 2 });
+    expect(source.latestProjection()).toEqual(initial);
+    run(source, 1);
+    const changed = source.latestProjection();
+    expect(changed?.inventoryRevision).toBe(2n);
+    expect(changed?.inventory?.[0]).toEqual({ itemId: 1, quantity: 1 });
+    expect(changed?.inventory?.[15]).toEqual({ itemId: 1, quantity: 2 });
+    source.sendCommand({ kind: "move-item", source: 15, destination: 1, quantity: 1 });
+    run(source, 1);
+    expect(source.latestProjection()?.events).toContainEqual({ kind: "error", code: "invalid-inventory-move", target: null });
+    run(source, 7);
+    expect(source.latestProjection()?.inventory).toBeNull();
+    expect(source.latestProjection()?.inventoryRevision).toBe(2n);
+    run(source, 1);
+    expect(source.latestProjection()?.inventory).toEqual(changed?.inventory);
+    source.leave();
+    source.join();
+    expect(source.latestProjection()?.inventoryRevision).toBe(1n);
+    expect(source.latestProjection()?.inventory?.[0]).toEqual({ itemId: 1, quantity: 3 });
+  });
   test("loads under Bun and hosts zone 1 with the shared content revision", () => {
     const zone = new wasm.LocalZone() as InstanceType<typeof wasm.LocalZone> & { zoneId(): number };
     expect(zone.zoneId()).toBe(1);
-    expect(zone.contentRevision()).toBe(3n);
+    expect(zone.contentRevision()).toBe(4n);
     const player = zone.join();
     const projection = decodeSnapshot(zone.projection(player));
-    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 3n, viewerId: player });
+    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 4n, viewerId: player });
     expect(projection.viewer).toEqual({
       health: 50, maxHealth: 50, experience: 0, experienceToNextLevel: 100, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
     });
@@ -100,7 +126,7 @@ describe("WASM local zone host", () => {
 
   test("scenery and areas come from the same content as the zone", () => {
     const { source, scenery } = createLocalWorld(wasm);
-    expect(scenery.scenery.contentRevision).toBe(3n);
+    expect(scenery.scenery.contentRevision).toBe(4n);
     expect(scenery.scenery.source).toBe("mmorpg-scenery");
     expect(scenery.scenery.playerHalfExtents).toEqual([30, 90, 30]);
     source.join();
@@ -161,7 +187,7 @@ describe("WASM local zone host", () => {
 describe("WASM local zone combat intents", () => {
   test("the catalog names the hosted units and matches the zone's content", () => {
     const { catalog } = createLocalWorld(wasm);
-    expect(catalog.contentRevision).toBe(3n);
+    expect(catalog.contentRevision).toBe(4n);
     expect([...catalog.creatureTemplates.values()].map((template) => template.name)).toEqual([
       "Timber Wolf", "Young Boar", "Grain Rat", "Field Marauder", "Mirefin Lurker", "Redbrand Bandit", "Garrick Redbrand",
     ]);

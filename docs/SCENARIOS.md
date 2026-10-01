@@ -33,7 +33,7 @@ name = "alice"
 [[steps]]                   # applied at `tick`, before it advances to tick + 1
 tick = 0
 bot = "alice"
-action = "join"             # join | move | jump | select_target | start_attack | stop_attack | release_spirit | disconnect | reconnect
+action = "join"             # join | move | jump | select_target | start_attack | stop_attack | release_spirit | move_item | disconnect | reconnect
 
 [[steps]]
 tick = 0
@@ -136,3 +136,14 @@ MMORPG_SCENARIOS_UPDATE=1 cargo test -p mmorpg-scenarios --test scenarios --lock
 - Scenarios run in process. Transport framing, datagram size limits, TLS and real reconnect timing are not covered. `scripts/smoke-native.py` and `mmorpg-client`'s loopback test still cover those.
 - A network mode against `mmorpg-zone-host` is not implemented. The reusable client session lives in `mmorpg-client`, which depends on wgpu and winit unconditionally.
 - The control-plane runner checks the in-memory reference model. It does not check a distributed deployment.
+
+### Inventory vocabulary
+
+`move_item` steps require `source_slot`, `destination_slot` (`u8`) and `quantity`
+(`u16`), and support the same sequence/connection overrides as other commands.
+`inventory` expectations require `inventory_revision` and `sheet` (presence).
+For a present sheet, optional `slot`, `item` and `quantity` are supplied together;
+empty slots use item/quantity zero. Expectations read decoded self projections.
+The `inventory-resume` scenario checks splitting, refused partial swaps, duplicate
+sequences, stale connection epochs, resume, merging, periodic sheets and isolation
+from another player's bag.

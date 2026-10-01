@@ -16,6 +16,8 @@ function command(fields: readonly string[]): WorldCommand {
   switch (name) {
     case "move":
       return { kind: "move", forward: axis(first), strafe: axis(second), facing: Number(third) };
+    case "move_item":
+      return { kind: "move-item", source: Number(first), destination: Number(second), quantity: Number(third) };
     case "jump":
       return { kind: "jump" };
     case "select_target": {
@@ -48,7 +50,7 @@ describe("Rust/browser command contract", () => {
   test("encodes the same golden bytes as mmorpg-protocol", () => {
     const commands = fixtureCommands();
     const kinds = new Set(commands.map(({ command }) => command.kind));
-    expect([...kinds].sort()).toEqual(["jump", "move", "release-spirit", "select-target", "start-attack", "stop-attack"]);
+    expect([...kinds].sort()).toEqual(["jump", "move", "move-item", "release-spirit", "select-target", "start-attack", "stop-attack"]);
     expect(commands.filter(({ command }) => command.kind === "move").length).toBeGreaterThanOrEqual(4);
     expect(commands.filter(({ command }) => command.kind === "select-target").length).toBe(4);
     for (const { hex, command } of commands) {

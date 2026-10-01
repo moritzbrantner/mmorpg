@@ -5,6 +5,8 @@ use std::{error::Error, fmt};
 
 pub const INVENTORY_SLOTS: usize = 16;
 pub const ITEM_CATALOG_REVISION: u64 = 1;
+/// Re-send unchanged bags every ten ticks so a lost change self-heals.
+pub const INVENTORY_RESEND_TICKS: u64 = 10;
 
 /// Stable catalog identity. Zero and unknown values fail closed on lookup.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -111,6 +113,20 @@ pub struct Inventory {
 }
 
 impl Inventory {
+    /// A deterministic admission grant, not a client operation.
+    pub(crate) const fn starter() -> Self {
+        let mut slots = [None; INVENTORY_SLOTS];
+        slots[0] = Some(ItemStack {
+            item: ItemId::new(1),
+            quantity: 3,
+        });
+        slots[1] = Some(ItemStack {
+            item: ItemId::new(2),
+            quantity: 1,
+        });
+        Self { slots }
+    }
+
     /// Imported stacks have already passed `ItemStack::new`; array length
     /// enforces capacity without accepting or truncating excess slots.
     #[must_use]

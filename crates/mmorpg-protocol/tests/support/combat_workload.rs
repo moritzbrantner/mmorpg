@@ -113,6 +113,9 @@ fn initial_zone(fixture: Fixture) -> Result<ZoneSimulation, Box<dyn Error>> {
             jump_pending: false,
             last_sequence: 0,
             spawn_slot: u16::try_from(index)?,
+            inventory: mmorpg_core::Inventory::default(),
+            inventory_revision: 1,
+            inventory_changed_at: 0,
             combat: CanonicalPlayerCombat::default(),
         });
     }

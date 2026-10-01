@@ -61,6 +61,23 @@ fn recovery_refuses_changed_content_of_the_same_revision() {
 }
 
 #[test]
+fn an_authored_rng_seed_is_bound_to_recovery_identity() {
+    let content = wandering_wolf(arena::wolf(30, [1, 2]));
+    let retuned = Arc::new(
+        content
+            .as_ref()
+            .clone()
+            .with_rng_seed(content.rng_seed() ^ 1),
+    );
+    assert_eq!(content.revision(), retuned.revision());
+    assert_ne!(content.fingerprint(), retuned.fingerprint());
+    assert_eq!(
+        restore(checkpoint(&content), &retuned).err().unwrap(),
+        "snapshot content identity does not match the supplied zone content"
+    );
+}
+
+#[test]
 fn recovery_refuses_wander_destinations_beyond_the_wander_radius() {
     let content = wandering_wolf(arena::wolf(30, [1, 2]));
     let valid = checkpoint(&content);

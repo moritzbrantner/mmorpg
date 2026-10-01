@@ -202,6 +202,8 @@ pub const fn error_code_name(code: ErrorCode) -> &'static str {
         ErrorCode::NotDead => "not_dead",
         ErrorCode::InvalidTarget => "invalid_target",
         ErrorCode::TooManyIntents => "too_many_intents",
+        ErrorCode::InvalidInventoryMove => "invalid_inventory_move",
+        ErrorCode::InventoryFull => "inventory_full",
     }
 }
 
@@ -215,6 +217,8 @@ fn parse_error_code(name: &str) -> Option<ErrorCode> {
         "not_dead" => ErrorCode::NotDead,
         "invalid_target" => ErrorCode::InvalidTarget,
         "too_many_intents" => ErrorCode::TooManyIntents,
+        "invalid_inventory_move" => ErrorCode::InvalidInventoryMove,
+        "inventory_full" => ErrorCode::InventoryFull,
         _ => return None,
     })
 }

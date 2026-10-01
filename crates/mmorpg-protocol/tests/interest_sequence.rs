@@ -60,6 +60,9 @@ fn zone_at(positions: &[[i32; 3]], definition: ZoneDefinition) -> ZoneSimulation
             jump_pending: false,
             last_sequence: 3,
             spawn_slot: u16::try_from(index).unwrap(),
+            inventory: mmorpg_core::Inventory::default(),
+            inventory_revision: 1,
+            inventory_changed_at: 0,
             combat: CanonicalPlayerCombat::default(),
         })
         .collect();

@@ -12,9 +12,9 @@ use mmorpg_scenery::{
 };
 
 /// Recorded from this revision; any change to content, placement or relief
-/// must update it deliberately. Revision 3 added creatures and NPCs only; the
+/// must update it deliberately. Revision 4 adds bag content only; the
 /// derived scenery is unchanged apart from the revision it carries.
-const STABLE_HASH: u64 = 0x8495_49d6_874e_b332;
+const STABLE_HASH: u64 = 0xbfbc_7757_2f3a_f7fd;
 
 fn is_terrain(collider: &StaticCollider) -> bool {
     collider.id == ids::GROUND || ids::BOUNDARY_WALLS.contains(&collider.id)
@@ -43,6 +43,13 @@ fn scenery_is_deterministic_with_a_stable_hash() {
     let hash = first.stable_hash();
     assert_eq!(hash, second.stable_hash());
     assert_eq!(hash, STABLE_HASH, "scenery changed: {hash:#018x}");
+    let mut previous_revision = first;
+    previous_revision.content_revision = 3;
+    assert_eq!(
+        previous_revision.stable_hash(),
+        0x8495_49d6_874e_b332,
+        "inventory must not change presentation content"
+    );
 }
 
 #[test]

@@ -20,7 +20,10 @@ pub mod units;
 
 /// Content revision of this zone. Revision 1 was the former test outpost;
 /// revision 2 had no creatures or NPCs.
-pub const REVISION: u64 = 3;
+pub const REVISION: u64 = 4;
+/// Revision 3's simulation seed, retained when revision 4 adds bag content.
+/// Economy changes must not reroll Greyhaven's existing creature/combat scripts.
+pub const RNG_SEED: u64 = 0x3cbc_808b_be89_b29c;
 /// Gravity in units per tick squared.
 pub const GRAVITY: [i32; 3] = [0, -1, 0];
 /// The inner faces of the boundary walls enclose this square.
@@ -498,7 +501,8 @@ static CONTENT: LazyLock<Arc<ZoneContent>> = LazyLock::new(|| {
             units::npcs(),
             units::GRAVEYARD,
         )
-        .expect("built-in Greyhaven Vale unit content is valid"),
+        .expect("built-in Greyhaven Vale unit content is valid")
+        .with_rng_seed(RNG_SEED),
     )
 });
 

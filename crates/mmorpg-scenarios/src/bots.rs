@@ -73,6 +73,7 @@ pub enum Action {
     StartAttack,
     StopAttack,
     ReleaseSpirit,
+    MoveItem,
     Disconnect,
     Reconnect,
 }
@@ -87,6 +88,7 @@ impl Action {
             Self::StartAttack => "start_attack",
             Self::StopAttack => "stop_attack",
             Self::ReleaseSpirit => "release_spirit",
+            Self::MoveItem => "move_item",
             Self::Disconnect => "disconnect",
             Self::Reconnect => "reconnect",
         }
@@ -100,7 +102,8 @@ impl Action {
             | Self::SelectTarget
             | Self::StartAttack
             | Self::StopAttack
-            | Self::ReleaseSpirit => "applied",
+            | Self::ReleaseSpirit
+            | Self::MoveItem => "applied",
             Self::Disconnect => "disconnected",
             Self::Reconnect => "resumed",
         }
@@ -114,7 +117,8 @@ impl Action {
             | Self::SelectTarget
             | Self::StartAttack
             | Self::StopAttack
-            | Self::ReleaseSpirit => true,
+            | Self::ReleaseSpirit
+            | Self::MoveItem => true,
             Self::Join | Self::Disconnect | Self::Reconnect => false,
         }
     }
@@ -134,6 +138,9 @@ pub struct Step {
     pub facing: Option<u16>,
     /// The unit a `select_target` step selects, or `none` to clear.
     pub entity: Option<UnitSpec>,
+    pub source_slot: Option<u8>,
+    pub destination_slot: Option<u8>,
+    pub quantity: Option<u16>,
     /// Command sequence override (commands only); defaults to the bot's next sequence.
     pub seq: Option<u32>,
     /// Connection epoch override; defaults to the bot's current epoch.
@@ -154,6 +161,7 @@ pub enum ExpectKind {
     Area,
     Health,
     Progression,
+    Inventory,
     Target,
     Event,
     Unit,
@@ -171,6 +179,7 @@ impl ExpectKind {
             Self::Area => "area",
             Self::Health => "health",
             Self::Progression => "progression",
+            Self::Inventory => "inventory",
             Self::Target => "target",
             Self::Event => "event",
             Self::Unit => "unit",
@@ -189,6 +198,7 @@ impl ExpectKind {
             | Self::Area
             | Self::Health
             | Self::Progression
+            | Self::Inventory
             | Self::Target => false,
         }
     }
@@ -214,6 +224,11 @@ pub struct Expectation {
     pub health: Option<u32>,
     pub level: Option<u8>,
     pub experience: Option<u32>,
+    pub inventory_revision: Option<u64>,
+    pub sheet: Option<bool>,
+    pub slot: Option<u8>,
+    pub item: Option<u16>,
+    pub quantity: Option<u16>,
     /// The unit a `target`, `event` or `unit` expectation is about.
     pub entity: Option<UnitSpec>,
     /// The feedback event kind of an `event` expectation.
@@ -281,6 +296,19 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                 "{at}: forward, strafe and facing are required for move and only for move"
             ));
         }
+        let is_inventory_move = step.action == Action::MoveItem;
+        if [
+            step.source_slot.is_some(),
+            step.destination_slot.is_some(),
+            step.quantity.is_some(),
+        ]
+        .iter()
+        .any(|&present| present != is_inventory_move)
+        {
+            return Err(format!(
+                "{at}: source_slot, destination_slot and quantity are required only for move_item"
+            ));
+        }
         if step.entity.is_some() != (step.action == Action::SelectTarget) {
             return Err(format!(
                 "{at}: entity is required for select_target and only for select_target"
@@ -331,6 +359,24 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             ExpectKind::Health => expectation.health.is_some(),
             ExpectKind::Progression => {
                 expectation.level.is_some() && expectation.experience.is_some()
+            }
+            ExpectKind::Inventory => {
+                let slot_fields = [
+                    expectation.slot.is_some(),
+                    expectation.item.is_some(),
+                    expectation.quantity.is_some(),
+                ];
+                if slot_fields
+                    .iter()
+                    .any(|&present| present != expectation.slot.is_some())
+                    || expectation.slot.is_some_and(|slot| slot >= 16)
+                    || (expectation.sheet != Some(true) && expectation.slot.is_some())
+                {
+                    return Err(format!(
+                        "{at}: inventory slot/item/quantity must be supplied together for a present sheet, slot below 16"
+                    ));
+                }
+                expectation.inventory_revision.is_some() && expectation.sheet.is_some()
             }
             ExpectKind::Target => expectation.entity.is_some(),
             ExpectKind::Event => expectation.event.is_some(),
@@ -521,7 +567,8 @@ impl Runner<'_> {
             | Action::SelectTarget
             | Action::StartAttack
             | Action::StopAttack
-            | Action::ReleaseSpirit => self.submit(index, step)?,
+            | Action::ReleaseSpirit
+            | Action::MoveItem => self.submit(index, step)?,
             Action::Disconnect => self.disconnect(index)?,
             Action::Reconnect => self.reconnect(index)?,
         };
@@ -615,6 +662,25 @@ impl Runner<'_> {
             Action::StartAttack => (ZoneCommand::StartAttack, String::new()),
             Action::StopAttack => (ZoneCommand::StopAttack, String::new()),
             Action::ReleaseSpirit => (ZoneCommand::ReleaseSpirit, String::new()),
+            Action::MoveItem => {
+                let source = step
+                    .source_slot
+                    .ok_or("move_item source_slot is required")?;
+                let destination = step
+                    .destination_slot
+                    .ok_or("move_item destination_slot is required")?;
+                let quantity = step.quantity.ok_or("move_item quantity is required")?;
+                (
+                    ZoneCommand::MoveItem {
+                        source,
+                        destination,
+                        quantity,
+                    },
+                    format!(
+                        " source_slot={source} destination_slot={destination} quantity={quantity}"
+                    ),
+                )
+            }
             Action::Join | Action::Disconnect | Action::Reconnect => {
                 return Err(format!("{} is not a command", step.action.name()));
             }
@@ -1012,6 +1078,32 @@ impl Runner<'_> {
                     Err(format!("got {shown}"))
                 }
             }
+            ExpectKind::Inventory => {
+                let shown = format!(
+                    "revision={} sheet={}",
+                    view.inventory_revision,
+                    view.inventory.is_some()
+                );
+                if Some(view.inventory_revision) != expectation.inventory_revision
+                    || Some(view.inventory.is_some()) != expectation.sheet
+                {
+                    return Err(format!("got {shown}"));
+                }
+                if let Some(slot) = expectation.slot {
+                    let bag = view.inventory.as_ref().ok_or("inventory sheet is absent")?;
+                    let stack = bag.slots()[usize::from(slot)];
+                    let (item, quantity) =
+                        stack.map_or((0, 0), |stack| (stack.item().get(), stack.quantity()));
+                    let shown = format!("{shown} slot={slot} item={item} quantity={quantity}");
+                    if Some(item) != expectation.item || Some(quantity) != expectation.quantity {
+                        Err(format!("got {shown}"))
+                    } else {
+                        Ok(shown)
+                    }
+                } else {
+                    Ok(shown)
+                }
+            }
             ExpectKind::Target => {
                 let expected = self.resolve_unit(expectation.entity.as_ref())?;
                 let actual = view.viewer.target;
@@ -1120,6 +1212,7 @@ fn describe(expectation: &Expectation) -> String {
         ExpectKind::Area => format!("{bot} area {target}"),
         ExpectKind::Health => format!("{bot} health"),
         ExpectKind::Progression => format!("{bot} progression"),
+        ExpectKind::Inventory => format!("{bot} inventory"),
         ExpectKind::Target => format!("{bot} target {}", unit_text(expectation)),
         ExpectKind::Event => {
             let event = expectation

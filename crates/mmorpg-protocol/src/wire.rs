@@ -78,6 +78,8 @@ const fn error_code(code: ErrorCode) -> u16 {
         ErrorCode::NotDead => 6,
         ErrorCode::InvalidTarget => 7,
         ErrorCode::TooManyIntents => 8,
+        ErrorCode::InvalidInventoryMove => 9,
+        ErrorCode::InventoryFull => 10,
     }
 }
 
@@ -91,6 +93,8 @@ fn decode_error_code(code: u16) -> Result<ErrorCode, ProtocolError> {
         6 => ErrorCode::NotDead,
         7 => ErrorCode::InvalidTarget,
         8 => ErrorCode::TooManyIntents,
+        9 => ErrorCode::InvalidInventoryMove,
+        10 => ErrorCode::InventoryFull,
         _ => return Err(ProtocolError::new("unknown error code")),
     })
 }
@@ -375,12 +379,14 @@ mod tests {
             ErrorCode::NotDead,
             ErrorCode::InvalidTarget,
             ErrorCode::TooManyIntents,
+            ErrorCode::InvalidInventoryMove,
+            ErrorCode::InventoryFull,
         ];
         for (wire, code) in (1..).zip(codes) {
             assert_eq!(error_code(code), wire, "{code:?}");
             assert_eq!(decode_error_code(wire).unwrap(), code);
         }
-        for unknown in [0, 9, u16::MAX] {
+        for unknown in [0, 11, u16::MAX] {
             assert_eq!(
                 decode_error_code(unknown).unwrap_err().to_string(),
                 "unknown error code"

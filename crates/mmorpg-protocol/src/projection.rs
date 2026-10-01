@@ -7,11 +7,12 @@ use mmorpg_core::{
     ViewerState, ZoneSnapshot,
 };
 
+use crate::inventory::{INVENTORY_RECORD_BYTES, decode_inventory, encode_inventory};
 use crate::wire::{
     COMMON_HEADER_BYTES, ENTITY_REF_BYTES, PLAYER_SNAPSHOT_SCOPE, decode_common_header,
     decode_entity_kind, decode_entity_ref, decode_event, decode_u8_count, decode_u16_count,
     encode_common_header, encode_entity_ref, encode_event, encode_u8_count, ensure_fully_consumed,
-    entity_kind_code, flag_byte, read_flags, read_u8, take,
+    entity_kind_code, flag_byte, read_bool, read_flags, read_u8, take,
 };
 use crate::{MAX_PLAYER_PROJECTION_BYTES, ProtocolError};
 
@@ -23,21 +24,25 @@ const SELF_BYTES: usize = 4 + 4 + 1 + 8 + 1 + ENTITY_REF_BYTES;
 const TARGET_BYTES: usize = ENTITY_REF_BYTES;
 /// Every section's fixed part: header, self, target, event count (`u8`)
 /// and entity count (`u16`).
-pub const PLAYER_SNAPSHOT_FIXED_BYTES: usize = HEADER_BYTES + SELF_BYTES + TARGET_BYTES + 1 + 2;
+pub const PLAYER_SNAPSHOT_FIXED_BYTES: usize =
+    HEADER_BYTES + SELF_BYTES + TARGET_BYTES + 8 + 1 + 1 + 2;
 /// Kind, flags, source and target references, `u16` amount.
 pub const EVENT_RECORD_BYTES: usize = 2 + 2 * ENTITY_REF_BYTES + 2;
 /// Kind, ID, appearance, `3 × i16` position, `3 × i8` velocity, `u16`
 /// facing, level, health percent and flags.
 pub const ENTITY_RECORD_BYTES: usize = 1 + 4 + 2 + 6 + 3 + 2 + 1 + 1 + 1;
-/// Records that fit the budget without events: (1,077 − 63) / 21 = 48.
+/// Records that fit the budget without events: (1,077 − 72) / 21 = 47 (without a bag sheet).
 pub const MAX_WIRE_ENTITIES: usize =
     (MAX_PLAYER_PROJECTION_BYTES - PLAYER_SNAPSHOT_FIXED_BYTES) / ENTITY_RECORD_BYTES;
 const MAX_EVENT_SECTION_BYTES: usize = MAX_EVENTS_PER_PLAYER * EVENT_RECORD_BYTES;
 
 // With a full event section, the viewer and its target always fit:
-// 63 + 16 × 14 + 2 × 21 = 329 ≤ 1,077 bytes.
+// 72 + 64 + 16 × 14 + 2 × 21 = 402 ≤ 1,077 bytes.
 const _: () = assert!(
-    PLAYER_SNAPSHOT_FIXED_BYTES + MAX_EVENT_SECTION_BYTES + 2 * ENTITY_RECORD_BYTES
+    PLAYER_SNAPSHOT_FIXED_BYTES
+        + INVENTORY_RECORD_BYTES
+        + MAX_EVENT_SECTION_BYTES
+        + 2 * ENTITY_RECORD_BYTES
         <= MAX_PLAYER_PROJECTION_BYTES
 );
 // Budget packing, not the relevance cap, bounds the entity count.
@@ -98,6 +103,11 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
     encode_entity_ref(&mut payload, viewer.target);
     encode_entity_ref(&mut payload, snapshot.target_of_target);
 
+    payload.extend_from_slice(&snapshot.inventory_revision.to_be_bytes());
+    payload.push(u8::from(snapshot.inventory.is_some()));
+    if let Some(inventory) = &snapshot.inventory {
+        encode_inventory(&mut payload, inventory);
+    }
     payload.push(event_count);
     for event in &snapshot.events {
         encode_event(&mut payload, event);
@@ -194,6 +204,15 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     }
     let target_of_target = decode_entity_ref(payload, &mut offset)?;
 
+    let inventory_revision = u64::from_be_bytes(take(payload, &mut offset)?);
+    if inventory_revision == 0 {
+        return Err(ProtocolError::new("inventory revision must be nonzero"));
+    }
+    let inventory = if read_bool(payload, &mut offset)? {
+        Some(decode_inventory(payload, &mut offset)?)
+    } else {
+        None
+    };
     let event_count = decode_u8_count(
         payload,
         &mut offset,
@@ -244,6 +263,8 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
             target,
         },
         target_of_target,
+        inventory_revision,
+        inventory,
         events,
         entities,
     })
@@ -330,10 +351,16 @@ mod tests {
     /// The shared Rust/browser golden projection: a viewer fighting a
     /// tapped wolf next to an NPC, with one event of every kind.
     fn fixture_snapshot() -> ZoneSnapshot {
+        let mut slots = [None; mmorpg_core::INVENTORY_SLOTS];
+        slots[0] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 3).unwrap());
+        slots[1] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(2), 1).unwrap());
+        slots[15] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap());
         ZoneSnapshot {
-            content_revision: 3,
+            content_revision: 4,
             acknowledged_sequence: 81,
             viewer_id: 7,
+            inventory_revision: 9,
+            inventory: Some(mmorpg_core::Inventory::from_slots(slots)),
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(42),
             tick: 99,
@@ -443,7 +470,7 @@ mod tests {
     }
 
     fn fixture_bytes() -> Vec<u8> {
-        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v6.hex").trim();
+        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v7.hex").trim();
         (0..fixture.len())
             .step_by(2)
             .map(|offset| u8::from_str_radix(&fixture[offset..offset + 2], 16).unwrap())
@@ -451,7 +478,7 @@ mod tests {
     }
 
     /// Byte offsets of the fixture's sections.
-    const EVENTS: usize = 60;
+    const EVENTS: usize = 60 + 8 + 1 + INVENTORY_RECORD_BYTES;
     const ENTITY_COUNT: usize = EVENTS + 1 + 7 * EVENT_RECORD_BYTES;
     const FIRST_ENTITY: usize = ENTITY_COUNT + 2;
 
@@ -470,7 +497,10 @@ mod tests {
         }
         assert_eq!(
             encoded.len(),
-            PLAYER_SNAPSHOT_FIXED_BYTES + 7 * EVENT_RECORD_BYTES + 4 * ENTITY_RECORD_BYTES
+            PLAYER_SNAPSHOT_FIXED_BYTES
+                + INVENTORY_RECORD_BYTES
+                + 7 * EVENT_RECORD_BYTES
+                + 4 * ENTITY_RECORD_BYTES
         );
         assert_eq!(encoded, fixture_bytes());
         assert_eq!(decode_snapshot(&encoded).unwrap(), snapshot);
@@ -552,6 +582,16 @@ mod tests {
             .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
             .collect();
         assert!(decode_snapshot(&bytes).is_err());
+        let v6 = include_str!("../../../fixtures/protocol/player-snapshot-v6.hex");
+        let bytes = v6
+            .trim()
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect::<Vec<_>>();
+        assert!(decode_snapshot(&bytes).is_err());
         for (level, experience, threshold) in [
             (1, 100, 100),
             (1, 0, 0),
@@ -565,6 +605,36 @@ mod tests {
             snapshot.viewer.experience_to_next_level = threshold;
             assert!(decode_snapshot(&pack_snapshot(&snapshot).unwrap().payload).is_err());
         }
+    }
+
+    #[test]
+    fn inventory_decoder_rejects_corrupt_slots_and_missing_revision() {
+        let encoded = fixture_bytes();
+        let mut zero_revision = encoded.clone();
+        zero_revision[60..68].fill(0);
+        assert!(decode_snapshot(&zero_revision).is_err());
+        let mut invalid_flag = encoded.clone();
+        invalid_flag[68] = 2;
+        assert!(decode_snapshot(&invalid_flag).is_err());
+        for (slot, item, quantity) in [
+            (0, 0_u16, 3_u16),
+            (0, 3, 1),
+            (0, 1, 0),
+            (0, 1, 21),
+            (1, 2, 2),
+        ] {
+            let mut invalid = encoded.clone();
+            let offset = 69 + slot * 4;
+            invalid[offset..offset + 2].copy_from_slice(&item.to_be_bytes());
+            invalid[offset + 2..offset + 4].copy_from_slice(&quantity.to_be_bytes());
+            assert!(decode_snapshot(&invalid).is_err());
+        }
+        let mut omitted = fixture_snapshot();
+        omitted.inventory = None;
+        assert_eq!(
+            decode_snapshot(&encode_snapshot(&omitted).unwrap()).unwrap(),
+            omitted
+        );
     }
 
     #[test]
@@ -600,9 +670,9 @@ mod tests {
                 EVENT_RECORD_BYTES,
                 ENTITY_RECORD_BYTES
             ),
-            (63, 14, 21)
+            (72, 14, 21)
         );
-        assert_eq!(MAX_WIRE_ENTITIES, 48);
+        assert_eq!(MAX_WIRE_ENTITIES, 47);
         let viewer_id = u32::MAX;
         let target = EntityRef::Creature(CreatureId::new(u32::MAX));
         let entities: Vec<_> = (0..MAX_VISIBLE_ENTITIES)
@@ -648,6 +718,8 @@ mod tests {
             content_revision: u64::MAX,
             acknowledged_sequence: u32::MAX,
             viewer_id,
+            inventory_revision: 1,
+            inventory: None,
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(u32::MAX),
             tick: u64::MAX,
@@ -667,7 +739,7 @@ mod tests {
             entities,
         };
         let packed = pack_snapshot(&snapshot).unwrap();
-        // (1,077 − 63 − 16 × 14) / 21 = 37 records fit beside a full event section.
+        // (1,077 − 72 − 16 × 14) / 21 = 37 records fit beside a full event section.
         assert_eq!(packed.packed_entities, 37);
         assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
         assert!(
@@ -686,7 +758,7 @@ mod tests {
             encode_snapshot(&snapshot).unwrap_err().to_string(),
             "player projection exceeds the byte budget"
         );
-        // Without events the budget holds 48 records.
+        // Without events or a bag sheet the budget holds 47 records.
         let quiet = ZoneSnapshot {
             events: Vec::new(),
             ..snapshot
@@ -697,6 +769,31 @@ mod tests {
             packed.payload.len(),
             PLAYER_SNAPSHOT_FIXED_BYTES + MAX_WIRE_ENTITIES * ENTITY_RECORD_BYTES
         );
+        let full_bag = mmorpg_core::Inventory::from_slots(
+            [Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap()); 16],
+        );
+        let mut maximum_bytes = 0;
+        for events in 0..=MAX_EVENTS_PER_PLAYER {
+            let mut with_sheet = quiet.clone();
+            with_sheet.inventory_revision = u64::MAX;
+            with_sheet.inventory = Some(full_bag.clone());
+            with_sheet.events = vec![event; events];
+            let packed = pack_snapshot(&with_sheet).unwrap();
+            maximum_bytes = maximum_bytes.max(packed.payload.len());
+            let decoded = decode_snapshot(&packed.payload).unwrap();
+            assert_eq!(decoded.inventory, with_sheet.inventory);
+            assert_eq!(decoded.inventory_revision, u64::MAX);
+            assert_eq!(decoded.events, with_sheet.events);
+            assert_eq!(decoded.entities[1].entity(), target);
+            assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
+            if events == 0 {
+                assert_eq!(packed.packed_entities, 44);
+            }
+            if events == 16 {
+                assert_eq!(packed.packed_entities, 34);
+            }
+        }
+        assert_eq!(maximum_bytes, 1_074);
     }
 
     #[test]

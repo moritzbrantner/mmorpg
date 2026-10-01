@@ -16,14 +16,17 @@ The shared session runtime supplies player identity, connection epoch and comman
 | StartAttack | 2 | `[version = 2, tag = 4]` |
 | StopAttack | 2 | `[version = 2, tag = 5]` |
 | ReleaseSpirit | 2 | `[version = 2, tag = 6]` |
+| MoveItem | 6 | `[version = 2, tag = 7, source_slot: u8, destination_slot: u8, quantity: u16]` |
 
-Tags 3–6 were added for targeting and combat. They are additive: tags 1 and 2 are unchanged, so the command wire version stays 2.
+Tags 3–7 add targeting, combat and bag moves. Existing tag layouts are unchanged, so the command wire version stays 2.
 
 - `Move` is held intent relative to `facing`. `forward` and `strafe` are each in `[-1, 1]`; positive strafe is the character's right. The server rotates the intent into one of eight headings (multiples of 45° relative to `facing`) through its integer trigonometry table. Horizontal speed is 21 units/tick (6.3 m/s) when `forward ≥ 0` and 13 units/tick when `forward < 0`. Zero intent stops horizontal movement; vertical velocity always stays with physics.
 - `Jump` is edge-triggered. It is recorded as pending and evaluated during the next tick before physics steps: when a thin probe directly below the feet touches any body other than the character (ground, geometry or another unit), vertical velocity becomes 16 units/tick. The tick always consumes the pending jump, so a mid-air jump has no effect and is not buffered until landing.
 - `SelectTarget` carries an [entity reference](#entity-references): kind 1 player, 2 creature or 3 NPC with its ID, or kind 0 with ID 0 to clear the selection. `StartAttack` starts auto-attacking the selected target, `StopAttack` stops it, and `ReleaseSpirit` returns a dead player to the graveyard with half health.
 
-The four discrete intents are queued in sequence order (at most 16 per player between ticks) and resolved during the next tick in `(player id, sequence)` order, never inside `apply_command`. A well-formed intent that is not allowed right now, such as attacking without a target or out of range, or selecting a unit that is not visible, is accepted and answered with an `Error` [event](#events); it never closes the session. An intent that finds the queue full is accepted the same way: it consumes its sequence, is dropped, and the next tick answers with one `too many intents` error. Only malformed payloads and stale or duplicate sequences fail.
+The five discrete intents are queued in sequence order (at most 16 per player between ticks) and resolved during the next tick in `(player id, sequence)` order, never inside `apply_command`. A well-formed intent that is not allowed right now, such as attacking without a target or out of range, or selecting a unit that is not visible, is accepted and answered with an `Error` [event](#events); it never closes the session. An intent that finds the queue full is accepted the same way: it consumes its sequence, is dropped, and the next tick answers with one `too many intents` error. Only malformed payloads and stale or duplicate sequences fail.
+
+`MoveItem` names only slots in the sender’s own bag. Slot/quantity values that fit the wire but cannot be applied are tick-time feedback, not session errors; there is no item grant command. See [INVENTORY.md](INVENTORY.md).
 
 Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, known entity kinds, ID 0 for the absent reference, and only version 2. Version 1 (`SetMovement`) payloads are rejected.
 
@@ -37,15 +40,15 @@ An entity reference is 5 bytes: kind (`u8`) then ID (`u32`). Kind 1 is a player 
 
 | Offset | Width | Field |
 | --- | --- | --- |
-| 0 | 1 | Wire version: 6 |
+| 0 | 1 | Wire version: 7 |
 | 1 | 1 | Scope: 1 canonical, 2 player-visible |
-| 2 | 2 | Core schema version: 6 |
+| 2 | 2 | Core schema version: 7 |
 | 4 | 4 | Zone ID |
 | 8 | 8 | Simulation tick |
 
 ## Player-visible scope
 
-Sections follow in fixed order: header, self, target, events, entities.
+Sections follow in fixed order: header, self, target, self bag sheet, events, entities.
 
 | Offset | Width | Field |
 | --- | --- | --- |
@@ -60,12 +63,15 @@ Sections follow in fixed order: header, self, target, events, entities.
 | 49 | 1 | Self flags: bit 0 dead, bit 1 in combat, bit 2 auto-attacking; other bits 0 |
 | 50 | 5 | Self: target (entity reference, kind 0 for none) |
 | 55 | 5 | Target: the target's own target (entity reference) |
-| 60 | 1 | Event count, at most 16 |
-| 61 | 14 × events | Event records |
+| 60 | 8 | Self inventory revision (nonzero) |
+| 68 | 1 | Self inventory sheet present: 0 or 1 |
+| 69 | 64 if present | Sixteen ordered slots: item ID (`u16`), quantity (`u16`) |
+| 69 or 133 | 1 | Event count, at most 16 |
+| 70 or 134 | 14 × events | Event records |
 | … | 2 | Entity count |
 | … | 21 × count | Entity records |
 
-The self section is the viewer's exact state: `dead` holds exactly when health is 0, and health never exceeds its maximum. The target section is the target-of-target: a player's selection or an engaged creature's threat leader, so entity records need no per-entity target. The fixed part is 63 bytes; a projection is `63 + 14 × events + 21 × entities` bytes.
+The self section is the viewer's exact state: `dead` holds exactly when health is 0, and health never exceeds its maximum. The target section is the target-of-target: a player's selection or an engaged creature's threat leader, so entity records need no per-entity target. The fixed part is 72 bytes; a projection is `72 + (64 if sheet present) + 14 × events + 21 × entities` bytes. Empty slots are exactly `(0, 0)`; occupied slots must match catalog revision 1’s IDs and stack limits. A missing sheet means retain prior state, never an empty bag. Core sends the whole sheet on admission/change ticks and every ten ticks; revision is repeated every tick so a receiver can detect a missed change. Queries do not consume the resend condition.
 
 ### Events
 
@@ -82,9 +88,9 @@ The events are the viewer's feedback from the tick the snapshot describes (see [
 - Damage dealt and damage taken carry both units and the damage in `amount`.
 - Miss and evade carry both units and amount 0: a missed swing between the viewer and a unit, or the viewer's swing ignored by an evading creature.
 - Died carries the dead unit as target, its killer as source (or none) and amount 0.
-- Error carries no source, the unit the refused intent concerned as target (or none) and the error code in `amount`: 1 no target, 2 out of range, 3 target dead, 4 not attackable, 5 you are dead, 6 not dead, 7 invalid target, 8 too many intents (a full queue dropped an intent).
+- Error carries no source, the unit the refused intent concerned as target (or none) and the error code in `amount`: 1 no target, 2 out of range, 3 target dead, 4 not attackable, 5 you are dead, 6 not dead, 7 invalid target, 8 too many intents (a full queue dropped an intent), 9 invalid inventory move, 10 inventory full.
 
-Events are cosmetic: a lost datagram may lose them. Health and every other durable fact is repeated in every projection.
+Events are cosmetic: a lost datagram may lose them. Health/XP and inventory revision repeat in every projection; the periodic complete bag sheet recovers lost bag changes.
 
 ### Entity records
 
@@ -108,7 +114,7 @@ Positions are absolute `i16` units. Zone content keeps every collider bound and 
 
 ### Datagram byte budget
 
-The pinned `game-server` sends a session snapshot frame unchanged when it fits the connection's current WebTransport datagram size. Otherwise it sends bounded, tick-keyed fragments; the native client reassembles and verifies the session frame before decoding this v6 payload. A lost fragment loses that snapshot, and newer complete ticks supersede older incomplete ones. The reassembler is reset on reconnect. This transport behavior does not change the MMO projection policy: its current budget derives from the smallest negotiated datagram size:
+The pinned `game-server` sends a session snapshot frame unchanged when it fits the connection's current WebTransport datagram size. Otherwise it sends bounded, tick-keyed fragments; the native client reassembles and verifies the session frame before decoding this v7 payload. A lost fragment loses that snapshot, and newer complete ticks supersede older incomplete ones. The reassembler is reset on reconnect. This transport behavior does not change the MMO projection policy: its current budget derives from the smallest negotiated datagram size:
 
 | Term | Bytes | Source |
 | --- | ---: | --- |
@@ -117,15 +123,15 @@ The pinned `game-server` sends a session snapshot frame unchanged when it fits t
 | Safety margin | − 64 | Headroom for unmeasured transport overhead |
 | **`MAX_PLAYER_PROJECTION_BYTES`** | **1,077** | Largest player projection payload |
 
-On loopback, path MTU discovery raises the host's value to 1,287 bytes before admission and the client's to 1,350–1,413 bytes, but on a real path the host can capture its limit before discovery completes, so the budget uses the floor. `mmorpg-client`'s `connected_world` tests log the negotiated size, pin the floor with discovery disabled on both peers, and deliver a crowded projection packed to the full 48-record budget through a real host.
+On loopback, path MTU discovery raises the host's value to 1,287 bytes before admission and the client's to 1,350–1,413 bytes, but on a real path the host can capture its limit before discovery completes, so the budget uses the floor. `mmorpg-client`'s `connected_world` tests log the negotiated size, pin the floor with discovery disabled on both peers, and deliver a crowded projection packed to the 47-record budget without a sheet through a real host.
 
-Encoding is budget-driven in fixed section priority: `pack_snapshot` writes the header, the self and target sections and this tick's events, then entities in priority order until the next record would exceed the budget, and reports how many it packed. Hosts publish with it. Without events, `(1,077 − 63) / 21 = 48` records fit (`MAX_WIRE_ENTITIES`), a 1,071-byte projection; with a full event section, 37 do. The viewer and its target lead the entities and always fit: `63 + 16 × 14 + 2 × 21 = 329` bytes, which a compile-time assertion checks. Relevant units beyond the budget are omitted by priority, never truncated by transport. `encode_snapshot`, used by fixtures and tests, fails closed instead of omitting any entity. A test with extreme field values (maximum IDs, tick and revision, `i16`/`i8` extremes, a full event section and the whole relevance cap) proves the packing fits one datagram. Future payload growth requires a deliberate MMO budget and wire change; transport fragmentation alone does not raise the budget. Later sections (character sheet, loot) take their place before the entities.
+Encoding is budget-driven in fixed section priority: `pack_snapshot` writes the header, the self, target and optional bag sections and this tick's events, then entities in priority order until the next record would exceed the budget, and reports how many it packed. Hosts publish with it. Without events or a sheet, `(1,077 − 72) / 21 = 47` records fit (`MAX_WIRE_ENTITIES`); with a sheet, 44 fit. Beside all 16 events the counts are 37 without a sheet or 34 with one. The largest attainable payload is 1,074 bytes. The viewer and its target lead the entities and always fit even beside a sheet and all events: `72 + 64 + 16 × 14 + 2 × 21 = 402` bytes, which a compile-time assertion checks. Relevant units beyond the budget are omitted by priority, never truncated by transport. `encode_snapshot`, used by fixtures and tests, fails closed instead of omitting any entity. A test with extreme field values (maximum IDs, tick and revision, `i16`/`i8` extremes, a full event section and the whole relevance cap) proves the packing fits one datagram. Future payload growth requires a deliberate MMO budget and wire change; transport fragmentation alone does not raise the budget. Later sections (character sheet, loot) take their place before the entities.
 
 Player IDs are zone/session-local. These snapshots have no authority epoch field; the future online session/routing envelope must bind the stream to a grant and reset presentation on grant changes. An acknowledgement supports future prediction reconciliation, not permission to mutate authoritative state.
 
-Decoders reject payloads above the byte budget, a wrong wire version, scope or schema, inconsistent self state (level 0, health above its maximum, a dead flag that disagrees with zero health), more than 16 events or 48 entities, unknown entity kinds, event kinds or error codes, event flags or fields that do not fit their kind, an absent reference with a non-zero ID, reserved flag bits, a health percent above 100, counts not matching the payload length, a first record that is not the viewer, truncation and trailing bytes. The browser decoder additionally rejects duplicate `(kind, id)` identities. The native client rejects duplicates, a projection addressed to another viewer, and a projection without its own player.
+Decoders reject payloads above the byte budget, a wrong wire version, scope or schema, inconsistent self state (level 0, health above its maximum, a dead flag that disagrees with zero health), more than 16 events or 47 entities, zero inventory revision, an invalid sheet flag, unknown items or invalid stack quantities, unknown entity kinds, event kinds or error codes, event flags or fields that do not fit their kind, an absent reference with a non-zero ID, reserved flag bits, a health percent above 100, counts not matching the payload length, a first record that is not the viewer, truncation and trailing bytes. The browser decoder additionally rejects duplicate `(kind, id)` identities. The native client rejects duplicates, a projection addressed to another viewer, and a projection without its own player.
 
-The shared fixture is `fixtures/protocol/player-snapshot-v6.hex`: a viewer fighting a wolf next to an NPC and a corpse tapped by another player, with one event of every kind. Rust encoding and browser decoding both verify these exact bytes.
+The shared fixture is `fixtures/protocol/player-snapshot-v7.hex`: a viewer fighting a wolf next to an NPC and a corpse tapped by another player, with a sparse self bag and one event of every kind. Rust encoding and browser decoding both verify these exact bytes.
 
 ## Canonical scope
 
@@ -137,9 +143,9 @@ After the common prefix:
 4. player count (`u16`, at most 512), then player records;
 5. creature count (`u16`, at most 1,024), then creature records in creature-ID order.
 
-Content is referenced, not embedded: the revision and the fingerprint (FNV-1a 64 over a canonical encoding of every content table, colliders included) identify the exact `ZoneContent`, and `ZoneSimulation::from_snapshot` fails closed unless the supplied content has both (the content-addressed checkpoint rule in [ARCHITECTURE.md](ARCHITECTURE.md#snapshots-and-compatibility)). Static colliders, NPCs and world-limit bodies come from that content during recovery.
+Content is referenced, not embedded: the revision and the fingerprint (FNV-1a 64 over a canonical encoding of every content table, colliders included, plus catalog, starter grant and declared RNG seed) identify the exact `ZoneContent`, and `ZoneSimulation::from_snapshot` fails closed unless the supplied content has both (the content-addressed checkpoint rule in [ARCHITECTURE.md](ARCHITECTURE.md#snapshots-and-compatibility)). Static colliders, NPCs and world-limit bodies come from that content during recovery.
 
-A player record starts with the 39 bytes of movement state and continues with its unit state:
+A player record starts with 39 movement bytes, 80 inventory bytes and then its unit state:
 
 | Offset | Width | Field |
 | --- | --- | --- |
@@ -152,17 +158,20 @@ A player record starts with the 39 bytes of movement state and continues with it
 | 32 | 1 | Jump pending: 0 or 1 |
 | 33 | 4 | Last command sequence |
 | 37 | 2 | Spawn slot |
-| 39 | 1 | Level |
-| 40 | 4 | Current-level XP |
-| 44 | 4 | Health (0 means dead) |
-| 48 | 5 | Target (entity reference) |
-| 53 | 1 | Auto-attacking: 0 or 1 |
-| 54 | 2 | Swing timer (ticks until the next swing) |
-| 56 | 2 | Combat timer (ticks left in combat after the last blow) |
-| 58 | 2 | Calm ticks (out-of-combat ticks driving regeneration) |
-| 60 | 2 | Error cooldown (ticks until the next out-of-range error) |
-| 62 | 1 | Pending intent count, at most 16 |
-| 63 | 6 × intents | Intent code (1 select target, 2 start attack, 3 stop attack, 4 release spirit) and entity reference, which is none except for select target |
+| 39 | 8 | Inventory revision (nonzero) |
+| 47 | 8 | Inventory last-change tick (at most snapshot tick) |
+| 55 | 64 | Sixteen ordered item ID/quantity slots, as in the self sheet |
+| 119 | 1 | Level |
+| 120 | 4 | Current-level XP |
+| 124 | 4 | Health (0 means dead) |
+| 128 | 5 | Target (entity reference) |
+| 133 | 1 | Auto-attacking: 0 or 1 |
+| 134 | 2 | Swing timer (ticks until the next swing) |
+| 136 | 2 | Combat timer (ticks left in combat after the last blow) |
+| 138 | 2 | Calm ticks (out-of-combat ticks driving regeneration) |
+| 140 | 2 | Error cooldown (ticks until the next out-of-range error) |
+| 142 | 1 | Pending intent count, at most 16 |
+| 143 | 6 × intents | Intent code: 1 select target, 2 start attack, 3 stop attack, 4 release spirit, 5 move item. Codes 1–4 carry an entity reference (none except select); code 5 carries source/destination (`u8`), quantity (`u16`) and a reserved zero byte |
 | … | 1 | Intents dropped: 0 or 1; a full queue dropped a later intent, which the next tick reports |
 | … | 1 | Event count, at most 16 |
 | … | 14 × events | This tick's events, as in the player-visible scope |
@@ -190,7 +199,7 @@ A creature record:
 | … | 1 | Tapped: 0 or 1 |
 | … | 4 | Tapping player ID, 0 when untapped |
 
-The decoder rejects booleans other than 0 or 1, unknown codes, an alive creature with a death tick, AI fields that do not fit their state, an absent threat unit, an untapped creature with a tapper, excessive counts, truncation and trailing bytes. Core then validates the state against the content during recovery: player uniqueness, spawn slots, movement range, level and health bounds, queue sizes, that only a full intent queue has dropped intents, that dead players do not auto-attack, that creature records match the content's spawns one-to-one in ID order with levels and health inside their template, positions inside the ±32,000-unit content range, wander destinations at most one unit beyond their spawn's wander radius, and state consistent with their life cycle (corpses and despawned creatures rest; only engaged creatures have threat, and threat tables hold only living players), and that player targets exist. Default engine configuration and pinned physics behavior are part of the continuation contract: recovering mid-run, mid-jump, with a pending jump, mid-chase, mid-swing, after a death or during an evade reproduces the continuation exactly.
+The decoder rejects booleans other than 0 or 1, unknown codes, an alive creature with a death tick, AI fields that do not fit their state, an absent threat unit, an untapped creature with a tapper, excessive counts, truncation and trailing bytes. Core then validates the state against the content during recovery: player uniqueness, nonzero bag revision and change tick at most the snapshot tick, spawn slots, movement range, level and health bounds, queue sizes, that only a full intent queue has dropped intents, that dead players do not auto-attack, that creature records match the content's spawns one-to-one in ID order with levels and health inside their template, positions inside the ±32,000-unit content range, wander destinations at most one unit beyond their spawn's wander radius, and state consistent with their life cycle (corpses and despawned creatures rest; only engaged creatures have threat, and threat tables hold only living players), and that player targets exist. Default engine configuration and pinned physics behavior are part of the continuation contract: recovering mid-run, mid-jump, with a pending jump, mid-chase, mid-swing, after a death or during an evade reproduces the continuation exactly.
 
 Canonical data is for trusted replay/recovery and server-side verification. It must never be passed to the browser renderer or substituted for a player projection.
 
@@ -217,3 +226,15 @@ Canonical restore validates XP against the exact shared curve. Version 5 is
 retained as legacy fixture evidence and rejected; there is no implicit save or
 recovery migration. Existing version-5 recovery directories need an explicit
 migration or fresh development state. Commands remain version 2.
+
+## Starter inventory snapshot v7
+
+Version 7 adds the canonical bag/revision/change tick and optional self bag sheet
+above. Core schema is also 7. Content identity includes the immutable catalog,
+starter grant and declared RNG seed. Greyhaven revision 4 preserves revision 3’s
+RNG seed, so adding bags does not reroll existing creature/combat scripts.
+
+Version 6 and earlier snapshots and recovery bundles fail closed. The v5/v6
+fixtures remain legacy rejection evidence; this change supplies no implicit
+migration for saved recovery directories. Commands remain v2 with additive tag 7.
+The browser validates the supported wire catalog’s stack shapes, not grant rules.

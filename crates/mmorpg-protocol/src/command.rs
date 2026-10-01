@@ -1,4 +1,4 @@
-//! Command wire version 2. Tags 3–6 were added for targeting and combat;
+//! Command wire version 2. Tags 3–7 add targeting, combat and bag moves;
 //! earlier tags are unchanged, so the version stays 2.
 
 use mmorpg_core::ZoneCommand;
@@ -14,6 +14,7 @@ const SELECT_TARGET_TAG: u8 = 3;
 const START_ATTACK_TAG: u8 = 4;
 const STOP_ATTACK_TAG: u8 = 5;
 const RELEASE_SPIRIT_TAG: u8 = 6;
+const MOVE_ITEM_TAG: u8 = 7;
 const MOVE_COMMAND_BYTES: usize = 6;
 const SELECT_TARGET_COMMAND_BYTES: usize = 7;
 const BARE_COMMAND_BYTES: usize = 2;
@@ -43,6 +44,21 @@ pub fn encode_command(command: ZoneCommand) -> Vec<u8> {
         ZoneCommand::StartAttack => vec![COMMAND_WIRE_VERSION, START_ATTACK_TAG],
         ZoneCommand::StopAttack => vec![COMMAND_WIRE_VERSION, STOP_ATTACK_TAG],
         ZoneCommand::ReleaseSpirit => vec![COMMAND_WIRE_VERSION, RELEASE_SPIRIT_TAG],
+        ZoneCommand::MoveItem {
+            source,
+            destination,
+            quantity,
+        } => {
+            let [high, low] = quantity.to_be_bytes();
+            vec![
+                COMMAND_WIRE_VERSION,
+                MOVE_ITEM_TAG,
+                source,
+                destination,
+                high,
+                low,
+            ]
+        }
     }
 }
 
@@ -63,6 +79,18 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
         }
     };
     match *tag {
+        MOVE_ITEM_TAG => {
+            let [_, _, source, destination, high, low] = payload else {
+                return Err(ProtocolError::new(
+                    "move item command payload must be exactly 6 bytes",
+                ));
+            };
+            Ok(ZoneCommand::MoveItem {
+                source: *source,
+                destination: *destination,
+                quantity: u16::from_be_bytes([*high, *low]),
+            })
+        }
         MOVE_TAG => {
             let [_, _, forward, strafe, facing_high, facing_low] = payload else {
                 return Err(ProtocolError::new(
@@ -185,6 +213,21 @@ mod tests {
             ZoneCommand::StartAttack,
             ZoneCommand::StopAttack,
             ZoneCommand::ReleaseSpirit,
+            ZoneCommand::MoveItem {
+                source: 0,
+                destination: 15,
+                quantity: 2,
+            },
+            ZoneCommand::MoveItem {
+                source: 15,
+                destination: 0,
+                quantity: u16::MAX,
+            },
+            ZoneCommand::MoveItem {
+                source: u8::MAX,
+                destination: 0,
+                quantity: 0,
+            },
         ];
         let mut fixture = String::from(
             "# Command wire v2 golden fixture, verified by mmorpg-protocol and web tests.\n",
@@ -213,6 +256,11 @@ mod tests {
                 ZoneCommand::StartAttack => "start_attack".to_owned(),
                 ZoneCommand::StopAttack => "stop_attack".to_owned(),
                 ZoneCommand::ReleaseSpirit => "release_spirit".to_owned(),
+                ZoneCommand::MoveItem {
+                    source,
+                    destination,
+                    quantity,
+                } => format!("move_item {source} {destination} {quantity}"),
             };
             fixture.push_str(&format!("{hex} {fields}\n"));
         }
@@ -258,7 +306,7 @@ mod tests {
                 "tag {tag} has no body"
             );
         }
-        for unknown in [0, 7, u8::MAX] {
+        for unknown in [0, 8, u8::MAX] {
             assert_eq!(
                 decode_command(&[2, unknown]).unwrap_err().to_string(),
                 "unknown command tag"
