@@ -193,3 +193,15 @@ test("generic intent-capacity feedback may have no target", () => {
   expect(state.feedback).toContain("Too many actions");
   expect(state.canClaim).toBe(true);
 });
+
+test("a later dropped intent cannot turn a consumed claim into capacity refusal feedback", () => {
+  const state = new LootState();
+  state.update(projection());
+  intent(state)(projection());
+  state.update({ ...projection(13n, null, 2), acknowledgedSequence: 24,
+    events: [{ kind: "error", code: "too-many-intents", target: null }] });
+  expect(state.sheet).toBeNull();
+  expect(state.copper).toBe(2);
+  expect(state.feedback).toBe("");
+  expect(state.canClaim).toBe(false);
+});
