@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "operation": "size-evidence",
-  "status": "passed",
-  "durationMs": 50,
+  "status": "failed",
+  "durationMs": 60,
   "data": {
     "schemaVersion": "coding-tooling/size-evidence/v1",
     "metric": "raw-artifact-bytes",
@@ -88,9 +88,13 @@
           }
         ],
         "comparison": {
-          "state": "not-requested"
+          "state": "comparable",
+          "baselineBytes": 1971554,
+          "deltaBytes": 574732
         },
-        "failures": []
+        "failures": [
+          "Size increase 574732 exceeds 65536 bytes."
+        ]
       }
     ]
   },

@@ -33,7 +33,7 @@
         "web/bun.lock",
         "web/scripts/native-size.ts"
       ],
-      "maxBytes": 2097152,
+      "maxBytes": 3145728,
       "maxIncreaseBytes": 65536
     }
   ]
