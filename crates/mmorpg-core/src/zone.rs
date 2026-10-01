@@ -125,6 +125,16 @@ impl PlayerState {
     }
 }
 
+/// Diagnostic work for the latest attempted tick. Creation and recovery start
+/// at zero. These counters never enter canonical state or player projections.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ZoneTickWork {
+    /// Living creatures whose AI decision was evaluated, including idle units.
+    pub creature_ai_evaluations: usize,
+    /// The engine's own report, present only after a successful physics step.
+    pub physics: Option<physics_engine::StepStats>,
+}
+
 pub struct ZoneSimulation {
     pub(crate) zone_id: ZoneId,
     pub(crate) tick: u64,
@@ -135,6 +145,7 @@ pub struct ZoneSimulation {
     pub(crate) creatures: BTreeMap<CreatureId, CreatureState>,
     pub(crate) interest: InterestIndex,
     pub(crate) interest_work: InterestMaintenanceStats,
+    pub(crate) tick_work: ZoneTickWork,
 }
 
 impl ZoneSimulation {
@@ -217,6 +228,7 @@ impl ZoneSimulation {
             creatures: BTreeMap::new(),
             interest,
             interest_work: InterestMaintenanceStats::default(),
+            tick_work: ZoneTickWork::default(),
         })
     }
 
@@ -250,6 +262,11 @@ impl ZoneSimulation {
     #[must_use]
     pub const fn interest_maintenance_stats(&self) -> InterestMaintenanceStats {
         self.interest_work
+    }
+
+    #[must_use]
+    pub const fn tick_work(&self) -> ZoneTickWork {
+        self.tick_work
     }
 
     pub fn add_player(&mut self, player_id: PlayerId) -> Result<(), ZoneError> {
@@ -378,13 +395,14 @@ impl ZoneSimulation {
             .tick
             .checked_add(1)
             .ok_or_else(|| ZoneError::new("zone tick overflow"))?;
+        self.tick_work = ZoneTickWork::default();
         for player in self.players.values_mut() {
             player.events.clear();
         }
         self.consume_intents()?;
         self.decide_creatures()?;
         self.drive_players()?;
-        self.world.step(1).map_err(physics_error)?;
+        self.tick_work.physics = Some(self.world.step(1).map_err(physics_error)?.stats);
         // A jump intent is consumed by the tick that evaluated it, grounded or not.
         for player in self.players.values_mut() {
             player.jump_pending = false;
