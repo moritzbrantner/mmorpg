@@ -183,6 +183,16 @@ const worldView = new WorldView(renderer, camera, {
   experienceBar: requireElement<HTMLProgressElement>("#experience-bar"),
   experienceStatus: requireElement<HTMLElement>("#experience-status"),
   progressionFeedback: requireElement<HTMLElement>("#progression-feedback"),
+  bags: {
+    panel: requireElement<HTMLElement>("#bags-panel"),
+    toggle: requireElement<HTMLButtonElement>("#bags-toggle"),
+    close: requireElement<HTMLButtonElement>("#bags-close"),
+    slots: requireElement<HTMLElement>("#bag-slots"),
+    quantity: requireElement<HTMLInputElement>("#bag-quantity"),
+    selection: requireElement<HTMLElement>("#bag-selection"),
+    status: requireElement<HTMLElement>("#bag-status"),
+    feedback: requireElement<HTMLElement>("#bag-feedback"),
+  },
 });
 // Debug-only hooks (camera viewpoints, stats) for screenshots; `?debug` enables them.
 if (new URLSearchParams(window.location.search).has("debug")) {
@@ -749,7 +759,7 @@ function enterWorld() {
   turntable.cancel();
   entryState = next;
   keys.clear();
-  worldView.enter(worldInput());
+  worldView.enter(worldInput(), world.source.latestProjection());
   characterSelect.hidden = true;
   for (const element of worldUi) {
     element.hidden = false;
@@ -870,7 +880,12 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Escape" && !event.repeat) {
     event.preventDefault();
-    returnToCharacters();
+    if (!worldView.closeBags()) returnToCharacters();
+    return;
+  }
+  if (event.code === "KeyB") {
+    event.preventDefault();
+    if (!event.repeat) worldView.toggleBags();
     return;
   }
   if (event.code === "F3") {

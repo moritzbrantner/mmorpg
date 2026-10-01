@@ -2,7 +2,9 @@
 export function catalogJson(revision = "3"): Record<string, unknown> {
   return {
     format: "mmorpg.catalog",
-    version: 1,
+    version: 2,
+    itemCatalogRevision: "1",
+    items: [{ id: 1, name: "Torn Fur", maxStack: 20 }, { id: 2, name: "Worn Dagger", maxStack: 1 }],
     contentRevision: revision,
     contentFingerprint: "3cbc808bbe89b29c",
     creatureTemplates: [

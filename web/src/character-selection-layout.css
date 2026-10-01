@@ -55,6 +55,7 @@
 .preview-surface:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: -3px; }
 .turntable-controls { display: flex; justify-content: center; flex-wrap: wrap; gap: .5rem; }
 .turntable-controls button,
+#bags-toggle,
 #return-to-characters {
   min-height: 2.75rem;
   padding: .5rem .7rem;
@@ -67,8 +68,10 @@
   cursor: pointer;
 }
 .turntable-controls button:hover,
+#bags-toggle:hover,
 #return-to-characters:hover { background: #30453d; }
 .turntable-controls button:focus-visible,
+#bags-toggle:focus-visible,
 #return-to-characters:focus-visible,
 .appearance-storage summary:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
 .turntable-hint { text-align: center; font-size: .75rem; color: #c1cec6; line-height: 1.5; }

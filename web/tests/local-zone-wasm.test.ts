@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { encodeCommand } from "../src/command-wire";
 import { decodeSnapshot, type EntityState } from "../src/replication";
+import { BagState } from "../src/world/units/bag-state";
 import { createLocalWorld } from "../src/world/local-world";
 import { LocalZoneSource, type LocalZoneHandle } from "../src/world/local-zone-source";
 import type { Prop } from "../src/world/scenery";
@@ -29,6 +30,27 @@ function run(source: LocalZoneSource, ticks: number): void {
 }
 
 describe("WASM local zone host", () => {
+  test("multi-tick frames retain intermediate bag sheets and refusal feedback", () => {
+    const { source } = createLocalWorld(wasm);
+    source.join();
+    const bag = new BagState();
+    bag.update(source.latestProjection()!);
+    source.sendCommand({ kind: "move-item", source: 0, destination: 15, quantity: 2 });
+    const moved = source.advance(4 / 30);
+    expect(moved.map((view) => view.tick)).toEqual([1n, 2n, 3n, 4n]);
+    expect(moved[0]?.inventory).not.toBeNull();
+    expect(moved[3]?.inventory).toBeNull();
+    for (const view of moved) bag.update(view);
+    expect(bag.ready).toBe(true);
+    expect(bag.slots?.[15]).toEqual({ itemId: 1, quantity: 2 });
+    source.sendCommand({ kind: "move-item", source: 15, destination: 1, quantity: 1 });
+    const refused = source.advance(4 / 30);
+    expect(refused[0]?.events).toContainEqual({ kind: "error", code: "invalid-inventory-move", target: null });
+    expect(refused[3]?.events).toEqual([]);
+    for (const view of refused) bag.update(view);
+    expect(bag.feedback).toContain("refused");
+    expect(source.advance(0)).toEqual([]);
+  });
   test("bag moves use queued core authority and missed sheets recover periodically", () => {
     const { source } = createLocalWorld(wasm);
     source.join();
@@ -188,6 +210,9 @@ describe("WASM local zone combat intents", () => {
   test("the catalog names the hosted units and matches the zone's content", () => {
     const { catalog } = createLocalWorld(wasm);
     expect(catalog.contentRevision).toBe(4n);
+    expect([...catalog.items.values()]).toEqual([
+      { id: 1, name: "Torn Fur", maxStack: 20 }, { id: 2, name: "Worn Dagger", maxStack: 1 },
+    ]);
     expect([...catalog.creatureTemplates.values()].map((template) => template.name)).toEqual([
       "Timber Wolf", "Young Boar", "Grain Rat", "Field Marauder", "Mirefin Lurker", "Redbrand Bandit", "Garrick Redbrand",
     ]);
