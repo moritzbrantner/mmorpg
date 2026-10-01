@@ -5,6 +5,9 @@
     "": {
       "name": "mmorpg-pages-tech-demo",
       "dependencies": {
+        "@moritzbrantner/input-bindings": "github:moritzbrantner/input-bindings#fdbdd74d8d9a3baf196b1b38f82959a82030689f",
+        "@moritzbrantner/input-bindings-runtime": "github:moritzbrantner/input-bindings#a51ef8a07791e6aa5031ac19178af84cadbfd613",
+        "@moritzbrantner/input-bindings-web": "github:moritzbrantner/input-bindings#2f97db985002e70d1692352fe823c39dd01ad6c4",
         "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#f484db8a3d2a7a555fa463eddf9c28790b240ce0",
         "three": "0.185.1",
       },
@@ -73,6 +76,12 @@
     "@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.28.2", "", { "os": "win32", "cpu": "ia32" }, "sha512-YmJbfTlvU7Sdn9BB+4PRES4oB6pxgS37MAONj+hBr/cpXS1aBPKXxNnDbu+QCWPj0o9dgyxeq79g6c5P8KeuYA=="],
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.28.2", "", { "os": "win32", "cpu": "x64" }, "sha512-5ebpxr3nWMzrL/rnUI755Jkuee0bHL/Gq0WTF9lvcpv73wAp5eu8MfBUgWK9bhWvZjj7yX8etf/8tI8Ney695g=="],
+
+    "@moritzbrantner/input-bindings": ["@moritzbrantner/input-bindings@github:moritzbrantner/input-bindings#fdbdd74", {}, "moritzbrantner-input-bindings-fdbdd74", "sha512-+a9XtGvDPcbuoaqNzsGS1G1BFc258mKExwYH8N8d2nIysuJWBSsDSKIJ342Vv9BEb0GMyZDK3NFVRSnGjHOAfA=="],
+
+    "@moritzbrantner/input-bindings-runtime": ["@moritzbrantner/input-bindings-runtime@github:moritzbrantner/input-bindings#a51ef8a", { "dependencies": { "@moritzbrantner/input-bindings": "github:moritzbrantner/input-bindings#fdbdd74d8d9a3baf196b1b38f82959a82030689f" } }, "moritzbrantner-input-bindings-a51ef8a", "sha512-17x1fEgUZzSH8jwLalJz3zzwp8M50MdXXE2La54rofBfrSFWy8XHXuxq0fGPnnubNgePq1u+JjES5zc3EuzUjA=="],
+
+    "@moritzbrantner/input-bindings-web": ["@moritzbrantner/input-bindings-web@github:moritzbrantner/input-bindings#2f97db9", { "dependencies": { "@moritzbrantner/input-bindings": "github:moritzbrantner/input-bindings#fdbdd74d8d9a3baf196b1b38f82959a82030689f", "@moritzbrantner/input-bindings-runtime": "github:moritzbrantner/input-bindings#a51ef8a07791e6aa5031ac19178af84cadbfd613" } }, "moritzbrantner-input-bindings-2f97db9", "sha512-AaZsW+PVO8D81qS4MElqwS116WMn3CWOB+z39SDzzs+iPUB+lqxfS60yTRDLIu/PX2AfapBjy81XJ0yNTtpm4A=="],
 
     "@moritzbrantner/three-d-renderer": ["@moritzbrantner/three-d-renderer@github:moritzbrantner/3d-lab#f484db8", { "dependencies": { "three": "0.185.1" } }, "moritzbrantner-3d-lab-f484db8", "sha512-HTl0mxMWJ/mNBRwB+kXgGu/LfceFIRFlxr2LvAlXV/rGnvKui0jpz+WcBAou1IiQSIAqL0TXQ9WLVASf2xGkhQ=="],
 
