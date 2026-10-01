@@ -43,6 +43,12 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             report.projection_bytes,
         ];
         for (index, (actual, ceiling)) in actual.into_iter().zip(ceiling).enumerate() {
+            // v6 adds eight self bytes per projection; physics/work fences stay fixed.
+            let ceiling = if index == 6 {
+                ceiling + 8 * fixture.players * TICKS
+            } else {
+                ceiling
+            };
             assert!(
                 actual <= ceiling,
                 "{} counter {index}: {actual} exceeds {ceiling}",
@@ -58,7 +64,7 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             assert_eq!(report.ai_evaluations, 59 * TICKS);
         }
         if fixture.crowded {
-            assert_eq!(report.max_projection_bytes, MAX_PLAYER_PROJECTION_BYTES);
+            assert_eq!(report.max_projection_bytes, 1_071);
             assert!(report.candidates_tested > 1_000_000);
         }
     }

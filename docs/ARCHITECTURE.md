@@ -142,7 +142,7 @@ Recovering while airborne, mid-run, with a pending jump or in the middle of a fi
 
 **Content-addressed checkpoint rule.** Canonical snapshots reference their content by revision and fingerprint instead of embedding it. `ZoneSimulation::from_snapshot(snapshot, content)` fails closed unless the supplied `ZoneContent` has exactly that identity, so restoring can never silently substitute a newer scene or creature table, and checkpoints no longer carry the collider table. A recovering host must therefore obtain the identical content; hosts that build the zone set from their compiled-in content, as the standalone host and graceful recovery do, satisfy this. Durable checkpoints need a content store that guarantees exact availability of every revision still referenced before content can be published independently of host builds. Changing any content table, colliders included, without a new revision is a publishing error that the fingerprint turns into a refused recovery rather than a divergent continuation.
 
-Snapshot wire and core schema are **version 5**; command wire is **version 2** (tags 3–6 added). Old snapshots are rejected explicitly; no automatic v4 recovery migration is provided. Replay/recovery hashes change with this schema. Existing recovery bundles require an intentional compatibility/migration decision before an upgrade.
+Snapshot wire and core schema are **version 6**; command wire is **version 2** (tags 3–6 added). Old snapshots are rejected explicitly; no automatic v5 recovery migration is provided. Replay/recovery hashes change with this schema. Existing recovery bundles require an intentional compatibility/migration decision before an upgrade.
 
 The big-endian visible format is documented in [PROTOCOL.md](PROTOCOL.md). Rust and browser tests read the same golden fixtures. Decoders reject wrong scope/version, excessive counts, unknown codes, truncation and trailing bytes. Recovery validates canonical unit state against the content. Canonical state must never be sent to browser clients.
 
@@ -234,3 +234,8 @@ The current tests prove reference fencing, handoff metadata safety, real engine 
 ## Review provenance
 
 This architecture revision was reviewed from repository baseline `3abb86fbd50179487f51ab10e3f88ec585b5a53f`. The live shared conventions resolved to sourceRevision `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`; this records review provenance, not a consumer policy pin. Validation used Rust 1.98.0 and Bun 1.4.2 with committed dependency locks. The workspace format, Clippy, test and build gates passed, as did client contract tests, type checking, production build and a Chromium movement smoke check.
+
+Starter progression is core-owned: death rewards the eligible tapper exactly
+once; XP/level are character-durable canonical facts and exact self-projection
+state. Leaving clears taps so a reused session-local player ID cannot inherit
+an old reward. Shared rules and cap behavior are in PROGRESSION.md.

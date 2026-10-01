@@ -1,7 +1,7 @@
 import { entityKindCode, type EntityRef } from "../../src/entity-ref";
 import type { ZoneEvent, ZoneSnapshot } from "../../src/replication";
 
-const FIXED_BYTES = 55;
+const FIXED_BYTES = 63;
 const EVENT_BYTES = 14;
 const ENTITY_BYTES = 21;
 const ERROR_CODES = [
@@ -13,7 +13,7 @@ function flagByte(flags: readonly boolean[]): number {
 }
 
 /**
- * Test-only player-visible snapshot v5 encoder (docs/PROTOCOL.md); Rust owns the real one.
+ * Test-only player-visible snapshot v6 encoder (docs/PROTOCOL.md); Rust owns the real one.
  * Like it, positions must fit i16 and velocities saturate to i8.
  */
 export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
@@ -29,9 +29,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u8(value === null ? 0 : entityKindCode(value.kind));
     u32(value?.id ?? 0);
   };
-  u8(5);
+  u8(6);
   u8(2);
-  u16(5);
+  u16(6);
   u32(snapshot.zoneId);
   u64(snapshot.tick);
   u64(snapshot.contentRevision);
@@ -41,6 +41,8 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
   u32(viewer.health);
   u32(viewer.maxHealth);
   u8(viewer.level);
+  u32(viewer.experience);
+  u32(viewer.experienceToNextLevel);
   u8(flagByte([viewer.dead, viewer.inCombat, viewer.autoAttacking]));
   entity(viewer.target);
   entity(snapshot.targetOfTarget);

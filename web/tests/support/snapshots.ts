@@ -10,7 +10,7 @@ export function playerEntity(entityId: number, position: Vector3, velocity: Vect
 }
 
 export const HEALTHY_VIEWER: ViewerState = {
-  health: 50, maxHealth: 50, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
+  health: 50, maxHealth: 50, experience: 0, experienceToNextLevel: 100, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
 };
 
 /** A projection with a healthy viewer, no target and no events. */

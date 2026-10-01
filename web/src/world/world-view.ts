@@ -18,6 +18,7 @@ import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type ScenerySce
 import { SkyLayer } from "./sky";
 import { UnitAnimators, placeWithModel, unitIdentity, unitModel, type UnitContext, type UnitLook } from "./unit-nodes";
 import { CombatHud } from "./units/combat-hud";
+import { ProgressionHud } from "./units/progression-hud";
 import { SecondaryClick, attackToggle } from "./units/targeting";
 
 /**
@@ -37,6 +38,9 @@ export type WorldViewElements = {
   unitStatus: HTMLElement;
   /** The latest combat feedback line. */
   combatFeedback: HTMLElement;
+  experienceBar: HTMLProgressElement;
+  experienceStatus: HTMLElement;
+  progressionFeedback: HTMLElement;
 };
 
 /** A targeting or attack intent, resolved against the latest projection when it is sent. */
@@ -110,6 +114,7 @@ export class WorldView {
   readonly #sky: SkyLayer;
   readonly #animators = new UnitAnimators();
   readonly #combatHud: CombatHud;
+  readonly #progressionHud: ProgressionHud;
   readonly #intents: Intent[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
@@ -138,6 +143,7 @@ export class WorldView {
     this.#overlay = new DebugOverlay(elements.overlay);
     this.#sky = new SkyLayer(elements.sky, ENVIRONMENT);
     this.#combatHud = new CombatHud(elements.unitStatus, elements.combatFeedback);
+    this.#progressionHud = new ProgressionHud(elements.experienceBar, elements.experienceStatus, elements.progressionFeedback);
     this.#outbox = new MovementOutbox(this.#input({ keys: new Set(), jumps: 0 }));
   }
 
@@ -165,6 +171,7 @@ export class WorldView {
     this.#animators.clear();
     this.#intents.length = 0;
     this.#combatHud.reset();
+    this.#progressionHud.reset();
     this.#shownArea = null;
     this.#flyTo = null;
     this.#framePending = true;
@@ -282,6 +289,7 @@ export class WorldView {
       throw new Error("The projection is missing the viewer's own unit.");
     }
     this.#combatHud.update(projection, catalog, now);
+    this.#progressionHud.update(projection, now);
     this.#lastSelf = { x: self.x, z: self.z, facing: self.facing };
     if (this.#framePending) {
       this.#framePending = false;
