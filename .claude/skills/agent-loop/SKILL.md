@@ -48,10 +48,10 @@ For each `spec:draft` issue (often drafted in a ChatGPT chat):
 
 ## 3. Keep each agent's queue at exactly one ready task
 
-For each of `agent:sol` and `agent:sonnet` with no open `spec:ready` or `in-progress` task:
+For each of `agent:sol` and `agent:sonnet` with no startable task (an open `spec:ready` issue whose "Start after" dependencies are merged) and nothing `in-progress`:
 
 - Pick the next unfinished step: the open plan issues from `docs/STARTER_ZONE.md`, then the roadmap.
-- Respect dependencies: a presentation task waits for its core task.
+- Respect dependencies: a presentation task waits for its core task. Queue only a step whose own dependencies are already merged; if no such step exists for that agent, queue nothing and say so in the report.
 - Avoid conflicts: never queue two tasks that bump the same format version or edit the same HUD/module concurrently.
 - Write the issue exactly per `docs/AGENT_TASKS.md` "Writing an issue", with labels `agent-task`, `spec:ready` and the `agent:*` label. Verify every number and name you cite against the code first.
 - Link it from the parent plan issue with a one-line comment.
@@ -60,7 +60,7 @@ Write at most two new specs per run.
 
 ## 4. Dispatch
 
-- **`agent:sonnet`** (ready, not in progress): add `in-progress`, then launch a background Agent:
+- **`agent:sonnet`** (ready, not in progress, and every "Start after" issue closed by a merged PR): add `in-progress`, then launch a background Agent:
   - `model: "sonnet"`, `isolation: "worktree"`;
   - prompt: "Implement issue #N of moritzbrantner/mmorpg. Read AGENTS.md, docs/AGENT_TASKS.md and the issue. Work on the branch the issue names, commit in small steps, run the focused checks plus whatever the issue lists that CI does not run, push, and open the PR with `Closes #N` only when the branch is complete (add the `browser-evidence` label for browser-visible changes). Report the PR URL and anything you could not verify."
   
