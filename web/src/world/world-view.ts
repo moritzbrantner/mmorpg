@@ -16,7 +16,7 @@ import { MovementOutbox, type MovementInput } from "./movement-outbox";
 import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput, type DragMode, type Vec3 } from "./orbit-camera";
 import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type SceneryScene } from "./scenery-nodes";
 import { SkyLayer } from "./sky";
-import { UnitAnimators, placeWithModel, unitIdentity, unitModel, type UnitContext, type UnitLook } from "./unit-nodes";
+import { UnitAnimators, placeWithModel, unitIdentity, unitModel, unitNodeIds, type UnitContext, type UnitLook } from "./unit-nodes";
 import { BagsPanel, type BagsElements } from "./units/bags-panel";
 import { CombatHud } from "./units/combat-hud";
 import { LootPanel, type LootElements } from "./units/loot-panel";
@@ -126,6 +126,8 @@ export class WorldView {
   readonly #intents: Intent[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
+  /** The unit nodes of the last frame, for debug readouts. */
+  #lastUnitNodes: readonly RendererSceneNode[] = [];
   #sceneryFrame: SceneryFrame | null = null;
   #presentationFingerprint: string | null = null;
   #reliefAt: ((x: number, z: number) => number) | null = null;
@@ -336,6 +338,7 @@ export class WorldView {
     this.#camera.updateMatrixWorld(true);
     const frame = sceneryFrame.nodes(view.eye, { seconds: this.#seconds, animate });
     nodes.push(...frame.nodes, ...units);
+    this.#lastUnitNodes = units;
     const camera: RendererCamera = {
       viewMatrix: [...this.#camera.matrixWorldInverse.elements] as Matrix4Values,
       projectionMatrix: webGpuProjection(this.#camera),
@@ -447,6 +450,8 @@ export class WorldView {
         }
         return this.#reliefAt(x, z);
       },
+      /** Node IDs the last frame drew for one unit, e.g. `unit-creature-108`. */
+      unitNodeIds: (identity: string) => unitNodeIds(this.#lastUnitNodes, identity),
       stats: () => ({
         presentationFingerprint: this.#presentationFingerprint,
         buildMs: Number(this.#buildMs.toFixed(1)),

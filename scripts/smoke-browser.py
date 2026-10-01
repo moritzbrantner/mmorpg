@@ -440,6 +440,8 @@ class BrowserAcceptance(unittest.TestCase):
             "wolf": ([-84.5, 2.0, -1.0], [-84.5, 0.0, 4.5]),
             "guard": ([-5.0, 1.5, -3.0], [-5.0, 0.0, -8.0]),
         }
+        # The units' scene identities; a placeholder draws only `-body` and `-nose` (plus a target ring).
+        identities = {"wolf": "unit-creature-108", "guard": "unit-npc-6"}
         shots = {}
         for name, (eye, target) in views.items():
             # Heights above the presentation relief at the target.
@@ -450,6 +452,17 @@ class BrowserAcceptance(unittest.TestCase):
             self.frames(10)
             shots[name] = self.world_view()
             self.page.screenshot(path=str(ARTIFACTS / f"creature-model-{name}.png"))
+            # Model-specific observable, independent of where the unit wandered: its model nodes are
+            # in the current frame's scene, and not only the placeholder box and nose.
+            identity = identities[name]
+            ids = self.page.evaluate("identity => window.__valeDebug.unitNodeIds(identity)", identity)
+            parts = {i[len(identity) + 1:] for i in ids}
+            self.assertGreaterEqual(len(parts), 8, f"{identity} must draw a multi-part model, got {sorted(parts)}")
+            self.assertFalse(parts <= {"body", "nose", "target-ring"}, f"{identity} regressed to the placeholder box")
+            if name == "wolf":
+                self.assertTrue({"ear-left", "ear-right", "eye-left", "eye-right"} <= parts, f"The wolf draws its animal parts: {sorted(parts)}")
+            if name == "guard":
+                self.assertIn("head", parts, "The guard draws a humanoid model")
             colours = self.canvas_colours()
             self.assertGreater(colours["distinct"], 400, f"The {name} view must render a varied scene")
             self.assertGreater(colours["covered"], 0.5, f"The {name} view must draw most of the frame")

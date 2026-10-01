@@ -12,6 +12,7 @@ import {
   unitModel,
   type UnitContext,
   type UnitModel,
+  unitNodeIds,
 } from "../src/world/unit-nodes";
 import { PLACEHOLDER_BODY_MODEL } from "../src/world/units/creature-bodies";
 import { CREATURE_MODEL } from "../src/world/units/creature-models";
@@ -121,5 +122,13 @@ describe("creature and NPC models", () => {
     // Same ID, another kind: not the target.
     expect(draw(wolf, { kind: "npc", id: 108 })).not.toContain("unit-creature-108-target-ring");
     expect(draw(guard, { kind: "npc", id: 6 })).toEqual(["unit-npc-6-target-ring", "unit-npc-6-body", "unit-npc-6-nose"]);
+  });
+});
+
+describe("unitNodeIds", () => {
+  test("lists the nodes of one unit and never those of a unit whose ID shares a prefix", () => {
+    const nodes = ["unit-creature-10-body", "unit-creature-108-ear-left", "unit-creature-108-body", "unit-npc-108-body", "tree-1"].map((id) => ({ id }));
+    expect(unitNodeIds(nodes, "unit-creature-108")).toEqual(["unit-creature-108-ear-left", "unit-creature-108-body"]);
+    expect(unitNodeIds(nodes, "unit-creature-9")).toEqual([]);
   });
 });

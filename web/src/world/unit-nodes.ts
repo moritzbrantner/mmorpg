@@ -111,6 +111,12 @@ export function unitIdentity(entity: Pick<EntityState, "kind" | "entityId">): st
   return `unit-${entity.kind}-${entity.entityId}`;
 }
 
+/** The IDs of the nodes one unit drew, given its `unitIdentity` (IDs are `<identity>-<part>`). */
+export function unitNodeIds(nodes: readonly { id: string }[], identity: string): string[] {
+  const prefix = `${identity}-`;
+  return nodes.filter((node) => node.id.startsWith(prefix)).map((node) => node.id);
+}
+
 /** Animation state per visible unit, dropped when the unit leaves the projection. */
 export class UnitAnimators {
   readonly #animators = new Map<string, UnitAnimator>();
