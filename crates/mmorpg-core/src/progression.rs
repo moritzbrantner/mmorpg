@@ -75,7 +75,7 @@ impl crate::ZoneSimulation {
         let reward = kill_experience(player.level, creature_level)
             .ok_or_else(|| crate::ZoneError::new("invalid progression level"))?;
         let player = self.players.get_mut(&player_id).expect("admitted tapper");
-        let old_max_health = crate::unit::player_max_health(player.level);
+        let old_level = player.level;
         player.experience += reward;
         while player.level < MAX_PLAYER_LEVEL {
             let threshold = experience_to_next_level(player.level).expect("valid starter level");
@@ -88,7 +88,14 @@ impl crate::ZoneSimulation {
         if player.level == MAX_PLAYER_LEVEL {
             player.experience = 0;
         }
-        player.health += crate::unit::player_max_health(player.level) - old_max_health;
+        // Current health and mana grow with their maximums; rage and focus
+        // keep a fixed maximum.
+        player.health += crate::unit::player_max_health(player.level)
+            - crate::unit::player_max_health(old_level);
+        if let Some(choice) = player.class {
+            let kind = choice.class.resource();
+            player.resource.value += kind.max(player.level) - kind.max(old_level);
+        }
         Ok(())
     }
 }
