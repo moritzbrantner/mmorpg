@@ -604,10 +604,21 @@ impl ZoneSimulation {
             .into_iter()
             .any(|target| !matches!(target, EntityRef::Creature(_)))
             || creature_targets
-                .into_iter()
+                .clone()
                 .any(|target| !matches!(target, EntityRef::Player(_)))
         {
             return Err(ZoneError::new("a cast names a target of the wrong kind"));
+        }
+        // A player's death removes every creature cast aimed at them.
+        if creature_targets.into_iter().any(|target| {
+            let EntityRef::Player(player_id) = target else {
+                return false;
+            };
+            self.players
+                .get(&player_id)
+                .is_some_and(|player| !player.is_alive())
+        }) {
+            return Err(ZoneError::new("a creature casts at a dead player"));
         }
         for player in self.players.values() {
             if player.target.is_some_and(|target| !exists(target)) {
