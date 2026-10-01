@@ -186,12 +186,12 @@ fn export(scenery: &Scenery, colliders: &[StaticCollider], areas: &ZoneAreas) ->
             })
         })
         .collect();
-    SceneryExport {
+    let mut export = SceneryExport {
         format: SCENERY_FORMAT,
         version: SCENERY_FORMAT_VERSION,
         source: SCENERY_SOURCE,
         content_revision: scenery.content_revision.to_string(),
-        presentation_fingerprint: format!("{:016x}", scenery.stable_hash()),
+        presentation_fingerprint: String::new(),
         units_per_metre: UNITS_PER_METRE,
         player_half_extents: PLAYER_HALF_EXTENTS_UNITS,
         terrain: terrain(&scenery.terrain_grid(TERRAIN_STEP_UNITS)),
@@ -239,7 +239,20 @@ fn export(scenery: &Scenery, colliders: &[StaticCollider], areas: &ZoneAreas) ->
                 max_xz: area.max_xz(),
             })
             .collect(),
-    }
+    };
+    refresh_presentation_fingerprint(&mut export);
+    export
+}
+
+/// Hash every exported field at the client's actual sample resolutions.
+/// The fingerprint's own field is empty during hashing, avoiding recursion.
+fn refresh_presentation_fingerprint(export: &mut SceneryExport) {
+    export.presentation_fingerprint.clear();
+    let bytes = serde_json::to_vec(export).expect("scenery export is plain serializable data");
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    export.presentation_fingerprint = format!("{hash:016x}");
 }
 
 fn terrain(grid: &TerrainGrid) -> Terrain {
@@ -438,6 +451,40 @@ mod tests {
     }
 
     #[test]
+    fn presentation_identity_covers_intervening_terrain_samples_and_all_geometry_inputs() {
+        let original = hosted_export();
+        let mutations: [fn(&mut SceneryExport); 10] = [
+            // These 4 m / 20 m samples are absent from the old 10 m / 60 m hash.
+            |value| value.terrain.heights[1] += 1,
+            |value| value.far_terrain.heights[1] += 1,
+            |value| value.terrain.biomes[1] = (value.terrain.biomes[1] + 1) % 13,
+            |value| value.far_terrain.biomes[1] = (value.far_terrain.biomes[1] + 1) % 13,
+            |value| value.terrain.step += 1,
+            |value| value.props[0][1] += 1,
+            |value| value.biomes[0].color = "#123456".to_owned(),
+            |value| value.structures[0].center[0] += 1,
+            |value| value.roads[0].half_width += 1,
+            |value| value.water[0].surface_y += 1,
+        ];
+        for mutate in mutations {
+            let mut changed = original.clone();
+            mutate(&mut changed);
+            refresh_presentation_fingerprint(&mut changed);
+            assert_ne!(
+                changed.presentation_fingerprint,
+                original.presentation_fingerprint
+            );
+            assert_eq!(changed.content_revision, original.content_revision);
+        }
+        let mut repeated = original.clone();
+        refresh_presentation_fingerprint(&mut repeated);
+        assert_eq!(
+            repeated.presentation_fingerprint,
+            original.presentation_fingerprint
+        );
+    }
+
+    #[test]
     fn every_spawn_slot_stands_on_flat_relief() {
         for slot in 0..MAX_PLAYERS_PER_ZONE {
             let [x, _, z] = SPAWN_GRID.feet(u16::try_from(slot).unwrap()).unwrap();
@@ -455,7 +502,7 @@ mod tests {
         assert_eq!(value["version"], SCENERY_FORMAT_VERSION);
         assert_eq!(value["source"], SCENERY_SOURCE);
         assert_eq!(value["contentRevision"], "4");
-        assert_eq!(value["presentationFingerprint"], "1de3341c933449f6");
+        assert_eq!(value["presentationFingerprint"], "bf866c8b4e7f837d");
         assert_eq!(value["unitsPerMetre"], 100);
         assert_eq!(value["playerHalfExtents"], serde_json::json!([30, 90, 30]));
         let names: Vec<_> = value["areas"]
