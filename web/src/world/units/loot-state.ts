@@ -79,7 +79,7 @@ export class LootState {
           continue;
         }
         const related = event.target === null
-          ? (event.code === "too-many-intents" && sameClaim(sheet, pending.sheet)) || event.code === "you-are-dead"
+          ? (event.code === "too-many-intents" && sameClaim(sheet, pending.sheet)) || (event.code === "you-are-dead" && snapshot.viewer.dead)
           : sameEntity(event.target, { kind: "creature", id: pending.sheet.creatureId });
         if (!related) {
           continue;

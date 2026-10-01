@@ -169,7 +169,7 @@ test("dispatch cannot rewind a newer accepted projection", () => {
 });
 
 test("targetless bag failures cannot report retained rewards after a successful claim", () => {
-  const codes: ErrorCode[] = ["inventory-full", "invalid-inventory-move"];
+  const codes: ErrorCode[] = ["inventory-full", "invalid-inventory-move", "you-are-dead"];
   for (const code of codes) {
     const state = new LootState();
     state.update(projection());
@@ -203,5 +203,16 @@ test("a later dropped intent cannot turn a consumed claim into capacity refusal 
   expect(state.sheet).toBeNull();
   expect(state.copper).toBe(2);
   expect(state.feedback).toBe("");
+  expect(state.canClaim).toBe(false);
+});
+
+test("generic death feedback describes the currently dead viewer", () => {
+  const state = new LootState();
+  state.update(projection());
+  intent(state)(projection());
+  state.update({ ...projection(13n, null), viewer: { ...HEALTHY_VIEWER, health: 0, dead: true, target: { kind: "creature", id: 108 } },
+    events: [{ kind: "error", code: "you-are-dead", target: null }] });
+  expect(state.feedback).toContain("while dead");
+  expect(state.sheet).toBeNull();
   expect(state.canClaim).toBe(false);
 });
