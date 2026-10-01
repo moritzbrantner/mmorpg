@@ -48,8 +48,8 @@ pub use inventory::{
     InventoryError, ItemId, ItemStack, ItemTemplate, item_template,
 };
 pub use loot::{
-    LOOT_CATALOG_REVISION, LootOutcome, LootRewards, LootRolls, LootTable, LootTableError,
-    MAX_LOOT_OUTCOMES, loot_table,
+    LOOT_CATALOG_REVISION, LootOutcome, LootRewards, LootRolls, LootSettlementError, LootTable,
+    LootTableError, MAX_LOOT_OUTCOMES, loot_table, settle_loot,
 };
 pub use progression::{MAX_PLAYER_LEVEL, experience_to_next_level, kill_experience};
 pub use projection::{EntityFlags, EntitySnapshot, ViewerState, ZoneSnapshot};

@@ -3,7 +3,7 @@
 
 use std::{error::Error, fmt, sync::LazyLock};
 
-use crate::{CreatureTemplateId, ItemId, ItemStack, item_template};
+use crate::{CreatureTemplateId, Inventory, InventoryError, ItemId, ItemStack, item_template};
 
 pub const LOOT_CATALOG_REVISION: u64 = 1;
 pub const MAX_LOOT_OUTCOMES: usize = 4;
@@ -45,6 +45,51 @@ pub struct LootRewards {
     /// Copper, matching the starter economy's `u32` balance contract.
     pub money: u32,
     pub item: Option<ItemStack>,
+}
+
+/// Credit one validated reward atomically. The caller owns claim eligibility
+/// and consumes the reward only after success; this rule provides no authority
+/// or duplicate-claim protection. Copper overflow takes precedence over bag errors.
+pub fn settle_loot(
+    inventory: &mut Inventory,
+    copper: &mut u32,
+    rewards: LootRewards,
+) -> Result<(), LootSettlementError> {
+    let balance = copper
+        .checked_add(rewards.money)
+        .ok_or(LootSettlementError::MoneyOverflow)?;
+    if let Some(stack) = rewards.item {
+        // Inventory insertion already stages the complete bounded bag mutation.
+        inventory
+            .insert(stack.item(), stack.quantity())
+            .map_err(LootSettlementError::Inventory)?;
+    }
+    *copper = balance;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LootSettlementError {
+    MoneyOverflow,
+    Inventory(InventoryError),
+}
+
+impl fmt::Display for LootSettlementError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MoneyOverflow => formatter.write_str("loot would overflow copper balance"),
+            Self::Inventory(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for LootSettlementError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::MoneyOverflow => None,
+            Self::Inventory(error) => Some(error),
+        }
+    }
 }
 
 /// Validates authored content once; immutable queries and rolls cannot alter it.
