@@ -40,14 +40,18 @@ describe("WASM local zone host", () => {
     expect(moved.map((view) => view.tick)).toEqual([1n, 2n, 3n, 4n]);
     expect(moved[0]?.inventory).not.toBeNull();
     expect(moved[3]?.inventory).toBeNull();
-    for (const view of moved) bag.update(view);
+    for (const view of moved) {
+      bag.update(view);
+    }
     expect(bag.ready).toBe(true);
     expect(bag.slots?.[15]).toEqual({ itemId: 1, quantity: 2 });
     source.sendCommand({ kind: "move-item", source: 15, destination: 1, quantity: 1 });
     const refused = source.advance(4 / 30);
     expect(refused[0]?.events).toContainEqual({ kind: "error", code: "invalid-inventory-move", target: null });
     expect(refused[3]?.events).toEqual([]);
-    for (const view of refused) bag.update(view);
+    for (const view of refused) {
+      bag.update(view);
+    }
     expect(bag.feedback).toContain("refused");
     expect(source.advance(0)).toEqual([]);
   });

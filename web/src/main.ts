@@ -880,12 +880,16 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Escape" && !event.repeat) {
     event.preventDefault();
-    if (!worldView.closeBags()) returnToCharacters();
+    if (!worldView.closeBags()) {
+      returnToCharacters();
+    }
     return;
   }
   if (event.code === "KeyB") {
     event.preventDefault();
-    if (!event.repeat) worldView.toggleBags();
+    if (!event.repeat) {
+      worldView.toggleBags();
+    }
     return;
   }
   if (event.code === "F3") {

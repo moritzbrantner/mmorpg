@@ -79,7 +79,9 @@ export class LocalZoneSource implements WorldSource {
   advance(deltaSeconds: number): readonly ZoneSnapshot[] {
     const player = this.#player;
     const due = this.#clock.advance(deltaSeconds);
-    if (player === null) return [];
+    if (player === null) {
+      return [];
+    }
     const received: ZoneSnapshot[] = [];
     for (let tick = 0; tick < due; tick += 1) {
       this.#zone.tick();
