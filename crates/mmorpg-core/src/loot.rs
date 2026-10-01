@@ -1,0 +1,193 @@
+//! Validated immutable loot rules. Rolling receives explicit random values;
+//! corpse ownership, grants, RNG streams and persistence belong to the zone.
+
+use std::{error::Error, fmt, sync::LazyLock};
+
+use crate::{CreatureTemplateId, ItemId, ItemStack, item_template};
+
+pub const LOOT_CATALOG_REVISION: u64 = 1;
+pub const MAX_LOOT_OUTCOMES: usize = 4;
+
+/// One weighted outcome: no ordinary item, or one bounded stack.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LootOutcome {
+    Nothing {
+        weight: u16,
+    },
+    Item {
+        weight: u16,
+        item: ItemId,
+        /// Inclusive quantity bounds.
+        quantity: [u16; 2],
+    },
+}
+
+impl LootOutcome {
+    #[must_use]
+    pub const fn weight(self) -> u16 {
+        match self {
+            Self::Nothing { weight } | Self::Item { weight, .. } => weight,
+        }
+    }
+}
+
+/// Independent supplied rolls, reduced modulo each declared range/bucket.
+/// The rule does not draw from or advance any RNG itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LootRolls {
+    pub money: u32,
+    pub outcome: u32,
+    pub quantity: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LootRewards {
+    /// Copper, matching the starter economy's `u32` balance contract.
+    pub money: u32,
+    pub item: Option<ItemStack>,
+}
+
+/// Validates authored content once; immutable queries and rolls cannot alter it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LootTable {
+    money: [u32; 2],
+    outcomes: [LootOutcome; MAX_LOOT_OUTCOMES],
+    outcome_count: usize,
+    total_weight: u32,
+}
+
+impl LootTable {
+    pub fn new(money: [u32; 2], outcomes: &[LootOutcome]) -> Result<Self, LootTableError> {
+        if money[0] > money[1] {
+            return Err(LootTableError::InvalidMoneyRange);
+        }
+        if outcomes.is_empty() || outcomes.len() > MAX_LOOT_OUTCOMES {
+            return Err(LootTableError::InvalidOutcomes);
+        }
+        let mut total_weight = 0;
+        for outcome in outcomes {
+            if outcome.weight() == 0 {
+                return Err(LootTableError::InvalidWeight);
+            }
+            total_weight += u32::from(outcome.weight());
+            if let LootOutcome::Item { item, quantity, .. } = outcome {
+                let template = item_template(*item).ok_or(LootTableError::UnknownItem)?;
+                if quantity[0] == 0 || quantity[0] > quantity[1] || quantity[1] > template.max_stack
+                {
+                    return Err(LootTableError::InvalidQuantity);
+                }
+            }
+        }
+        let mut stored = [LootOutcome::Nothing { weight: 0 }; MAX_LOOT_OUTCOMES];
+        stored[..outcomes.len()].copy_from_slice(outcomes);
+        Ok(Self {
+            money,
+            outcomes: stored,
+            outcome_count: outcomes.len(),
+            total_weight,
+        })
+    }
+
+    #[must_use]
+    pub const fn money_range(&self) -> [u32; 2] {
+        self.money
+    }
+
+    #[must_use]
+    pub fn outcomes(&self) -> &[LootOutcome] {
+        &self.outcomes[..self.outcome_count]
+    }
+
+    #[must_use]
+    pub fn roll(&self, rolls: LootRolls) -> LootRewards {
+        // Widen before computing the inclusive width: 0..=u32::MAX is valid.
+        let width = u64::from(self.money[1]) - u64::from(self.money[0]) + 1;
+        let money = u32::try_from(u64::from(self.money[0]) + u64::from(rolls.money) % width)
+            .expect("validated money range fits u32");
+        let mut bucket = rolls.outcome % self.total_weight;
+        let outcome = self
+            .outcomes()
+            .iter()
+            .find(|outcome| {
+                let weight = u32::from(outcome.weight());
+                if bucket < weight {
+                    true
+                } else {
+                    bucket -= weight;
+                    false
+                }
+            })
+            .expect("positive validated weights cover every bucket");
+        let item = match *outcome {
+            LootOutcome::Nothing { .. } => None,
+            LootOutcome::Item { item, quantity, .. } => {
+                let width = u32::from(quantity[1]) - u32::from(quantity[0]) + 1;
+                let amount = u16::try_from(u32::from(quantity[0]) + rolls.quantity % width)
+                    .expect("validated quantity fits u16");
+                Some(
+                    ItemStack::new(item, amount)
+                        .expect("validated loot quantity fits its catalog stack"),
+                )
+            }
+        };
+        LootRewards { money, item }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LootTableError {
+    InvalidMoneyRange,
+    InvalidOutcomes,
+    InvalidWeight,
+    UnknownItem,
+    InvalidQuantity,
+}
+
+impl fmt::Display for LootTableError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidMoneyRange => "loot money range is reversed",
+            Self::InvalidOutcomes => "loot table must have one to four outcomes",
+            Self::InvalidWeight => "loot outcome weight must be positive",
+            Self::UnknownItem => "loot outcome names an unknown item",
+            Self::InvalidQuantity => "loot quantity range must fit its catalog stack",
+        })
+    }
+}
+impl Error for LootTableError {}
+
+/// Minimal authored rewards, kept separate from active zone content until #89.
+static CATALOG: LazyLock<[(CreatureTemplateId, LootTable); 7]> = LazyLock::new(|| {
+    use crate::greyhaven_vale::units::templates::*;
+    let fur = |weight, quantity| LootOutcome::Item {
+        weight,
+        item: ItemId::new(1),
+        quantity,
+    };
+    let dagger = |weight| LootOutcome::Item {
+        weight,
+        item: ItemId::new(2),
+        quantity: [1, 1],
+    };
+    let nothing = |weight| LootOutcome::Nothing { weight };
+    let table =
+        |money, outcomes| LootTable::new(money, outcomes).expect("starter loot content is valid");
+    [
+        (TIMBER_WOLF, table([0, 2], &[fur(3, [1, 2]), nothing(1)])),
+        (YOUNG_BOAR, table([0, 3], &[fur(1, [1, 1]), nothing(1)])),
+        (GRAIN_RAT, table([0, 1], &[fur(1, [1, 1]), nothing(3)])),
+        (FIELD_MARAUDER, table([2, 6], &[dagger(1), nothing(3)])),
+        (MIREFIN_LURKER, table([1, 4], &[nothing(1)])),
+        (REDBRAND_BANDIT, table([4, 9], &[dagger(1), nothing(1)])),
+        (GARRICK_REDBRAND, table([25, 35], &[dagger(1)])),
+    ]
+});
+
+/// Unknown templates have no table; callers must not substitute another reward.
+#[must_use]
+pub fn loot_table(template: CreatureTemplateId) -> Option<&'static LootTable> {
+    CATALOG
+        .iter()
+        .find(|(id, _)| *id == template)
+        .map(|(_, table)| table)
+}

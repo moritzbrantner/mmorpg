@@ -142,6 +142,8 @@ and level-difference kill rewards. The zone awards and projects durable XP; the 
 [Starter inventory rules](docs/INVENTORY.md) define the immutable item catalog
 and atomic 16-slot bags. Player-owned bags, queued moves and recoverable self sheets are implemented; the browser displays those slots and sends split/move/merge intent through its Bags panel.
 
+[Starter loot rules](docs/LOOT.md) define validated weighted rewards and deterministic rolling. Authoritative corpse claims/money and the browser loot window remain #89 and #90.
+
 Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative durable state; queries read it. Do not introduce event sourcing by default. Zone hot loops must not synchronously depend on a distributed database. Durable character/world persistence and zone checkpoint storage are separate upcoming boundaries.
 
 ## Pinned foundations
