@@ -76,6 +76,7 @@ fn initial_zone(name: &str, count: usize) -> Result<ZoneSimulation, Box<dyn Erro
             ]
         };
         canonical.players.push(CanonicalPlayerSnapshot {
+            copper: 0,
             player_id: u32::try_from(index)? + 1,
             position,
             velocity: [0; 3],

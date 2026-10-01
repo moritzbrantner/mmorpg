@@ -1,11 +1,11 @@
 import { entityKindCode, type EntityRef } from "../../src/entity-ref";
 import type { ZoneEvent, ZoneSnapshot } from "../../src/replication";
 
-const FIXED_BYTES = 72;
+const FIXED_BYTES = 77;
 const EVENT_BYTES = 14;
 const ENTITY_BYTES = 21;
 const ERROR_CODES = [
-  "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target", "too-many-intents", "invalid-inventory-move", "inventory-full",
+  "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target", "too-many-intents", "invalid-inventory-move", "inventory-full", "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
 ];
 
 function flagByte(flags: readonly boolean[]): number {
@@ -13,11 +13,15 @@ function flagByte(flags: readonly boolean[]): number {
 }
 
 /**
- * Test-only player-visible snapshot v7 encoder (docs/PROTOCOL.md); Rust owns the real one.
+ * Test-only player-visible snapshot v8 encoder (docs/PROTOCOL.md); Rust owns the real one.
  * Like it, positions must fit i16 and velocities saturate to i8.
  */
 export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
-  const size = FIXED_BYTES + (snapshot.inventory === null ? 0 : 64) + EVENT_BYTES * snapshot.events.length + ENTITY_BYTES * snapshot.entities.length;
+  let lootBytes = 0;
+  if (snapshot.loot !== null) {
+    lootBytes = snapshot.loot.item === null ? 17 : 21;
+  }
+  const size = FIXED_BYTES + (snapshot.inventory === null ? 0 : 64) + lootBytes + EVENT_BYTES * snapshot.events.length + ENTITY_BYTES * snapshot.entities.length;
   const bytes = new Uint8Array(size);
   const view = new DataView(bytes.buffer);
   let offset = 0;
@@ -29,9 +33,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u8(value === null ? 0 : entityKindCode(value.kind));
     u32(value?.id ?? 0);
   };
-  u8(7);
+  u8(8);
   u8(2);
-  u16(7);
+  u16(8);
   u32(snapshot.zoneId);
   u64(snapshot.tick);
   u64(snapshot.contentRevision);
@@ -43,16 +47,30 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
   u8(viewer.level);
   u32(viewer.experience);
   u32(viewer.experienceToNextLevel);
+  u32(viewer.copper);
   u8(flagByte([viewer.dead, viewer.inCombat, viewer.autoAttacking]));
   entity(viewer.target);
   entity(snapshot.targetOfTarget);
   u64(snapshot.inventoryRevision);
   u8(snapshot.inventory === null ? 0 : 1);
   if (snapshot.inventory !== null) {
-    if (snapshot.inventory.length !== 16) throw new Error("Inventory must have sixteen slots");
+    if (snapshot.inventory.length !== 16) {
+      throw new Error("Inventory must have sixteen slots");
+    }
     for (const slot of snapshot.inventory) {
       u16(slot?.itemId ?? 0);
       u16(slot?.quantity ?? 0);
+    }
+  }
+  u8(snapshot.loot === null ? 0 : 1);
+  if (snapshot.loot !== null) {
+    u32(snapshot.loot.creatureId);
+    u64(snapshot.loot.diedAt);
+    u32(snapshot.loot.money);
+    u8(snapshot.loot.item === null ? 0 : 1);
+    if (snapshot.loot.item !== null) {
+      u16(snapshot.loot.item.itemId);
+      u16(snapshot.loot.item.quantity);
     }
   }
   u8(snapshot.events.length);
@@ -65,7 +83,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u32(record.entityId);
     u16(record.appearance);
     for (const component of record.position) {
-      if (component < -32_768 || component > 32_767) throw new Error("position does not fit i16");
+      if (component < -32_768 || component > 32_767) {
+        throw new Error("position does not fit i16");
+      }
       view.setInt16(offset, component);
       offset += 2;
     }
@@ -77,7 +97,7 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u8(record.level);
     u8(record.healthPercent);
     const flags = record.flags;
-    u8(flagByte([flags.dead, flags.inCombat, flags.hostile, flags.attackable, flags.tappedByOther, flags.evading, flags.targetsViewer]));
+    u8(flagByte([flags.dead, flags.inCombat, flags.hostile, flags.attackable, flags.tappedByOther, flags.evading, flags.targetsViewer, flags.lootable]));
   }
   return bytes;
 }

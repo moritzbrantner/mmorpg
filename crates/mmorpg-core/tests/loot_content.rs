@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use mmorpg_core::{
     CreatureTemplateId, ItemId, LootOutcome, LootTable, MAX_CREATURE_TEMPLATES, ZoneCommand,
-    ZoneContent, ZoneId, ZoneSimulation, greyhaven_vale,
+    ZoneContent, ZoneDefinition, ZoneId, ZoneSimulation, greyhaven_vale,
 };
 
 const WOLF: CreatureTemplateId = CreatureTemplateId::new(1);
@@ -28,12 +28,30 @@ fn rule() -> LootTable {
     table([1, 3], 2, FUR, [1, 2])
 }
 
+// Frozen pre-activation identity, derived from the unchanged hosted geometry/units.
+fn unbound() -> ZoneContent {
+    let current = greyhaven_vale::content();
+    let definition = current.definition();
+    ZoneContent::new(
+        ZoneDefinition::with_spawn_grid(
+            4,
+            definition.gravity(),
+            definition.spawn_grid(),
+            definition.colliders().to_vec(),
+        )
+        .unwrap(),
+        current.areas().clone(),
+        current.creature_templates().to_vec(),
+        current.creature_spawns().to_vec(),
+        current.npcs().to_vec(),
+        current.graveyard(),
+    )
+    .unwrap()
+    .with_rng_seed(current.rng_seed())
+}
+
 fn bound(revision: u64, tables: Vec<(CreatureTemplateId, LootTable)>) -> ZoneContent {
-    greyhaven_vale::content()
-        .as_ref()
-        .clone()
-        .with_loot_tables(revision, tables)
-        .unwrap()
+    unbound().with_loot_tables(revision, tables).unwrap()
 }
 
 #[test]
@@ -58,9 +76,7 @@ fn binding_orders_template_ids_and_keeps_missing_templates_explicit() {
     assert_ne!(reseeded.fingerprint(), first.fingerprint());
     assert_eq!(
         reseeded,
-        greyhaven_vale::content()
-            .as_ref()
-            .clone()
+        unbound()
             .with_rng_seed(7)
             .with_loot_tables(1, vec![(WOLF, rule()), (BOAR, rule())])
             .unwrap(),
@@ -74,7 +90,7 @@ fn binding_orders_template_ids_and_keeps_missing_templates_explicit() {
     let empty = bound(7, vec![]);
     assert_eq!(empty.loot_revision(), 7);
     assert!(empty.loot_tables().is_empty());
-    assert_ne!(empty.fingerprint(), greyhaven_vale::content().fingerprint());
+    assert_ne!(empty.fingerprint(), unbound().fingerprint());
 }
 
 #[test]
@@ -86,13 +102,7 @@ fn malformed_bindings_fail_closed() {
         (1, vec![(CreatureTemplateId::new(u16::MAX), rule())]),
         (1, vec![(WOLF, rule()); MAX_CREATURE_TEMPLATES + 1]),
     ] {
-        assert!(
-            greyhaven_vale::content()
-                .as_ref()
-                .clone()
-                .with_loot_tables(revision, tables)
-                .is_err()
-        );
+        assert!(unbound().with_loot_tables(revision, tables).is_err());
     }
 }
 
@@ -173,7 +183,7 @@ fn every_authored_reward_field_changes_identity_and_refuses_old_recovery() {
 
 #[test]
 fn opt_in_binding_preserves_live_content_and_complete_simulation_continuation() {
-    let current = greyhaven_vale::content();
+    let current = Arc::new(unbound());
     assert_eq!(current.revision(), 4);
     assert_eq!(current.fingerprint(), 0x5738_a86d_e795_e940);
     assert_eq!(current.loot_revision(), 0);

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodeSnapshot, findEntity, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
 import { NO_FLAGS, playerEntity, testSnapshot } from "./support/snapshots.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v7.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v8.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
 const player = (entityId, x, facing = 0) => playerEntity(entityId, [x, 90, 0], [21, 0, 0], facing);
 const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapshot({
@@ -13,7 +13,7 @@ const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapsh
 const VIEWER = { kind: "player", id: 7 };
 const WOLF = { kind: "creature", id: 108 };
 /** Byte offsets of the fixture's sections (docs/PROTOCOL.md). */
-const EVENTS = 133;
+const EVENTS = 138;
 const ENTITY_COUNT = EVENTS + 1 + 7 * 14;
 const FIRST_ENTITY = ENTITY_COUNT + 2;
 
@@ -22,19 +22,19 @@ describe("Rust/browser snapshot contract", () => {
     const legacy = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v6.hex", import.meta.url), "utf8").trim();
     expect(() => decodeSnapshot(Uint8Array.from(Buffer.from(legacy, "hex")))).toThrow("version");
     const zeroRevision = fixture.slice();
-    zeroRevision.fill(0, 60, 68);
+    zeroRevision.fill(0, 64, 72);
     expect(() => decodeSnapshot(zeroRevision)).toThrow("revision");
     const invalidFlag = fixture.slice();
-    invalidFlag[68] = 2;
+    invalidFlag[72] = 2;
     expect(() => decodeSnapshot(invalidFlag)).toThrow("Reserved");
     for (const [slot, item, quantity] of [[0, 0, 3], [0, 3, 1], [0, 1, 0], [0, 1, 21], [1, 2, 2]]) {
       const bytes = fixture.slice();
       const view = new DataView(bytes.buffer);
-      view.setUint16(69 + slot * 4, item);
-      view.setUint16(71 + slot * 4, quantity);
+      view.setUint16(73 + slot * 4, item);
+      view.setUint16(75 + slot * 4, quantity);
       expect(() => decodeSnapshot(bytes)).toThrow("inventory stack");
     }
-    const omitted = new Uint8Array([...fixture.slice(0, 68), 0, ...fixture.slice(133)]);
+    const omitted = new Uint8Array([...fixture.slice(0, 72), 0, ...fixture.slice(137)]);
     expect(decodeSnapshot(omitted)).toMatchObject({ inventoryRevision: 9n, inventory: null });
   });
   test("rejects invalid progression and the actual legacy v5 fixture", () => {
@@ -50,13 +50,14 @@ describe("Rust/browser snapshot contract", () => {
     }
   });
   test("decodes the same golden bytes as the Rust encoder", () => {
-    expect(fixture.length).toBe(72 + 64 + 7 * 14 + 4 * 21);
+    expect(fixture.length).toBe(77 + 64 + 7 * 14 + 4 * 21);
     expect(decodeSnapshot(fixture)).toEqual({
       zoneId: 42, tick: 99n, contentRevision: 4n, acknowledgedSequence: 81, viewerId: 7,
-      viewer: { experience: 37, experienceToNextLevel: 100, health: 38, maxHealth: 50, level: 1, dead: false, inCombat: true, autoAttacking: true, target: WOLF },
+      viewer: { copper: 42, experience: 37, experienceToNextLevel: 100, health: 38, maxHealth: 50, level: 1, dead: false, inCombat: true, autoAttacking: true, target: WOLF },
       targetOfTarget: VIEWER,
       inventoryRevision: 9n,
       inventory: [{ itemId: 1, quantity: 3 }, { itemId: 2, quantity: 1 }, ...Array(13).fill(null), { itemId: 1, quantity: 20 }],
+      loot: null,
       events: [
         { kind: "damage-dealt", source: VIEWER, target: WOLF, amount: 7, critical: true },
         { kind: "damage-taken", source: WOLF, target: VIEWER, amount: 3, critical: false },
@@ -97,6 +98,7 @@ describe("Rust/browser snapshot contract", () => {
     const codes = [
       "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target",
       "too-many-intents", "invalid-inventory-move", "inventory-full",
+      "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
     ];
     codes.forEach((code, index) => {
       const bytes = fixture.slice();
@@ -114,10 +116,10 @@ describe("Rust/browser snapshot contract", () => {
       [0, 4, "version"],
       [1, 1, "player-visible"],
       [3, 4, "version"],
-      [49, 0b1000, "Reserved"],
-      [49, 0b111, "Inconsistent"],
-      [50, 9, "kind"],
-      [55, 0, "absent"],
+      [53, 0b1000, "Reserved"],
+      [53, 0b111, "Inconsistent"],
+      [54, 9, "kind"],
+      [59, 0, "absent"],
       [EVENTS, 17, "event capacity"],
       [EVENTS + 1, 9, "event kind"],
       [EVENTS + 2, 2, "flags"],
@@ -127,7 +129,7 @@ describe("Rust/browser snapshot contract", () => {
       [FIRST_ENTITY, 0, "kind"],
       [FIRST_ENTITY, 4, "kind"],
       [wolfRecord + 19, 101, "Health percent"],
-      [wolfRecord + 20, 0x80, "Reserved"],
+      [wolfRecord + 20, 0x80, "Lootable"],
       [31, 9, "viewer"],
     ]) {
       const invalid = fixture.slice();

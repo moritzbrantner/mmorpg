@@ -126,3 +126,32 @@ The crowded fixture packs 29,382 fewer lower-priority entities because bag sheet
 share the unchanged 1,077-byte budget. Feedback records are retained. Recovery,
 packed/reference parity and a second cold run still compare all 360 ticks; the
 new inventory-resume scenario separately covers bag mutation and reconnect.
+
+## Corpse authority v8 evidence
+
+Greyhaven revision 5 (`5dcb5d3b46dc5451`) binds loot catalog revision 1. Snapshot
+v8 adds five fixed projection bytes (copper and loot presence); selected eligible
+corpse sheets add at most 21 bytes. The harness counts `loot_sheets` at publication
+without adding simulation instrumentation. The regression ceiling is the reviewed
+v5 byte ceiling plus `22 × players × ticks`, periodic `64 × players × (ticks/10)`
+bag bytes, and `21 × loot_sheets`. The 22 bytes comprise XP (8), bag metadata (9),
+and copper/loot presence (5). No AI, physics, maintenance or candidate ceiling rises.
+
+| Workload | v8 projection bytes | Largest bytes | Loot sheets | Trace checksum |
+| --- | ---: | ---: | ---: | --- |
+| vale-idle-16 | 3,368,304 | 645 | 0 | `ceaa4c5dce374e6b` |
+| vale-fights-8 | 1,063,063 | 540 | 0 | `4c28fa5d12f05fd7` |
+| vale-fights-32 | 5,733,711 | 750 | 0 | `5698a273cac7c388` |
+| vale-crowded-fights-64 | 24,512,590 | 1,071 | 240 | `dd796457fec68c20` |
+
+All physical work counters and damage/death counts match v7. Each v8 replay and
+canonical recovery continuation matches raw canonical and packed projection bytes
+for all 360 ticks; a second run reproduces counters/checksums. Schema/content
+identity and the new sections change raw hashes across versions, so this is not
+a claim of byte parity between v7 and v8. Separate normalized state comparisons
+verify that reward generation preserves the AI/combat RNG and existing mechanics.
+The hosted wolf hunt still dies at tick 912 with the same combat state.
+
+Validation uses locked dependencies, Rust 1.98.1 and the unchanged pinned physics
+engine. Shared convention sourceRevision is
+`46d8793bb3034326561f876dcc67dbaa5aa1e432`.

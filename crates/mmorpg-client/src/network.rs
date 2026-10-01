@@ -301,6 +301,11 @@ impl ClientSession {
         self.send_command(ZoneCommand::ReleaseSpirit)
     }
 
+    /// Claims all remaining rewards from the projected corpse death.
+    pub fn send_loot(&mut self, claim: mmorpg_core::LootClaim) -> Result<(), SessionError> {
+        self.send_command(ZoneCommand::Loot(claim))
+    }
+
     /// Queues a move within the player's own authoritative bag.
     pub fn send_move_item(
         &mut self,

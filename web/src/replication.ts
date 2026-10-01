@@ -1,10 +1,10 @@
-/** Player-visible protocol v7 only. Canonical recovery state never enters rendering. */
+/** Player-visible protocol v8 only. Canonical recovery state never enters rendering. */
 import { entityKindFromCode, sameEntity, type EntityKind, type EntityRef } from "./entity-ref";
 
 export type { EntityKind, EntityRef } from "./entity-ref";
 export type Vector3 = readonly [number, number, number];
 
-/** Presentation flags of a visible unit (wire bits 0–6). */
+/** Presentation flags of a visible unit (wire bits 0–7). */
 export type EntityFlags = {
   dead: boolean;
   inCombat: boolean;
@@ -17,6 +17,7 @@ export type EntityFlags = {
   evading: boolean;
   /** Its own target is the viewer. */
   targetsViewer: boolean;
+  lootable: boolean;
 };
 
 export type EntityState = {
@@ -37,6 +38,7 @@ export type EntityState = {
 
 /** The viewer's own exact state. */
 export type ViewerState = {
+  copper: number;
   experience: number;
   experienceToNextLevel: number;
   health: number;
@@ -58,7 +60,11 @@ export type ErrorCode =
   | "invalid-target"
   | "too-many-intents"
   | "invalid-inventory-move"
-  | "inventory-full";
+  | "inventory-full"
+  | "invalid-loot"
+  | "not-loot-owner"
+  | "empty-loot"
+  | "money-overflow";
 
 /** Feedback the viewer received in the projection's tick; cosmetic and lossy. */
 export type ZoneEvent =
@@ -69,6 +75,13 @@ export type ZoneEvent =
 
 /** Wire catalog revision 1, validated against the core's immutable stack limits. */
 export type InventorySlot = { itemId: number; quantity: number } | null;
+
+export type LootView = {
+  creatureId: number;
+  diedAt: bigint;
+  money: number;
+  item: Exclude<InventorySlot, null> | null;
+};
 
 export type ZoneSnapshot = {
   zoneId: number;
@@ -83,6 +96,8 @@ export type ZoneSnapshot = {
   inventoryRevision: bigint;
   /** Complete self bag when present; null means retain prior state, never empty. */
   inventory: readonly InventorySlot[] | null;
+  /** Complete eligible selected corpse sheet; null means no current sheet. */
+  loot: LootView | null;
   events: readonly ZoneEvent[];
   /** Priority order: the viewer, its target, then nearest first. */
   entities: readonly EntityState[];
@@ -91,22 +106,23 @@ export type ZoneSnapshot = {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 7;
-const SCHEMA_VERSION = 7;
+const WIRE_VERSION = 8;
+const SCHEMA_VERSION = 8;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
-/** Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 23, target 5, inventory revision 8/presence 1, two counts. */
-const FIXED_BYTES = 72;
+/** Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 27, target 5, inventory revision 8/presence 1, loot presence 1, two counts. */
+const FIXED_BYTES = 77;
 const ENTITY_BYTES = 21;
 const MAX_EVENTS = 16;
-/** (1 077 − 72) / 21: records that fit without events or a bag sheet. */
+/** (1 077 − 77) / 21: records that fit without events or a bag sheet. */
 const MAX_ENTITIES = 47;
 const BUFFER_CAPACITY = 32;
 
 const ERROR_CODES: readonly ErrorCode[] = [
   "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target",
   "too-many-intents", "invalid-inventory-move", "inventory-full",
+  "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
 ];
 
 class Reader {
@@ -249,21 +265,42 @@ function decodeEntity(reader: Reader): EntityState {
     throw new Error("Health percent exceeds 100");
   }
   const [dead = false, inCombat = false, hostile = false, attackable = false, tappedByOther = false, evading = false,
-    targetsViewer = false] = reader.flags(7);
+    targetsViewer = false, lootable = false] = reader.flags(8);
+  if (lootable && (kind !== "creature" || !dead || healthPercent !== 0 || attackable || tappedByOther)) {
+    throw new Error("Lootable entity flags are inconsistent");
+  }
   return {
     kind, entityId, appearance, position, velocity, facing, level, healthPercent,
-    flags: { dead, inCombat, hostile, attackable, tappedByOther, evading, targetsViewer },
+    flags: { dead, inCombat, hostile, attackable, tappedByOther, evading, targetsViewer, lootable },
   };
+}
+
+function validateStack(itemId: number, quantity: number): void {
+  let limit = 0;
+  if (itemId === 1) {
+    limit = 20;
+  } else if (itemId === 2) {
+    limit = 1;
+  }
+  if (quantity === 0 || quantity > limit) {
+    throw new Error("Invalid inventory stack");
+  }
 }
 
 export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  if (view.byteLength > MAX_PROJECTION_BYTES) throw new Error("Snapshot exceeds the projection byte budget");
-  if (view.byteLength < FIXED_BYTES) throw new Error("Truncated snapshot");
+  if (view.byteLength > MAX_PROJECTION_BYTES) {
+    throw new Error("Snapshot exceeds the projection byte budget");
+  }
+  if (view.byteLength < FIXED_BYTES) {
+    throw new Error("Truncated snapshot");
+  }
   if (view.getUint8(0) !== WIRE_VERSION || view.getUint16(2) !== SCHEMA_VERSION) {
     throw new Error("Unsupported snapshot version");
   }
-  if (view.getUint8(1) !== PLAYER_SCOPE) throw new Error("Expected player-visible snapshot");
+  if (view.getUint8(1) !== PLAYER_SCOPE) {
+    throw new Error("Expected player-visible snapshot");
+  }
   const reader = new Reader(view);
   reader.u32();
   const zoneId = reader.u32();
@@ -276,6 +313,7 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   const level = reader.u8();
   const experience = reader.u32();
   const experienceToNextLevel = reader.u32();
+  const copper = reader.u32();
   const [dead = false, inCombat = false, autoAttacking = false] = reader.flags(3);
   const target = reader.entity();
   if (level < 1 || level > 10
@@ -286,7 +324,9 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   }
   const targetOfTarget = reader.entity();
   const inventoryRevision = reader.u64();
-  if (inventoryRevision === 0n) throw new Error("Inventory revision must be nonzero");
+  if (inventoryRevision === 0n) {
+    throw new Error("Inventory revision must be nonzero");
+  }
   const [hasInventory = false] = reader.flags(1);
   let inventory: InventorySlot[] | null = null;
   if (hasInventory) {
@@ -297,14 +337,35 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
       if (itemId === 0 && quantity === 0) {
         inventory.push(null);
       } else {
-        const limit = itemId === 1 ? 20 : itemId === 2 ? 1 : 0;
-        if (quantity === 0 || quantity > limit) throw new Error("Invalid inventory stack");
+        validateStack(itemId, quantity);
         inventory.push({ itemId, quantity });
       }
     }
   }
+  const [hasLoot = false] = reader.flags(1);
+  let loot: LootView | null = null;
+  if (hasLoot) {
+    const creatureId = reader.u32();
+    const diedAt = reader.u64();
+    const money = reader.u32();
+    const [hasItem = false] = reader.flags(1);
+    let item: Exclude<InventorySlot, null> | null = null;
+    if (hasItem) {
+      const itemId = reader.u16();
+      const quantity = reader.u16();
+      validateStack(itemId, quantity);
+      item = { itemId, quantity };
+    }
+    if (dead || target?.kind !== "creature" || target.id !== creatureId || diedAt > tick
+      || (money === 0 && item === null)) {
+      throw new Error("Inconsistent corpse loot sheet");
+    }
+    loot = { creatureId, diedAt, money, item };
+  }
   const eventCount = reader.u8();
-  if (eventCount > MAX_EVENTS) throw new Error("Snapshot exceeds the event capacity");
+  if (eventCount > MAX_EVENTS) {
+    throw new Error("Snapshot exceeds the event capacity");
+  }
   const events: ZoneEvent[] = [];
   for (let index = 0; index < eventCount; index += 1) {
     events.push(decodeEvent(reader));
@@ -318,17 +379,27 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   for (let index = 0; index < count; index += 1) {
     const entity = decodeEntity(reader);
     const identity = `${entity.kind}:${entity.entityId}`;
-    if (identities.has(identity)) throw new Error("Duplicate entity identity");
+    if (identities.has(identity)) {
+      throw new Error("Duplicate entity identity");
+    }
     identities.add(identity);
     entities.push(entity);
   }
   // Records arrive in relevance-priority order, and the viewer always leads.
   const first = entities[0];
-  if (first?.kind !== "player" || first.entityId !== viewerId) throw new Error("Projection must start with the viewer");
+  if (first?.kind !== "player" || first.entityId !== viewerId) {
+    throw new Error("Projection must start with the viewer");
+  }
+  if (loot !== null) {
+    const corpse = entities.find((entity) => entity.kind === "creature" && entity.entityId === loot.creatureId);
+    if (!corpse?.flags.dead || !corpse.flags.lootable || corpse.flags.tappedByOther || corpse.healthPercent !== 0) {
+      throw new Error("Inconsistent corpse loot sheet");
+    }
+  }
   return {
     zoneId, tick, contentRevision, acknowledgedSequence, viewerId,
-    viewer: { experience, experienceToNextLevel, health, maxHealth, level, dead, inCombat, autoAttacking, target },
-    targetOfTarget, inventoryRevision, inventory, events, entities,
+    viewer: { copper, experience, experienceToNextLevel, health, maxHealth, level, dead, inCombat, autoAttacking, target },
+    targetOfTarget, inventoryRevision, inventory, loot, events, entities,
   };
 }
 
@@ -370,12 +441,18 @@ export class SnapshotBuffer {
       ) {
         throw new Error("Snapshot stream changed without reset");
       }
-      if (snapshot.tick <= latest.tick) return false;
+      if (snapshot.tick <= latest.tick) {
+        return false;
+      }
       // After a long stall, snap to current state instead of interpolating a stale journey.
-      if (snapshot.tick - latest.tick > BigInt(TICK_HZ * 30)) this.reset();
+      if (snapshot.tick - latest.tick > BigInt(TICK_HZ * 30)) {
+        this.reset();
+      }
     }
     this.#snapshots.push(snapshot);
-    if (this.#snapshots.length > BUFFER_CAPACITY) this.#snapshots.shift();
+    if (this.#snapshots.length > BUFFER_CAPACITY) {
+      this.#snapshots.shift();
+    }
     return true;
   }
 
@@ -384,8 +461,12 @@ export class SnapshotBuffer {
       throw new Error("Render tick fraction must be in [0, 1)");
     }
     let before = this.#snapshots[0];
-    if (!before) return [];
-    if (tick < before.tick) return before.entities;
+    if (!before) {
+      return [];
+    }
+    if (tick < before.tick) {
+      return before.entities;
+    }
     for (const after of this.#snapshots.slice(1)) {
       if (tick < after.tick) {
         const alpha = (Number(tick - before.tick) + fraction) / Number(after.tick - before.tick);
@@ -394,7 +475,9 @@ export class SnapshotBuffer {
         return before.entities.map((entity) => {
           const next = nextEntities.get(identity(entity));
           // Appearance/disappearance happens at the authoritative sample tick.
-          if (!next) return entity;
+          if (!next) {
+            return entity;
+          }
           const interpolate = (axis: 0 | 1 | 2) =>
             entity.position[axis] + (next.position[axis] - entity.position[axis]) * alpha;
           return {

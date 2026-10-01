@@ -109,3 +109,10 @@ Native static props remain instanced boxes; browser grass joins the existing
 chunk/colour/distance batches. The debug `grass` camera shows the western
 clearing without moving the player. Browser acceptance saves its frame and
 bounded scene-work evidence under `artifacts/browser/outpost-grass-*`.
+
+The authoring captures and adoption checksums above describe revision 4. Corpse
+loot activation changes only live content identity metadata: Greyhaven revision 5,
+fingerprint `5dcb5d3b46dc5451`, snapshot v8/command v3. Live scenery hash is
+`ffd9c5ebe62f7786` and complete browser export fingerprint is `d0937b2905317676`.
+All authored masks, placements, heights and source revision-4 provenance remain
+unchanged; economy identity does not require recapturing geometry.

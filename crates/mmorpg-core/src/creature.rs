@@ -63,6 +63,7 @@ pub(crate) struct CreatureState {
     pub(crate) combat_timer: u16,
     /// The first player who damaged it since it last reset.
     pub(crate) tapped_by: Option<crate::PlayerId>,
+    pub(crate) loot: Option<crate::LootRewards>,
 }
 
 impl CreatureState {
@@ -182,6 +183,7 @@ impl ZoneSimulation {
                 swing_timer: 0,
                 combat_timer: 0,
                 tapped_by: None,
+                loot: None,
             },
         );
         Ok(())

@@ -74,6 +74,7 @@ pub enum Action {
     StopAttack,
     ReleaseSpirit,
     MoveItem,
+    Loot,
     Disconnect,
     Reconnect,
 }
@@ -89,6 +90,7 @@ impl Action {
             Self::StopAttack => "stop_attack",
             Self::ReleaseSpirit => "release_spirit",
             Self::MoveItem => "move_item",
+            Self::Loot => "loot",
             Self::Disconnect => "disconnect",
             Self::Reconnect => "reconnect",
         }
@@ -103,7 +105,8 @@ impl Action {
             | Self::StartAttack
             | Self::StopAttack
             | Self::ReleaseSpirit
-            | Self::MoveItem => "applied",
+            | Self::MoveItem
+            | Self::Loot => "applied",
             Self::Disconnect => "disconnected",
             Self::Reconnect => "resumed",
         }
@@ -118,7 +121,8 @@ impl Action {
             | Self::StartAttack
             | Self::StopAttack
             | Self::ReleaseSpirit
-            | Self::MoveItem => true,
+            | Self::MoveItem
+            | Self::Loot => true,
             Self::Join | Self::Disconnect | Self::Reconnect => false,
         }
     }
@@ -138,6 +142,8 @@ pub struct Step {
     pub facing: Option<u16>,
     /// The unit a `select_target` step selects, or `none` to clear.
     pub entity: Option<UnitSpec>,
+    pub creature: Option<u32>,
+    pub died_at: Option<u64>,
     pub source_slot: Option<u8>,
     pub destination_slot: Option<u8>,
     pub quantity: Option<u16>,
@@ -162,6 +168,8 @@ pub enum ExpectKind {
     Health,
     Progression,
     Inventory,
+    Copper,
+    Loot,
     Target,
     Event,
     Unit,
@@ -180,6 +188,8 @@ impl ExpectKind {
             Self::Health => "health",
             Self::Progression => "progression",
             Self::Inventory => "inventory",
+            Self::Copper => "copper",
+            Self::Loot => "loot",
             Self::Target => "target",
             Self::Event => "event",
             Self::Unit => "unit",
@@ -199,6 +209,8 @@ impl ExpectKind {
             | Self::Health
             | Self::Progression
             | Self::Inventory
+            | Self::Copper
+            | Self::Loot
             | Self::Target => false,
         }
     }
@@ -224,6 +236,9 @@ pub struct Expectation {
     pub health: Option<u32>,
     pub level: Option<u8>,
     pub experience: Option<u32>,
+    pub copper: Option<u32>,
+    pub creature: Option<u32>,
+    pub died_at: Option<u64>,
     pub inventory_revision: Option<u64>,
     pub sheet: Option<bool>,
     pub slot: Option<u8>,
@@ -309,6 +324,14 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                 "{at}: source_slot, destination_slot and quantity are required only for move_item"
             ));
         }
+        if [step.creature.is_some(), step.died_at.is_some()]
+            .iter()
+            .any(|&present| present != (step.action == Action::Loot))
+        {
+            return Err(format!(
+                "{at}: creature and died_at are required only for loot"
+            ));
+        }
         if step.entity.is_some() != (step.action == Action::SelectTarget) {
             return Err(format!(
                 "{at}: entity is required for select_target and only for select_target"
@@ -377,6 +400,12 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                     ));
                 }
                 expectation.inventory_revision.is_some() && expectation.sheet.is_some()
+            }
+            ExpectKind::Copper => expectation.copper.is_some(),
+            ExpectKind::Loot => {
+                expectation.sheet.is_some()
+                    && (expectation.sheet == Some(false)
+                        || expectation.creature.is_some() && expectation.died_at.is_some())
             }
             ExpectKind::Target => expectation.entity.is_some(),
             ExpectKind::Event => expectation.event.is_some(),
@@ -568,7 +597,8 @@ impl Runner<'_> {
             | Action::StartAttack
             | Action::StopAttack
             | Action::ReleaseSpirit
-            | Action::MoveItem => self.submit(index, step)?,
+            | Action::MoveItem
+            | Action::Loot => self.submit(index, step)?,
             Action::Disconnect => self.disconnect(index)?,
             Action::Reconnect => self.reconnect(index)?,
         };
@@ -662,6 +692,17 @@ impl Runner<'_> {
             Action::StartAttack => (ZoneCommand::StartAttack, String::new()),
             Action::StopAttack => (ZoneCommand::StopAttack, String::new()),
             Action::ReleaseSpirit => (ZoneCommand::ReleaseSpirit, String::new()),
+            Action::Loot => {
+                let creature = step.creature.ok_or("loot creature is required")?;
+                let died_at = step.died_at.ok_or("loot died_at is required")?;
+                (
+                    ZoneCommand::Loot(mmorpg_core::LootClaim {
+                        creature: mmorpg_core::CreatureId::new(creature),
+                        died_at,
+                    }),
+                    format!(" creature={creature} died_at={died_at}"),
+                )
+            }
             Action::MoveItem => {
                 let source = step
                     .source_slot
@@ -1078,6 +1119,37 @@ impl Runner<'_> {
                     Err(format!("got {shown}"))
                 }
             }
+            ExpectKind::Copper => {
+                let shown = format!("copper={}", view.viewer.copper);
+                if Some(view.viewer.copper) == expectation.copper {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
+            ExpectKind::Loot => {
+                let shown = view.loot.map_or_else(
+                    || "sheet=false".to_owned(),
+                    |loot| {
+                        format!(
+                            "sheet=true creature={} died_at={} copper={}",
+                            loot.claim.creature.get(),
+                            loot.claim.died_at,
+                            loot.rewards.money
+                        )
+                    },
+                );
+                let matches = Some(view.loot.is_some()) == expectation.sheet
+                    && view.loot.is_none_or(|loot| {
+                        Some(loot.claim.creature.get()) == expectation.creature
+                            && Some(loot.claim.died_at) == expectation.died_at
+                    });
+                if matches {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
             ExpectKind::Inventory => {
                 let shown = format!(
                     "revision={} sheet={}",
@@ -1213,6 +1285,8 @@ fn describe(expectation: &Expectation) -> String {
         ExpectKind::Health => format!("{bot} health"),
         ExpectKind::Progression => format!("{bot} progression"),
         ExpectKind::Inventory => format!("{bot} inventory"),
+        ExpectKind::Copper => format!("{bot} copper"),
+        ExpectKind::Loot => format!("{bot} loot"),
         ExpectKind::Target => format!("{bot} target {}", unit_text(expectation)),
         ExpectKind::Event => {
             let event = expectation

@@ -19,27 +19,28 @@ use crate::{MAX_PLAYER_PROJECTION_BYTES, ProtocolError};
 /// Content revision, acknowledged sequence and viewer ID after the prefix.
 const HEADER_BYTES: usize = COMMON_HEADER_BYTES + 8 + 4 + 4;
 /// Health, maximum health, level, flags and the viewer's target.
-const SELF_BYTES: usize = 4 + 4 + 1 + 8 + 1 + ENTITY_REF_BYTES;
+const SELF_BYTES: usize = 4 + 4 + 1 + 8 + 4 + 1 + ENTITY_REF_BYTES;
 /// The target's own target.
 const TARGET_BYTES: usize = ENTITY_REF_BYTES;
 /// Every section's fixed part: header, self, target, event count (`u8`)
 /// and entity count (`u16`).
 pub const PLAYER_SNAPSHOT_FIXED_BYTES: usize =
-    HEADER_BYTES + SELF_BYTES + TARGET_BYTES + 8 + 1 + 1 + 2;
+    HEADER_BYTES + SELF_BYTES + TARGET_BYTES + 8 + 1 + 1 + 1 + 2;
 /// Kind, flags, source and target references, `u16` amount.
 pub const EVENT_RECORD_BYTES: usize = 2 + 2 * ENTITY_REF_BYTES + 2;
 /// Kind, ID, appearance, `3 × i16` position, `3 × i8` velocity, `u16`
 /// facing, level, health percent and flags.
 pub const ENTITY_RECORD_BYTES: usize = 1 + 4 + 2 + 6 + 3 + 2 + 1 + 1 + 1;
-/// Records that fit the budget without events: (1,077 − 72) / 21 = 47 (without a bag sheet).
+/// Records that fit the budget without events: (1,077 − 77) / 21 = 47 (without a bag sheet).
 pub const MAX_WIRE_ENTITIES: usize =
     (MAX_PLAYER_PROJECTION_BYTES - PLAYER_SNAPSHOT_FIXED_BYTES) / ENTITY_RECORD_BYTES;
 const MAX_EVENT_SECTION_BYTES: usize = MAX_EVENTS_PER_PLAYER * EVENT_RECORD_BYTES;
 
 // With a full event section, the viewer and its target always fit:
-// 72 + 64 + 16 × 14 + 2 × 21 = 402 ≤ 1,077 bytes.
+// 77 + 21 + 64 + 16 × 14 + 2 × 21 = 428 ≤ 1,077 bytes.
 const _: () = assert!(
     PLAYER_SNAPSHOT_FIXED_BYTES
+        + crate::loot::MAX_LOOT_SHEET_BYTES
         + INVENTORY_RECORD_BYTES
         + MAX_EVENT_SECTION_BYTES
         + 2 * ENTITY_RECORD_BYTES
@@ -95,6 +96,7 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
     payload.push(viewer.level);
     payload.extend_from_slice(&viewer.experience.to_be_bytes());
     payload.extend_from_slice(&viewer.experience_to_next_level.to_be_bytes());
+    payload.extend_from_slice(&viewer.copper.to_be_bytes());
     payload.push(flag_byte(&[
         viewer.dead,
         viewer.in_combat,
@@ -107,6 +109,11 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
     payload.push(u8::from(snapshot.inventory.is_some()));
     if let Some(inventory) = &snapshot.inventory {
         encode_inventory(&mut payload, inventory);
+    }
+    payload.push(u8::from(snapshot.loot.is_some()));
+    if let Some(view) = snapshot.loot {
+        crate::loot::encode_claim(&mut payload, view.claim);
+        crate::loot::encode_rewards(&mut payload, view.rewards);
     }
     payload.push(event_count);
     for event in &snapshot.events {
@@ -170,6 +177,7 @@ fn encode_entity(payload: &mut Vec<u8>, entity: &EntitySnapshot) -> Result<(), P
         flags.tapped_by_other,
         flags.evading,
         flags.targets_viewer,
+        flags.lootable,
     ]));
     Ok(())
 }
@@ -192,6 +200,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     let level = read_u8(payload, &mut offset)?;
     let experience = u32::from_be_bytes(take(payload, &mut offset)?);
     let experience_to_next_level = u32::from_be_bytes(take(payload, &mut offset)?);
+    let copper = u32::from_be_bytes(take(payload, &mut offset)?);
     let [dead, in_combat, auto_attacking] = read_flags(read_u8(payload, &mut offset)?)?;
     let target = decode_entity_ref(payload, &mut offset)?;
     if !(1..=10).contains(&level)
@@ -210,6 +219,14 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     }
     let inventory = if read_bool(payload, &mut offset)? {
         Some(decode_inventory(payload, &mut offset)?)
+    } else {
+        None
+    };
+    let loot = if read_bool(payload, &mut offset)? {
+        Some(mmorpg_core::LootView {
+            claim: crate::loot::decode_claim(payload, &mut offset)?,
+            rewards: crate::loot::decode_rewards(payload, &mut offset)?,
+        })
     } else {
         None
     };
@@ -244,6 +261,24 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         ));
     }
 
+    if let Some(view) = loot {
+        let corpse = entities.iter().find(|entity| {
+            entity.entity() == mmorpg_core::EntityRef::Creature(view.claim.creature)
+        });
+        if dead
+            || target != Some(mmorpg_core::EntityRef::Creature(view.claim.creature))
+            || view.claim.died_at > tick
+            || (view.rewards.money == 0 && view.rewards.item.is_none())
+            || corpse.is_none_or(|entity| {
+                !entity.flags.dead
+                    || !entity.flags.lootable
+                    || entity.flags.tapped_by_other
+                    || entity.health_percent != 0
+            })
+        {
+            return Err(ProtocolError::new("corpse loot sheet is inconsistent"));
+        }
+    }
     Ok(ZoneSnapshot {
         content_revision,
         acknowledged_sequence,
@@ -254,6 +289,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         viewer: ViewerState {
             experience,
             experience_to_next_level,
+            copper,
             health,
             max_health,
             level,
@@ -265,6 +301,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         target_of_target,
         inventory_revision,
         inventory,
+        loot,
         events,
         entities,
     })
@@ -299,7 +336,17 @@ fn decode_entity(payload: &[u8], offset: &mut usize) -> Result<EntitySnapshot, P
         tapped_by_other,
         evading,
         targets_viewer,
+        lootable,
     ] = read_flags(read_u8(payload, offset)?)?;
+    if lootable
+        && (kind != EntityKind::Creature
+            || !dead
+            || health_percent != 0
+            || attackable
+            || tapped_by_other)
+    {
+        return Err(ProtocolError::new("lootable entity flags are inconsistent"));
+    }
     Ok(EntitySnapshot {
         kind,
         id,
@@ -317,6 +364,7 @@ fn decode_entity(payload: &[u8], offset: &mut usize) -> Result<EntitySnapshot, P
             tapped_by_other,
             evading,
             targets_viewer,
+            lootable,
         },
     })
 }
@@ -356,6 +404,7 @@ mod tests {
         slots[1] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(2), 1).unwrap());
         slots[15] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap());
         ZoneSnapshot {
+            loot: None,
             content_revision: 4,
             acknowledged_sequence: 81,
             viewer_id: 7,
@@ -365,6 +414,7 @@ mod tests {
             zone_id: ZoneId::new(42),
             tick: 99,
             viewer: ViewerState {
+                copper: 42,
                 experience: 37,
                 experience_to_next_level: 100,
                 health: 38,
@@ -429,6 +479,7 @@ mod tests {
                     level: 2,
                     health_percent: 43,
                     flags: EntityFlags {
+                        lootable: false,
                         dead: false,
                         in_combat: true,
                         hostile: true,
@@ -470,7 +521,7 @@ mod tests {
     }
 
     fn fixture_bytes() -> Vec<u8> {
-        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v7.hex").trim();
+        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v8.hex").trim();
         (0..fixture.len())
             .step_by(2)
             .map(|offset| u8::from_str_radix(&fixture[offset..offset + 2], 16).unwrap())
@@ -478,7 +529,7 @@ mod tests {
     }
 
     /// Byte offsets of the fixture's sections.
-    const EVENTS: usize = 60 + 8 + 1 + INVENTORY_RECORD_BYTES;
+    const EVENTS: usize = 64 + 8 + 1 + INVENTORY_RECORD_BYTES + 1;
     const ENTITY_COUNT: usize = EVENTS + 1 + 7 * EVENT_RECORD_BYTES;
     const FIRST_ENTITY: usize = ENTITY_COUNT + 2;
 
@@ -509,6 +560,79 @@ mod tests {
     }
 
     #[test]
+    fn complete_corpse_sheet_matches_shared_bytes_and_rejects_inconsistent_claims() {
+        let mut snapshot = fixture_snapshot();
+        snapshot.viewer.auto_attacking = false;
+        snapshot.target_of_target = None;
+        let corpse = &mut snapshot.entities[1];
+        corpse.position = [10, 45, -180];
+        corpse.velocity = [0; 3];
+        corpse.health_percent = 0;
+        corpse.flags = EntityFlags {
+            dead: true,
+            hostile: true,
+            lootable: true,
+            ..EntityFlags::default()
+        };
+        snapshot.loot = Some(mmorpg_core::LootView {
+            claim: mmorpg_core::LootClaim {
+                creature: CreatureId::new(108),
+                died_at: 98,
+            },
+            rewards: mmorpg_core::LootRewards {
+                money: 2,
+                item: Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 2).unwrap()),
+            },
+        });
+        let hex = include_str!("../../../fixtures/protocol/player-loot-v8.hex").trim();
+        let expected = (0..hex.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+            .collect::<Vec<_>>();
+        let bytes = encode_snapshot(&snapshot).unwrap();
+        assert_eq!(bytes, expected);
+        assert_eq!(decode_snapshot(&bytes).unwrap(), snapshot);
+        let presence = EVENTS - 1;
+        for length in 0..bytes.len() {
+            assert!(decode_snapshot(&bytes[..length]).is_err());
+        }
+        for (offset, value) in [
+            (presence, 2),
+            (presence + 4, 109),
+            (presence + 12, 100),
+            (presence + 17, 2),
+            (presence + 19, 9),
+            (presence + 21, 0),
+        ] {
+            let mut invalid = bytes.clone();
+            invalid[offset] = value;
+            assert!(decode_snapshot(&invalid).is_err(), "offset {offset}");
+        }
+        for changed in 0..4 {
+            let mut invalid = snapshot.clone();
+            match changed {
+                0 => {
+                    invalid.loot.as_mut().unwrap().rewards = mmorpg_core::LootRewards {
+                        money: 0,
+                        item: None,
+                    }
+                }
+                1 => invalid.loot.as_mut().unwrap().claim.died_at = snapshot.tick + 1,
+                2 => invalid.viewer.target = None,
+                3 => invalid.entities[1].flags.lootable = false,
+                _ => unreachable!(),
+            }
+            assert!(decode_snapshot(&encode_snapshot(&invalid).unwrap()).is_err());
+        }
+        let legacy = include_str!("../../../fixtures/protocol/player-snapshot-v7.hex").trim();
+        let old = (0..legacy.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&legacy[at..at + 2], 16).unwrap())
+            .collect::<Vec<_>>();
+        assert!(decode_snapshot(&old).is_err());
+    }
+
+    #[test]
     fn player_snapshot_decoder_is_strict() {
         let encoded = fixture_bytes();
         for length in 0..encoded.len() {
@@ -525,10 +649,10 @@ mod tests {
             (0, 4, "unsupported snapshot wire version"),
             (1, 1, "unexpected snapshot scope"),
             (3, 4, "unsupported core snapshot schema version"),
-            (49, 0b1000, "reserved flag bits are set"),
-            (49, 0b111, "viewer state is inconsistent"),
-            (50, 9, "unknown entity kind"),
-            (55, 0, "an absent entity must have ID 0"),
+            (53, 0b1000, "reserved flag bits are set"),
+            (53, 0b111, "viewer state is inconsistent"),
+            (54, 9, "unknown entity kind"),
+            (59, 0, "an absent entity must have ID 0"),
             (EVENTS, 17, "snapshot exceeds the per-player event capacity"),
             (EVENTS + 1, 9, "unknown event kind"),
             (EVENTS + 2, 2, "event flags are invalid"),
@@ -545,7 +669,11 @@ mod tests {
             (FIRST_ENTITY, 0, "unknown entity kind"),
             (FIRST_ENTITY, 4, "unknown entity kind"),
             (wolf_record + 19, 101, "health percent exceeds 100"),
-            (wolf_record + 20, 0x80, "reserved flag bits are set"),
+            (
+                wolf_record + 20,
+                0x80,
+                "lootable entity flags are inconsistent",
+            ),
             (31, 9, "player projection must start with the viewer"),
         ] {
             let mut invalid = encoded.clone();
@@ -611,10 +739,10 @@ mod tests {
     fn inventory_decoder_rejects_corrupt_slots_and_missing_revision() {
         let encoded = fixture_bytes();
         let mut zero_revision = encoded.clone();
-        zero_revision[60..68].fill(0);
+        zero_revision[64..72].fill(0);
         assert!(decode_snapshot(&zero_revision).is_err());
         let mut invalid_flag = encoded.clone();
-        invalid_flag[68] = 2;
+        invalid_flag[72] = 2;
         assert!(decode_snapshot(&invalid_flag).is_err());
         for (slot, item, quantity) in [
             (0, 0_u16, 3_u16),
@@ -624,7 +752,7 @@ mod tests {
             (1, 2, 2),
         ] {
             let mut invalid = encoded.clone();
-            let offset = 69 + slot * 4;
+            let offset = 73 + slot * 4;
             invalid[offset..offset + 2].copy_from_slice(&item.to_be_bytes());
             invalid[offset + 2..offset + 4].copy_from_slice(&quantity.to_be_bytes());
             assert!(decode_snapshot(&invalid).is_err());
@@ -670,7 +798,7 @@ mod tests {
                 EVENT_RECORD_BYTES,
                 ENTITY_RECORD_BYTES
             ),
-            (72, 14, 21)
+            (77, 14, 21)
         );
         assert_eq!(MAX_WIRE_ENTITIES, 47);
         let viewer_id = u32::MAX;
@@ -697,6 +825,7 @@ mod tests {
                     level: u8::MAX,
                     health_percent: 100,
                     flags: EntityFlags {
+                        lootable: false,
                         dead: false,
                         in_combat: true,
                         hostile: true,
@@ -715,6 +844,7 @@ mod tests {
             critical: true,
         };
         let snapshot = ZoneSnapshot {
+            loot: None,
             content_revision: u64::MAX,
             acknowledged_sequence: u32::MAX,
             viewer_id,
@@ -724,6 +854,7 @@ mod tests {
             zone_id: ZoneId::new(u32::MAX),
             tick: u64::MAX,
             viewer: ViewerState {
+                copper: 0,
                 health: u32::MAX,
                 max_health: u32::MAX,
                 level: 9,
@@ -739,15 +870,15 @@ mod tests {
             entities,
         };
         let packed = pack_snapshot(&snapshot).unwrap();
-        // (1,077 − 72 − 16 × 14) / 21 = 37 records fit beside a full event section.
-        assert_eq!(packed.packed_entities, 37);
+        // (1,077 − 77 − 16 × 14) / 21 = 36 records fit beside a full event section.
+        assert_eq!(packed.packed_entities, 36);
         assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
         assert!(
             packed.payload.len() + SESSION_SNAPSHOT_HEADER_BYTES + DATAGRAM_SAFETY_MARGIN_BYTES
                 <= MEASURED_MIN_DATAGRAM_BYTES
         );
         let decoded = decode_snapshot(&packed.payload).unwrap();
-        assert_eq!(decoded.entities[..], snapshot.entities[..37]);
+        assert_eq!(decoded.entities[..], snapshot.entities[..36]);
         assert_eq!(
             decoded.entities[1].entity(),
             target,
@@ -790,10 +921,50 @@ mod tests {
                 assert_eq!(packed.packed_entities, 44);
             }
             if events == 16 {
-                assert_eq!(packed.packed_entities, 34);
+                assert_eq!(packed.packed_entities, 33);
             }
         }
-        assert_eq!(maximum_bytes, 1_074);
+        assert_eq!(maximum_bytes, 1_072);
+        for item in [
+            None,
+            Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap()),
+        ] {
+            for events in 0..=MAX_EVENTS_PER_PLAYER {
+                let mut with_loot = quiet.clone();
+                with_loot.inventory = Some(full_bag.clone());
+                with_loot.viewer.copper = u32::MAX;
+                with_loot.loot = Some(mmorpg_core::LootView {
+                    claim: mmorpg_core::LootClaim {
+                        creature: CreatureId::new(u32::MAX),
+                        died_at: u64::MAX,
+                    },
+                    rewards: mmorpg_core::LootRewards {
+                        money: u32::MAX,
+                        item,
+                    },
+                });
+                with_loot.target_of_target = None;
+                with_loot.entities[1].health_percent = 0;
+                with_loot.entities[1].flags = EntityFlags {
+                    dead: true,
+                    lootable: true,
+                    ..EntityFlags::default()
+                };
+                with_loot.events = vec![event; events];
+                let packed = pack_snapshot(&with_loot).unwrap();
+                maximum_bytes = maximum_bytes.max(packed.payload.len());
+                assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
+                let decoded = decode_snapshot(&packed.payload).unwrap();
+                assert_eq!(decoded.loot, with_loot.loot);
+                assert_eq!(decoded.viewer.copper, u32::MAX);
+                assert_eq!(decoded.inventory, with_loot.inventory);
+                assert_eq!(decoded.entities[1].entity(), target);
+                if events == 16 && item.is_some() {
+                    assert_eq!(packed.packed_entities, 32);
+                }
+            }
+        }
+        assert_eq!(maximum_bytes, 1_075);
     }
 
     #[test]

@@ -45,9 +45,14 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
         for (index, (actual, ceiling)) in actual.into_iter().zip(ceiling).enumerate() {
             // v6 adds eight XP bytes per projection. v7 adds nine bag metadata
             // bytes per projection and 64 bag bytes every ten ticks. These
-            // fixtures never move bags; physics/work fences remain unchanged.
+            // fixtures never move bags. v8 adds five repeated copper/presence bytes
+            // and at most 21 bytes per measured complete corpse sheet.
+            // Physics/work fences remain unchanged.
             let ceiling = if index == 6 {
-                ceiling + 17 * fixture.players * TICKS + 64 * fixture.players * (TICKS / 10)
+                ceiling
+                    + 22 * fixture.players * TICKS
+                    + 64 * fixture.players * (TICKS / 10)
+                    + 21 * report.loot_sheets
             } else {
                 ceiling
             };
@@ -66,7 +71,7 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             assert_eq!(report.ai_evaluations, 59 * TICKS);
         }
         if fixture.crowded {
-            assert_eq!(report.max_projection_bytes, 1_074);
+            assert_eq!(report.max_projection_bytes, 1_071);
             assert!(report.candidates_tested > 1_000_000);
         }
     }

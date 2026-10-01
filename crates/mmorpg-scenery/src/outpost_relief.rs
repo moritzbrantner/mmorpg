@@ -113,7 +113,9 @@ mod tests {
         let mut before = unmasked_greyhaven_vale_scenery();
         crate::outpost_grass::apply(&mut before.props);
         let after = greyhaven_vale_scenery();
-        assert_eq!(before.stable_hash(), 0x1de3_341c_9334_49f6);
+        let mut captured_revision = before.clone();
+        captured_revision.content_revision = 4;
+        assert_eq!(captured_revision.stable_hash(), 0x1de3_341c_9334_49f6);
         assert_eq!(before.props, after.props);
         assert_eq!(before.roads, after.roads);
         assert_eq!(before.water, after.water);

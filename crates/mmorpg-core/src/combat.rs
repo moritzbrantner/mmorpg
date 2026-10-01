@@ -74,6 +74,7 @@ impl ZoneSimulation {
             PlayerIntent::SelectTarget(_)
             | PlayerIntent::StartAttack
             | PlayerIntent::MoveItem { .. }
+            | PlayerIntent::Loot(_)
                 if !alive =>
             {
                 Some((ErrorCode::YouAreDead, None))
@@ -107,6 +108,7 @@ impl ZoneSimulation {
                     }
                 }
             }
+            PlayerIntent::Loot(claim) => self.claim_loot(player_id, claim)?,
             PlayerIntent::SelectTarget(None) => {
                 self.update_player(player_id, |player| {
                     player.target = None;
@@ -436,6 +438,14 @@ impl ZoneSimulation {
             .remove_body(body_id(entity))
             .ok_or_else(|| ZoneError::new("creature physics body is missing"))?;
         let position = body.position();
+        let (spawn, _) = Self::creature_content(&self.content, creature_id)?;
+        let loot = self.content.loot_table(spawn.template).map(|table| {
+            table.roll(crate::LootRolls {
+                money: (self.loot_rng.next_u64() >> 32) as u32,
+                outcome: (self.loot_rng.next_u64() >> 32) as u32,
+                quantity: (self.loot_rng.next_u64() >> 32) as u32,
+            })
+        });
         let Some(creature) = self.creatures.get_mut(&creature_id) else {
             return Ok(());
         };
@@ -450,6 +460,7 @@ impl ZoneSimulation {
         creature.threat.clear();
         creature.swing_timer = 0;
         creature.combat_timer = 0;
+        creature.loot = creature.tapped_by.and(loot);
         let tapper = creature.tapped_by;
         let level = creature.level;
         let died = ZoneEvent::Died {
@@ -556,6 +567,7 @@ impl ZoneSimulation {
                 && now >= died_at.saturating_add(u64::from(CORPSE_TICKS))
             {
                 creature.life = Life::Despawned { died_at };
+                creature.loot = None;
                 if self.interest.remove(entity) {
                     self.interest_work.bucket_removes += 1;
                 }

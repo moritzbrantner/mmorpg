@@ -2,7 +2,7 @@
 
 //! Versioned wire encoding of zone commands and snapshots (docs/PROTOCOL.md).
 //!
-//! Commands use wire version 2. Snapshots use wire version 7 in two scopes:
+//! Commands use wire version 3. Snapshots use wire version 8 in two scopes:
 //! canonical (trusted replay and recovery) and player-visible (one player's
 //! projection within a single-datagram byte budget). All multibyte fields are
 //! big-endian and every decoder is strict.
@@ -10,6 +10,7 @@
 mod canonical;
 mod command;
 mod inventory;
+mod loot;
 mod projection;
 mod wire;
 
@@ -23,7 +24,7 @@ pub use projection::{
 use std::error::Error;
 use std::fmt;
 
-pub const SNAPSHOT_WIRE_VERSION: u8 = 7;
+pub const SNAPSHOT_WIRE_VERSION: u8 = 8;
 
 /// Smallest WebTransport datagram payload measured over the pinned stack:
 /// QUIC's 1,200-byte initial MTU before path MTU discovery, observed as 1,161

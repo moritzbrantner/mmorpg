@@ -203,6 +203,10 @@ pub const fn error_code_name(code: ErrorCode) -> &'static str {
         ErrorCode::InvalidTarget => "invalid_target",
         ErrorCode::TooManyIntents => "too_many_intents",
         ErrorCode::InvalidInventoryMove => "invalid_inventory_move",
+        ErrorCode::InvalidLoot => "invalid_loot",
+        ErrorCode::NotLootOwner => "not_loot_owner",
+        ErrorCode::EmptyLoot => "empty_loot",
+        ErrorCode::MoneyOverflow => "money_overflow",
         ErrorCode::InventoryFull => "inventory_full",
     }
 }
@@ -218,6 +222,10 @@ fn parse_error_code(name: &str) -> Option<ErrorCode> {
         "invalid_target" => ErrorCode::InvalidTarget,
         "too_many_intents" => ErrorCode::TooManyIntents,
         "invalid_inventory_move" => ErrorCode::InvalidInventoryMove,
+        "invalid_loot" => ErrorCode::InvalidLoot,
+        "not_loot_owner" => ErrorCode::NotLootOwner,
+        "empty_loot" => ErrorCode::EmptyLoot,
+        "money_overflow" => ErrorCode::MoneyOverflow,
         "inventory_full" => ErrorCode::InventoryFull,
         _ => return None,
     })

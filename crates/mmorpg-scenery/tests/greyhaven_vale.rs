@@ -13,8 +13,8 @@ use mmorpg_scenery::{
 
 /// Recorded from this revision; any change to content, placement or relief
 /// must update it deliberately. Saved Outpost grass and relief masks change only
-/// presentation, leaving Greyhaven gameplay at revision 4.
-const STABLE_HASH: u64 = 0xd7b2_eda2_57de_90ab;
+/// presentation, leaving authored geometry unchanged through gameplay revision 5.
+const STABLE_HASH: u64 = 0xffd9_c5eb_e62f_7786;
 
 fn is_terrain(collider: &StaticCollider) -> bool {
     collider.id == ids::GROUND || ids::BOUNDARY_WALLS.contains(&collider.id)
@@ -69,9 +69,9 @@ fn authored_grass_retains_stable_ids_and_clears_the_selected_approach() {
     }
     assert_eq!(
         greyhaven_vale::content().fingerprint(),
-        0x5738_a86d_e795_e940
+        0x5dcb_5d3b_46dc_5451
     );
-    assert_eq!(scenery.content_revision, 4);
+    assert_eq!(scenery.content_revision, 5);
 }
 
 #[test]

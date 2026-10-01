@@ -78,6 +78,7 @@ pub(crate) struct PlayerState {
     pub(crate) spawn_slot: u16,
     pub(crate) level: u8,
     pub(crate) experience: u32,
+    pub(crate) copper: u32,
     pub(crate) inventory: crate::Inventory,
     pub(crate) inventory_revision: u64,
     pub(crate) inventory_changed_at: u64,
@@ -112,6 +113,7 @@ impl PlayerState {
             spawn_slot,
             level: PLAYER_START_LEVEL,
             experience: 0,
+            copper: 0,
             inventory: crate::Inventory::starter(),
             inventory_revision: 1,
             inventory_changed_at: tick,
@@ -149,6 +151,7 @@ pub struct ZoneSimulation {
     pub(crate) world: World,
     pub(crate) content: Arc<ZoneContent>,
     pub(crate) rng: ZoneRng,
+    pub(crate) loot_rng: ZoneRng,
     pub(crate) players: BTreeMap<PlayerId, PlayerState>,
     pub(crate) creatures: BTreeMap<CreatureId, CreatureState>,
     pub(crate) interest: InterestIndex,
@@ -231,6 +234,7 @@ impl ZoneSimulation {
             tick: 0,
             world,
             rng: ZoneRng::seeded(content.rng_seed(), zone_id),
+            loot_rng: ZoneRng::seeded(content.rng_seed() ^ 0x6c6f_6f74_2f76_3031, zone_id),
             content,
             players: BTreeMap::new(),
             creatures: BTreeMap::new(),
@@ -321,6 +325,7 @@ impl ZoneSimulation {
             creature.forget(entity);
             if creature.tapped_by == Some(player_id) {
                 creature.tapped_by = None;
+                creature.loot = None;
             }
         }
         for player in self.players.values_mut() {
@@ -373,6 +378,7 @@ impl ZoneSimulation {
             }
             ZoneCommand::SelectTarget(target) => Some(PlayerIntent::SelectTarget(target)),
             ZoneCommand::StartAttack => Some(PlayerIntent::StartAttack),
+            ZoneCommand::Loot(claim) => Some(PlayerIntent::Loot(claim)),
             ZoneCommand::StopAttack => Some(PlayerIntent::StopAttack),
             ZoneCommand::ReleaseSpirit => Some(PlayerIntent::ReleaseSpirit),
             ZoneCommand::MoveItem {

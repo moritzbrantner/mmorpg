@@ -65,6 +65,7 @@ pub struct Report {
     pub event_records: usize,
     pub damage_records: usize,
     pub death_records: usize,
+    pub loot_sheets: usize,
     pub projection_bytes: usize,
     pub max_projection_bytes: usize,
     pub trace_hash: u64,
@@ -104,6 +105,7 @@ fn initial_zone(fixture: Fixture) -> Result<ZoneSimulation, Box<dyn Error>> {
             ]
         };
         state.players.push(CanonicalPlayerSnapshot {
+            copper: 0,
             player_id: u32::try_from(index)? + 1,
             position,
             velocity: [0; 3],
@@ -274,6 +276,7 @@ pub fn measure(fixture: Fixture) -> Result<Report, Box<dyn Error>> {
                 .iter()
                 .filter(|event| matches!(event, ZoneEvent::Died { .. }))
                 .count();
+            report.loot_sheets += usize::from(decoded.loot.is_some());
             report.projection_bytes += packed.payload.len();
             report.max_projection_bytes = report.max_projection_bytes.max(packed.payload.len());
             hash_record(&mut report.trace_hash, &packed.payload);

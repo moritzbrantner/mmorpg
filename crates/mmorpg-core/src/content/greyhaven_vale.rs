@@ -20,7 +20,7 @@ pub mod units;
 
 /// Content revision of this zone. Revision 1 was the former test outpost;
 /// revision 2 had no creatures or NPCs.
-pub const REVISION: u64 = 4;
+pub const REVISION: u64 = 5;
 /// Revision 3's simulation seed, retained when revision 4 adds bag content.
 /// Economy changes must not reroll Greyhaven's existing creature/combat scripts.
 pub const RNG_SEED: u64 = 0x3cbc_808b_be89_b29c;
@@ -492,17 +492,32 @@ pub fn greyhaven_vale_definition() -> ZoneDefinition {
 }
 
 static CONTENT: LazyLock<Arc<ZoneContent>> = LazyLock::new(|| {
+    let content = ZoneContent::new(
+        greyhaven_vale_definition(),
+        areas().clone(),
+        units::creature_templates(),
+        units::creature_spawns(),
+        units::npcs(),
+        units::GRAVEYARD,
+    )
+    .expect("built-in Greyhaven Vale unit content is valid")
+    .with_rng_seed(RNG_SEED);
+    let tables = content
+        .creature_templates()
+        .iter()
+        .map(|template| {
+            (
+                template.id,
+                crate::loot_table(template.id)
+                    .expect("each Greyhaven template has an authored loot table")
+                    .clone(),
+            )
+        })
+        .collect();
     Arc::new(
-        ZoneContent::new(
-            greyhaven_vale_definition(),
-            areas().clone(),
-            units::creature_templates(),
-            units::creature_spawns(),
-            units::npcs(),
-            units::GRAVEYARD,
-        )
-        .expect("built-in Greyhaven Vale unit content is valid")
-        .with_rng_seed(RNG_SEED),
+        content
+            .with_loot_tables(crate::LOOT_CATALOG_REVISION, tables)
+            .expect("built-in Greyhaven Vale loot content is valid"),
     )
 });
 

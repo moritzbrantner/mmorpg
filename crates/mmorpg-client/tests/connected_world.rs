@@ -109,6 +109,147 @@ impl LocalHost {
 }
 
 #[tokio::test]
+async fn corpse_loot_crosses_real_transport_and_resume_without_double_credit() {
+    use mmorpg_core::{
+        CreatureBehaviour, CreatureId, CreatureSpawn, EntityRef, ItemId, LootOutcome, LootTable,
+        ZoneAreas, ZoneContent, ZoneDefinition,
+    };
+    let zone_id = ZoneId::new(1);
+    let definition = ZoneDefinition::default();
+    let feet = definition.spawn_grid().feet(0).unwrap();
+    let mut template = greyhaven_vale::content().creature_templates()[0].clone();
+    template.behaviour = CreatureBehaviour::Neutral;
+    template.min_level = 1;
+    template.max_level = 1;
+    template.health = 1;
+    template.health_per_level = 0;
+    let spawn = CreatureSpawn {
+        id: CreatureId::new(1),
+        template: template.id,
+        position: [feet[0] - 180, feet[2]],
+        facing: 0,
+        wander_radius: 0,
+    };
+    let table = LootTable::new(
+        [2, 2],
+        &[LootOutcome::Item {
+            weight: 1,
+            item: ItemId::new(1),
+            quantity: [2, 2],
+        }],
+    )
+    .unwrap();
+    let template_id = spawn.template;
+    let content = Arc::new(
+        ZoneContent::new(
+            definition,
+            ZoneAreas::default(),
+            vec![template],
+            vec![spawn],
+            vec![],
+            [feet[0], feet[2]],
+        )
+        .unwrap()
+        .with_loot_tables(1, vec![(template_id, table)])
+        .unwrap(),
+    );
+    let revision = content.revision();
+    let mut host = MatchHost::new(1).unwrap();
+    host.insert(
+        zone_match_id(zone_id).unwrap(),
+        MatchRuntime::new(
+            ZoneGameServerAdapter::with_content(zone_id, content).unwrap(),
+            120,
+        ),
+    )
+    .map_err(|failure| failure.into_parts().0)
+    .unwrap();
+    let local = LocalHost::start(host, zone_id);
+    let result = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut session =
+            ClientSession::connect(&local.url, Some(&local.certificate), zone_id, revision).await?;
+        session.send_select_target(Some(EntityRef::Creature(CreatureId::new(1))))?;
+        session.send_attack(true)?;
+        let mut sheet = None;
+        for _ in 0..90 {
+            let snapshot = session.receive_snapshot().await?;
+            if let Some(view) = snapshot.loot {
+                sheet = Some(view);
+                break;
+            }
+        }
+        let sheet = sheet.ok_or("the authority did not publish corpse loot")?;
+        assert_eq!(sheet.rewards.money, 2);
+        assert_eq!(sheet.rewards.item.unwrap().quantity(), 2);
+        let mut other =
+            ClientSession::connect(&local.url, Some(&local.certificate), zone_id, revision).await?;
+        other.send_loot(sheet.claim)?;
+        let mut rejected_owner = false;
+        for _ in 0..30 {
+            let snapshot = other.receive_snapshot().await?;
+            assert_eq!(snapshot.viewer.copper, 0);
+            assert!(snapshot.loot.is_none());
+            rejected_owner |= snapshot.events.iter().any(|event| {
+                matches!(
+                    event,
+                    mmorpg_core::ZoneEvent::Error {
+                        code: mmorpg_core::ErrorCode::NotLootOwner,
+                        ..
+                    }
+                )
+            });
+            if rejected_owner {
+                break;
+            }
+        }
+        assert!(rejected_owner);
+        session.send_loot(sheet.claim)?;
+        let mut credited = false;
+        for _ in 0..30 {
+            let snapshot = session.receive_snapshot().await?;
+            if snapshot.viewer.copper == 2 && snapshot.inventory_revision == 2 {
+                assert!(snapshot.loot.is_none());
+                credited = true;
+                break;
+            }
+        }
+        assert!(credited);
+        let identity = session.player_id();
+        session.reconnect().await?;
+        assert_eq!(session.player_id(), identity);
+        session.send_loot(sheet.claim)?;
+        let mut saw_refusal = false;
+        let mut saw_bag = false;
+        for _ in 0..30 {
+            let snapshot = session.receive_snapshot().await?;
+            assert_eq!(snapshot.viewer.copper, 2);
+            assert!(snapshot.loot.is_none());
+            if let Some(bag) = snapshot.inventory {
+                assert_eq!(bag.slots()[0].unwrap().quantity(), 5);
+                saw_bag = true;
+            }
+            saw_refusal |= snapshot.events.iter().any(|event| {
+                matches!(
+                    event,
+                    mmorpg_core::ZoneEvent::Error {
+                        code: mmorpg_core::ErrorCode::EmptyLoot,
+                        ..
+                    }
+                )
+            });
+            if saw_bag && saw_refusal {
+                break;
+            }
+        }
+        assert!(saw_bag && saw_refusal);
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .await;
+    local.stop().await;
+    result.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn bag_intents_cross_real_transport_and_resume_without_losing_items() {
     let zone_id = ZoneId::new(1);
     let local = LocalHost::start(
@@ -479,6 +620,7 @@ async fn fragmented_projection_reaches_the_native_client() {
     let revision = greyhaven_vale_definition().revision();
     let player_id = 42;
     let snapshot = ZoneSnapshot {
+        loot: None,
         schema_version: SNAPSHOT_SCHEMA_VERSION,
         zone_id,
         tick: 7,

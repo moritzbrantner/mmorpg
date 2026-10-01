@@ -51,6 +51,7 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
             _ => return Err("unknown workload".into()),
         };
         canonical.players.push(CanonicalPlayerSnapshot {
+            copper: 0,
             player_id: u32::try_from(index)? + 1,
             position,
             velocity: [0; 3],
