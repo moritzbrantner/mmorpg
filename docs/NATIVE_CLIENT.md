@@ -4,6 +4,8 @@ The native client is a Rust executable using wgpu and winit. It connects to the 
 
 The Outpost grass family uses the [saved exclusion-mask package](SCATTER_AUTHORING.md) through shared scenery, retaining accepted transforms in the existing static instanced-box path.
 
+The Outpost terrain and presentation heights consume the [saved relief field](RELIEF_AUTHORING.md) through the same shared scenery owner. Native smoke also renders its road/plaza/building-approach camera poses; `MMORPG_SMOKE_FRAME_DIR` saves their GPU frames.
+
 ## Prerequisites
 
 Use the pinned Rust 1.98.0 toolchain. The native client needs a supported Vulkan, Metal, Direct3D or OpenGL backend and a desktop window system. Linux builds use the standard winit X11/Wayland dependencies; no GTK/WebKit installation is required. Offscreen GPU verification also works with a software Vulkan implementation.

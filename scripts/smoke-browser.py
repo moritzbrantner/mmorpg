@@ -459,6 +459,32 @@ class BrowserAcceptance(unittest.TestCase):
             "scene": stats["scene"], "canvasColours": colours,
         }, indent=2))
 
+    def test_saved_relief_approaches_and_shared_presentation_identity(self):
+        self.open("?debug")
+        self.enter_world()
+        before = self.debug_stats()["self"]
+        points = [[1050, 650], [250, 950], [-850, 1050], [-1100, 2950], [1050, 2950]]
+        heights = self.page.evaluate("points => points.map(([x,z]) => window.__valeDebug.reliefAt(x,z))", points)
+        self.assertEqual(heights, [0] * len(points))
+        views = []
+        for name in ["relief", "hub"]:
+            self.page.evaluate("name => window.__valeDebug.flyTo(name)", name)
+            self.frames(8)
+            self.page.screenshot(path=str(ARTIFACTS / f"outpost-relief-{name}.png"))
+            stats = self.debug_stats()
+            self.assertEqual(stats["self"], before)
+            self.assertLessEqual(stats["scene"]["staticNodes"], 600)
+            self.assertLessEqual(stats["scene"]["staticVertices"], 230_000)
+            colours = self.canvas_colours()
+            self.assertGreater(colours["distinct"], 400)
+            self.assertGreater(colours["covered"], 0.5)
+            views.append({"viewpoint": name, "scene": stats["scene"], "canvasColours": colours})
+        (ARTIFACTS / "outpost-relief-evidence.json").write_text(json.dumps({
+            "presentationFingerprint": stats["presentationFingerprint"],
+            "originXzUnits": [-3500, -1300], "stepUnits": 50, "columns": 141, "rows": 133,
+            "flatApproaches": points, "heights": heights, "views": views,
+        }, indent=2))
+
     def test_storage_denial_keeps_the_world_playable(self):
         self.context.add_init_script("Object.defineProperty(window, 'localStorage', {get() { throw new DOMException('Storage denied', 'SecurityError'); }});")
         self.open()

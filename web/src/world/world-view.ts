@@ -55,6 +55,7 @@ const ZONE_NAME = "Greyhaven Vale";
 export const DEBUG_VIEWPOINTS: Readonly<Record<string, { eye: Vec3; target: Vec3 }>> = {
   hub: { eye: [5, 8.5, 31], target: [-14, 3, 4] },
   grass: { eye: [-23, 16, 29], target: [-23, 0, 11] },
+  relief: { eye: [20, 8, 39], target: [0, 0, 18] },
   woods: { eye: [-46, 7, 14], target: [-78, 3, -2] },
   hollow: { eye: [6, 14, -64], target: [0, 3, -98] },
   farm: { eye: [46, 12, 16], target: [72, 3, 40] },
@@ -123,6 +124,8 @@ export class WorldView {
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
   #sceneryFrame: SceneryFrame | null = null;
+  #presentationFingerprint: string | null = null;
+  #reliefAt: ((x: number, z: number) => number) | null = null;
   #minimap: Minimap | null = null;
   #buildMs = 0;
   #orbit = new OrbitCamera();
@@ -161,6 +164,8 @@ export class WorldView {
     const started = performance.now();
     this.#bags.load(world.catalog);
     const scenery = world.scenery.scenery;
+    this.#presentationFingerprint = scenery.presentationFingerprint;
+    this.#reliefAt = world.scenery.reliefAt;
     this.#scene = buildSceneryScene(scenery, ENVIRONMENT);
     this.#sceneryFrame = new SceneryFrame(this.#scene, `${sceneryResourcePrefix(scenery)}:animated`);
     this.#minimap = new Minimap(this.#elements.minimap, buildMinimapLayers(scenery, ENVIRONMENT));
@@ -421,7 +426,14 @@ export class WorldView {
       follow: () => {
         this.#flyTo = null;
       },
+      reliefAt: (x: number, z: number) => {
+        if (!this.#reliefAt) {
+          throw new Error("Scenery is not loaded");
+        }
+        return this.#reliefAt(x, z);
+      },
       stats: () => ({
+        presentationFingerprint: this.#presentationFingerprint,
         buildMs: Number(this.#buildMs.toFixed(1)),
         scene: this.#scene?.stats ?? null,
         frame: this.#overlay.latest,

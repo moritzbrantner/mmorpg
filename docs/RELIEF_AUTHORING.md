@@ -2,9 +2,8 @@
 
 The Outpost package in `crates/mmorpg-scenery/assets/outpost-relief/` freezes
 the current shared presentation heights and a separately editable flatten mask.
-This authoring package does not yet change live scenery. Issue #98 owns shared
-client adoption and visual acceptance. Gameplay, colliders and snapshots retain
-their current identities.
+Both clients consume its saved flattened result through shared scenery.
+Gameplay, colliders and snapshots retain their current identities.
 
 ## Source and calibration
 
@@ -90,3 +89,34 @@ replacement error rolls back files already replaced. An interruption between
 file replacements can leave a mixed generation; `--check` detects it and a
 successful `--write` reconciles it. Individual durable files are never partially
 written.
+
+## Shared client consumption
+
+The adapter also emits `flattened.heights.rs` and `source.heights.rs`, including
+the field's exact origin, step, dimensions and signed-centimetre samples. The
+first is compiled into shared scenery; the second supplies the independent
+original-capture regression in tests. No JSON parser or asset-tooling operation
+runs in either client.
+
+`Scenery::height_at` samples this field inside its inclusive Outpost footprint
+and retains the original relief outside. Integer bilinear sampling rounds to
+the nearest centimetre, with half ties toward +Y. Grid nodes exactly reproduce
+the saved values. The untouched edge samples match the old function exactly
+at nodes; between nodes they reconstruct it within one centimetre, with no
+adjacent-coordinate seam jump above two centimetres. Procedural placement runs
+before adoption, preserving every existing prop and random draw.
+
+Native two-metre terrain samples, browser four-metre terrain samples, exported
+far samples and unit/prop relief queries use this shared owner. The authored
+half-metre field changes 4,517 nodes; the scenery regression checksum becomes
+`d7b2eda257de90ab`, and the complete browser export fingerprint becomes
+`9536a65a74d1220b`. Existing resource keys include that fingerprint. Gameplay
+remains content revision 4, fingerprint `5738a86de795e940`, snapshot v7/command v2.
+
+The debug `relief` and `hub` camera poses show the plaza, road and building
+approaches without moving the character. Browser acceptance records screenshots
+and scene-work/flat-approach evidence under `artifacts/browser/outpost-relief-*`.
+Native smoke explicitly renders the same poses on the GPU; setting
+`MMORPG_SMOKE_FRAME_DIR` saves their PPM frames. Tests verify every source and
+selected node, shared WASM/grid consumption, unchanged surrounding scenery,
+clearance flatness and centimetre boundary continuity.

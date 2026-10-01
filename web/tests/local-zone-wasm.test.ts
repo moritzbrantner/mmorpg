@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { GRASS_PACKAGE_DIRECTORY, record } from "../scripts/grass-package";
+import { RELIEF_GRID, RELIEF_PACKAGE_DIRECTORY } from "../scripts/relief-package";
 import { encodeCommand } from "../src/command-wire";
 import { decodeSnapshot, type EntityState } from "../src/replication";
 import { BagState } from "../src/world/units/bag-state";
@@ -32,6 +33,33 @@ function run(source: LocalZoneSource, ticks: number): void {
 }
 
 describe("WASM local zone host", () => {
+  test("shared relief queries and both exported terrain grids consume the saved signed-centimetre field", () => {
+    const provider = createLocalWorld(wasm).scenery;
+    const field = record(JSON.parse(readFileSync(`${RELIEF_PACKAGE_DIRECTORY}/flattened.heights.json`, "utf8")));
+    const heights = field.heights;
+    if (!Array.isArray(heights)) {
+      throw new Error("Missing saved relief field");
+    }
+    for (let row = 0; row < RELIEF_GRID.rows; row += 1) {
+      for (let column = 0; column < RELIEF_GRID.columns; column += 1) {
+        const x = RELIEF_GRID.originXzUnits[0] + column * RELIEF_GRID.stepUnits;
+        const z = RELIEF_GRID.originXzUnits[1] + row * RELIEF_GRID.stepUnits;
+        expect(provider.reliefAt(x, z)).toEqual(heights[row * RELIEF_GRID.columns + column]);
+      }
+    }
+    for (const grid of [provider.scenery.terrain, provider.scenery.farTerrain]) {
+      for (let row = 0; row < grid.rows; row += 1) {
+        for (let column = 0; column < grid.columns; column += 1) {
+          const x = grid.originXz[0] + column * grid.step;
+          const z = grid.originXz[1] + row * grid.step;
+          if (x >= -3500 && x <= 3500 && z >= -1300 && z <= 5300) {
+            expect(grid.heights[row * grid.columns + column]).toBe(provider.reliefAt(x, z));
+          }
+        }
+      }
+    }
+    expect(provider.scenery.contentRevision).toBe(4n);
+  });
   test("multi-tick frames retain intermediate bag sheets and refusal feedback", () => {
     const { source } = createLocalWorld(wasm);
     source.join();
@@ -196,7 +224,7 @@ describe("WASM local zone host", () => {
     const actual = provider.scenery.props.filter((prop) => prop.kind === "grass-tuft" && prop.position[0] >= -3500 && prop.position[0] <= 3500 && prop.position[2] >= -1300 && prop.position[2] <= 5300);
     expect(actual).toEqual(expected);
     expect(actual.length).toBe(55);
-    expect(provider.scenery.presentationFingerprint).toBe("bf866c8b4e7f837d");
+    expect(provider.scenery.presentationFingerprint).toBe("9536a65a74d1220b");
     expect(provider.scenery.contentRevision).toBe(4n);
   });
 

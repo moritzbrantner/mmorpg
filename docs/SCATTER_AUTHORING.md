@@ -91,15 +91,17 @@ props. The scenery builder replaces only cosmetic grass roots inside the
 inclusive authoring footprint with that selection. It preserves the original
 placement RNG execution for every other family. Tests retain the original
 scenery hash and compare every accepted placement, unrelated prop, road, water
-surface and both terrain grids against the original builder. The current
-scenery regression checksum is `1de3341c933449f6`; gameplay stays at content
+surface and both terrain grids against the original builder. The grass-only
+checksum is `1de3341c933449f6`; adoption of the independent
+[saved relief package](RELIEF_AUTHORING.md) makes the current scenery regression
+checksum `d7b2eda257de90ab`. Gameplay stays at content
 revision 4.
 
 Scenery export v3 adds `presentationFingerprint`, a 16-digit hexadecimal FNV-1a
 hash of the complete deterministically serialized export, with its own field
 empty during hashing. This includes the actual 4 m near and 20 m far grids,
 all prop/structure records, palettes and other presentation fields. The current
-export fingerprint is `bf866c8b4e7f837d`. Browser static, water and animated
+export fingerprint is `9536a65a74d1220b`. Browser static, water and animated
 resource keys include it, so
 mask edits cannot reuse geometry under an unchanged gameplay revision. Older
 scenery exports fail closed; gameplay snapshot/command wire stays v7/v2.

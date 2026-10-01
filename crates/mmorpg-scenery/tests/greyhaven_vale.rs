@@ -12,9 +12,9 @@ use mmorpg_scenery::{
 };
 
 /// Recorded from this revision; any change to content, placement or relief
-/// must update it deliberately. The saved Outpost grass mask changes only
+/// must update it deliberately. Saved Outpost grass and relief masks change only
 /// presentation, leaving Greyhaven gameplay at revision 4.
-const STABLE_HASH: u64 = 0x1de3_341c_9334_49f6;
+const STABLE_HASH: u64 = 0xd7b2_eda2_57de_90ab;
 
 fn is_terrain(collider: &StaticCollider) -> bool {
     collider.id == ids::GROUND || ids::BOUNDARY_WALLS.contains(&collider.id)

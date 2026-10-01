@@ -190,6 +190,9 @@ describe("Greyhaven saved relief package", () => {
       await reconcileReliefPackage(checkout!, "--write", scratch);
       const after = await stat(path.join(scratch, "manifest.json"));
       expect([after.ino, after.mtimeMs]).toEqual([before.ino, before.mtimeMs]);
+      await rm(path.join(scratch, "flattened.heights.rs"));
+      await reconcileReliefPackage(checkout!, "--write", scratch);
+      expect(await readFile(path.join(scratch, "flattened.heights.rs"))).toEqual(await readFile(path.join(directory, "flattened.heights.rs")));
       // A later durable target is unreadable; earlier staged bytes must not commit.
       await writeFile(path.join(scratch, "flatten.txt"), (".".repeat(141) + "\n").repeat(133));
       await rm(path.join(scratch, "flattened.heights.json"));
