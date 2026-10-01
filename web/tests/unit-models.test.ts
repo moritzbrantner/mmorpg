@@ -12,8 +12,10 @@ import {
   unitModel,
   type UnitContext,
   type UnitModel,
+  unitNodeIds,
 } from "../src/world/unit-nodes";
 import { PLACEHOLDER_BODY_MODEL } from "../src/world/units/creature-bodies";
+import { CREATURE_MODEL } from "../src/world/units/creature-models";
 import { catalogJson } from "./support/catalog";
 import { NO_FLAGS, playerEntity } from "./support/snapshots";
 
@@ -43,8 +45,8 @@ describe("unit model registry", () => {
   test("every entity kind has a model and animation state is kept per visible unit", () => {
     expect(Object.keys(UNIT_MODELS)).toEqual(["player", "creature", "npc"]);
     expect(unitModel(player(3))).toBe(PLAYER_MODEL);
-    expect(unitModel({ kind: "creature" })).toBe(PLACEHOLDER_BODY_MODEL);
-    expect(unitModel({ kind: "npc" })).toBe(PLACEHOLDER_BODY_MODEL);
+    expect(unitModel({ kind: "creature" })).toBe(CREATURE_MODEL);
+    expect(unitModel({ kind: "npc" })).toBe(CREATURE_MODEL);
     const animators = new UnitAnimators();
     const entity = { ...player(3), velocity: [21, 0, 0] as const, facing: 16_384 };
     const first = placeUnit(entity, 90, 0, 100);
@@ -120,5 +122,13 @@ describe("creature and NPC models", () => {
     // Same ID, another kind: not the target.
     expect(draw(wolf, { kind: "npc", id: 108 })).not.toContain("unit-creature-108-target-ring");
     expect(draw(guard, { kind: "npc", id: 6 })).toEqual(["unit-npc-6-target-ring", "unit-npc-6-body", "unit-npc-6-nose"]);
+  });
+});
+
+describe("unitNodeIds", () => {
+  test("lists the nodes of one unit and never those of a unit whose ID shares a prefix", () => {
+    const nodes = ["unit-creature-10-body", "unit-creature-108-ear-left", "unit-creature-108-body", "unit-npc-108-body", "tree-1"].map((id) => ({ id }));
+    expect(unitNodeIds(nodes, "unit-creature-108")).toEqual(["unit-creature-108-ear-left", "unit-creature-108-body"]);
+    expect(unitNodeIds(nodes, "unit-creature-9")).toEqual([]);
   });
 });

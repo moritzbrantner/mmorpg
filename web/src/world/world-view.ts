@@ -16,10 +16,11 @@ import { MovementOutbox, type MovementInput } from "./movement-outbox";
 import { OrbitCamera, PIXELS_PER_WHEEL_LINE, movementInput, type DragMode, type Vec3 } from "./orbit-camera";
 import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type SceneryScene } from "./scenery-nodes";
 import { SkyLayer } from "./sky";
-import { UnitAnimators, placeWithModel, unitIdentity, unitModel, type UnitContext, type UnitLook } from "./unit-nodes";
+import { UnitAnimators, placeWithModel, unitIdentity, unitModel, unitNodeIds, type UnitContext, type UnitLook } from "./unit-nodes";
 import { BagsPanel, type BagsElements } from "./units/bags-panel";
 import { CombatHud } from "./units/combat-hud";
 import { LootPanel, type LootElements } from "./units/loot-panel";
+import { nearestAnimal, projectedUnit, type ProjectedUnit } from "./units/projected-units";
 import { ProgressionHud } from "./units/progression-hud";
 import { SecondaryClick, attackToggle } from "./units/targeting";
 
@@ -126,6 +127,10 @@ export class WorldView {
   readonly #intents: Intent[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
+  /** The unit nodes of the last frame, for debug readouts. */
+  #lastUnitNodes: readonly RendererSceneNode[] = [];
+  /** The projected units of the last frame, for debug readouts. */
+  #lastProjectedUnits: readonly ProjectedUnit[] = [];
   #sceneryFrame: SceneryFrame | null = null;
   #presentationFingerprint: string | null = null;
   #reliefAt: ((x: number, z: number) => number) | null = null;
@@ -299,6 +304,7 @@ export class WorldView {
     const nodes: RendererSceneNode[] = [];
     const units: RendererSceneNode[] = [];
     const visible = new Set<string>();
+    const projected: ProjectedUnit[] = [];
     const others: MinimapUnit[] = [];
     let self: { focus: Vec3; x: number; z: number; facing: number } | null = null;
     for (const entity of source.sample()) {
@@ -307,6 +313,7 @@ export class WorldView {
       const isSelf = entity.kind === "player" && entity.entityId === projection.viewerId;
       const id = unitIdentity(entity);
       visible.add(id);
+      projected.push(projectedUnit(entity, placement, catalog));
       const locomotion = this.#animators.locomotion(entity, placement, unitsPerMetre, deltaSeconds, !animate);
       units.push(...model.nodes({ id, entity, placement, locomotion, context: unitContext }));
       if (isSelf) {
@@ -336,6 +343,8 @@ export class WorldView {
     this.#camera.updateMatrixWorld(true);
     const frame = sceneryFrame.nodes(view.eye, { seconds: this.#seconds, animate });
     nodes.push(...frame.nodes, ...units);
+    this.#lastUnitNodes = units;
+    this.#lastProjectedUnits = projected;
     const camera: RendererCamera = {
       viewMatrix: [...this.#camera.matrixWorldInverse.elements] as Matrix4Values,
       projectionMatrix: webGpuProjection(this.#camera),
@@ -447,6 +456,12 @@ export class WorldView {
         }
         return this.#reliefAt(x, z);
       },
+      /** Node IDs the last frame drew for one unit, e.g. `unit-creature-108`. */
+      unitNodeIds: (identity: string) => unitNodeIds(this.#lastUnitNodes, identity),
+      /** The units of the last projection (kind, id, creature family, position in metres). */
+      projectedUnits: () => this.#lastProjectedUnits,
+      /** The projected animal (wolf, boar, vermin) nearest to a point in metres, or null. */
+      nearestAnimal: (x: number, z: number) => nearestAnimal(this.#lastProjectedUnits, x, z),
       stats: () => ({
         presentationFingerprint: this.#presentationFingerprint,
         buildMs: Number(this.#buildMs.toFixed(1)),
