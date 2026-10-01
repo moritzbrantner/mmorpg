@@ -153,4 +153,12 @@ const REFUSALS: Record<ErrorCode, string | null> = {
   "out-of-range": "Move closer to the corpse.",
   "you-are-dead": "You cannot loot while dead.",
   "too-many-intents": "Too many actions. Try the claim again.",
+  // Ability and class refusals never answer a claim.
+  "no-class": null,
+  "not-learned": null,
+  "not-ready": null,
+  "not-enough-resource": null,
+  "stunned": null,
+  "already-casting": null,
+  "invalid-class": null,
 };

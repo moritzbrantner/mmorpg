@@ -75,6 +75,9 @@ pub enum Action {
     ReleaseSpirit,
     MoveItem,
     Loot,
+    ChooseClass,
+    UseAbility,
+    CancelCast,
     Disconnect,
     Reconnect,
 }
@@ -91,6 +94,9 @@ impl Action {
             Self::ReleaseSpirit => "release_spirit",
             Self::MoveItem => "move_item",
             Self::Loot => "loot",
+            Self::ChooseClass => "choose_class",
+            Self::UseAbility => "use_ability",
+            Self::CancelCast => "cancel_cast",
             Self::Disconnect => "disconnect",
             Self::Reconnect => "reconnect",
         }
@@ -106,7 +112,10 @@ impl Action {
             | Self::StopAttack
             | Self::ReleaseSpirit
             | Self::MoveItem
-            | Self::Loot => "applied",
+            | Self::Loot
+            | Self::ChooseClass
+            | Self::UseAbility
+            | Self::CancelCast => "applied",
             Self::Disconnect => "disconnected",
             Self::Reconnect => "resumed",
         }
@@ -122,7 +131,10 @@ impl Action {
             | Self::StopAttack
             | Self::ReleaseSpirit
             | Self::MoveItem
-            | Self::Loot => true,
+            | Self::Loot
+            | Self::ChooseClass
+            | Self::UseAbility
+            | Self::CancelCast => true,
             Self::Join | Self::Disconnect | Self::Reconnect => false,
         }
     }
@@ -140,8 +152,17 @@ pub struct Step {
     pub strafe: Option<i8>,
     /// Move heading: 65 536 steps per turn, 0 faces +Z, 16 384 faces +X.
     pub facing: Option<u16>,
-    /// The unit a `select_target` step selects, or `none` to clear.
+    /// The unit a `select_target` step selects (`none` clears), or the
+    /// optional target of a `use_ability` step (omitted or `none`: the
+    /// current selection).
     pub entity: Option<UnitSpec>,
+    /// `choose_class`: `warden`, `ranger` or `arcanist`, passed through as
+    /// its wire value; any other name is sent as an invalid value.
+    pub class: Option<String>,
+    /// `choose_class`: `female` or `male`.
+    pub sex: Option<String>,
+    /// `use_ability`: the global ability ID, passed through unchanged.
+    pub ability: Option<u8>,
     pub creature: Option<u32>,
     pub died_at: Option<u64>,
     pub source_slot: Option<u8>,
@@ -173,6 +194,7 @@ pub enum ExpectKind {
     Target,
     Event,
     Unit,
+    Resource,
 }
 
 impl ExpectKind {
@@ -193,13 +215,14 @@ impl ExpectKind {
             Self::Target => "target",
             Self::Event => "event",
             Self::Unit => "unit",
+            Self::Resource => "resource",
         }
     }
 
     /// Kinds that may wait for a condition within a window (`by_tick`).
     const fn allows_window(self) -> bool {
         match self {
-            Self::Sees | Self::Event | Self::Unit => true,
+            Self::Sees | Self::Event | Self::Unit | Self::Resource => true,
             Self::NotSees
             | Self::Position
             | Self::Acknowledged
@@ -250,6 +273,8 @@ pub struct Expectation {
     pub event: Option<EventSpec>,
     /// The visible state of a `unit` expectation.
     pub state: Option<UnitState>,
+    /// The bot's exact class resource (`resource` expectations).
+    pub resource: Option<u16>,
 }
 
 /// Parses and validates a scenario at the file trust boundary.
@@ -332,10 +357,24 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                 "{at}: creature and died_at are required only for loot"
             ));
         }
-        if step.entity.is_some() != (step.action == Action::SelectTarget) {
+        let targets = matches!(step.action, Action::SelectTarget | Action::UseAbility);
+        if (step.entity.is_some() && !targets)
+            || (step.entity.is_none() && step.action == Action::SelectTarget)
+        {
             return Err(format!(
-                "{at}: entity is required for select_target and only for select_target"
+                "{at}: entity is required for select_target and allowed only for it and use_ability"
             ));
+        }
+        if [step.class.is_some(), step.sex.is_some()]
+            .iter()
+            .any(|&present| present != (step.action == Action::ChooseClass))
+        {
+            return Err(format!(
+                "{at}: class and sex are required only for choose_class"
+            ));
+        }
+        if step.ability.is_some() != (step.action == Action::UseAbility) {
+            return Err(format!("{at}: ability is required only for use_ability"));
         }
         if let Some(entity) = &step.entity {
             known_unit(entity).map_err(|error| format!("{at}: {error}"))?;
@@ -358,7 +397,7 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             (None, Some(tick)) if expectation.kind.allows_window() => tick,
             _ => {
                 return Err(format!(
-                    "{at}: exactly one of tick/by_tick is required (by_tick only for sees, event and unit)"
+                    "{at}: exactly one of tick/by_tick is required (by_tick only for sees, event, unit and resource)"
                 ));
             }
         };
@@ -416,6 +455,7 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                         .as_ref()
                         .is_some_and(|entity| *entity != UnitSpec::None)
             }
+            ExpectKind::Resource => expectation.resource.is_some(),
         };
         if !required {
             return Err(format!(
@@ -598,7 +638,10 @@ impl Runner<'_> {
             | Action::StopAttack
             | Action::ReleaseSpirit
             | Action::MoveItem
-            | Action::Loot => self.submit(index, step)?,
+            | Action::Loot
+            | Action::ChooseClass
+            | Action::UseAbility
+            | Action::CancelCast => self.submit(index, step)?,
             Action::Disconnect => self.disconnect(index)?,
             Action::Reconnect => self.reconnect(index)?,
         };
@@ -722,6 +765,29 @@ impl Runner<'_> {
                     ),
                 )
             }
+            Action::ChooseClass => {
+                let class = step.class.as_deref().unwrap_or_default();
+                let sex = step.sex.as_deref().unwrap_or_default();
+                (
+                    ZoneCommand::ChooseClass {
+                        class: class_code(class),
+                        sex: sex_code(sex),
+                    },
+                    format!(" class={class} sex={sex}"),
+                )
+            }
+            Action::UseAbility => {
+                let ability = step.ability.ok_or("use_ability ability is required")?;
+                let entity = step.entity.as_ref().unwrap_or(&UnitSpec::None);
+                match entity.resolve(|name| self.player_of(name)) {
+                    Ok(target) => (
+                        ZoneCommand::UseAbility { ability, target },
+                        format!(" ability={ability} entity={entity}"),
+                    ),
+                    Err(_) => return Ok(("rejected:unknown_entity".into(), String::new())),
+                }
+            }
+            Action::CancelCast => (ZoneCommand::CancelCast, String::new()),
             Action::Join | Action::Disconnect | Action::Reconnect => {
                 return Err(format!("{} is not a command", step.action.name()));
             }
@@ -902,6 +968,18 @@ impl Runner<'_> {
         }
         if me.in_combat {
             parts.push("in_combat".into());
+        }
+        if let Some(resource) = me.resource {
+            parts.push(format!(
+                "{}{}/{}",
+                resource.kind.name(),
+                resource.value,
+                resource.max
+            ));
+        }
+        // Cast progress changes every tick; the digest names the ability.
+        if let Some(cast) = me.cast {
+            parts.push(format!("casting{}", cast.ability.get()));
         }
         parts.join(" ")
     }
@@ -1097,6 +1175,24 @@ impl Runner<'_> {
                     None => Err(format!("{target_name} in no named area")),
                 }
             }
+            ExpectKind::Resource => {
+                let shown = view.viewer.resource.map_or_else(
+                    || "resource=none".to_owned(),
+                    |resource| {
+                        format!(
+                            "{}={}/{}",
+                            resource.kind.name(),
+                            resource.value,
+                            resource.max
+                        )
+                    },
+                );
+                if view.viewer.resource.map(|resource| resource.value) == expectation.resource {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
             ExpectKind::Health => {
                 let me = &view.viewer;
                 let shown = format!("health={}/{}", me.health, me.max_health);
@@ -1260,6 +1356,25 @@ fn player_of_entity(entity: &EntitySnapshot) -> Option<PlayerId> {
     }
 }
 
+/// The wire value of a class name; unknown names map to an invalid value
+/// so the zone, not the runner, refuses them.
+fn class_code(name: &str) -> u8 {
+    match name {
+        "warden" => 0,
+        "ranger" => 1,
+        "arcanist" => 2,
+        _ => u8::MAX,
+    }
+}
+
+fn sex_code(name: &str) -> u8 {
+    match name {
+        "female" => 0,
+        "male" => 1,
+        _ => u8::MAX,
+    }
+}
+
 fn visible_player(view: &ZoneSnapshot, player_id: PlayerId) -> Option<&EntitySnapshot> {
     view.entities
         .iter()
@@ -1302,6 +1417,7 @@ fn describe(expectation: &Expectation) -> String {
             let state = expectation.state.map_or("", UnitState::name);
             format!("{bot} unit {} {state}{by}", unit_text(expectation))
         }
+        ExpectKind::Resource => format!("{bot} resource{by}"),
     }
 }
 

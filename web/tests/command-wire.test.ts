@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { encodeCommand, type Axis, type WorldCommand } from "../src/command-wire";
 import { entityKindFromCode } from "../src/entity-ref";
 
-const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v3.hex", import.meta.url), "utf8");
+const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v4.hex", import.meta.url), "utf8");
 
 function axis(raw: string | undefined): Axis {
   const value = Number(raw);
@@ -38,6 +38,14 @@ function command(fields: readonly string[]): WorldCommand {
       return { kind: "stop-attack" };
     case "release_spirit":
       return { kind: "release-spirit" };
+    case "use_ability": {
+      const kind = entityKindFromCode(Number(second));
+      return { kind: "use-ability", ability: Number(first), target: kind === null ? null : { kind, id: Number(third) } };
+    }
+    case "cancel_cast":
+      return { kind: "cancel-cast" };
+    case "choose_class":
+      return { kind: "choose-class", classId: Number(first), sex: Number(second) };
     default:
       throw new Error(`Unknown fixture command ${name}`);
   }
@@ -60,7 +68,10 @@ describe("Rust/browser command contract", () => {
   test("encodes the same golden bytes as mmorpg-protocol", () => {
     const commands = fixtureCommands();
     const kinds = new Set(commands.map(({ command }) => command.kind));
-    expect([...kinds].sort()).toEqual(["jump", "loot", "move", "move-item", "release-spirit", "select-target", "start-attack", "stop-attack"]);
+    expect([...kinds].sort()).toEqual([
+      "cancel-cast", "choose-class", "jump", "loot", "move", "move-item", "release-spirit", "select-target",
+      "start-attack", "stop-attack", "use-ability",
+    ]);
     expect(commands.filter(({ command }) => command.kind === "move").length).toBeGreaterThanOrEqual(4);
     expect(commands.filter(({ command }) => command.kind === "select-target").length).toBe(4);
     for (const { hex, command } of commands) {
@@ -82,6 +93,11 @@ describe("Rust/browser command contract", () => {
       { kind: "loot", creatureId: 2 ** 32, diedAt: 0n },
       { kind: "loot", creatureId: 1, diedAt: -1n },
       { kind: "loot", creatureId: 1, diedAt: 1n << 64n },
+      { kind: "use-ability", ability: 256, target: null },
+      { kind: "use-ability", ability: -1, target: null },
+      { kind: "use-ability", ability: 1, target: { kind: "creature", id: 2 ** 32 } },
+      { kind: "choose-class", classId: 0, sex: 256 },
+      { kind: "choose-class", classId: 1.5, sex: 0 },
     ]) {
       expect(() => encodeCommand(invalid as WorldCommand)).toThrow();
     }

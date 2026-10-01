@@ -72,8 +72,16 @@ pub fn exhaustive_projection(
             in_combat: combat.combat_timer > 0,
             auto_attacking: combat.auto_attack,
             target: combat.target,
+            // The oracle's players never choose a class.
+            class: None,
+            resource: None,
+            cast: None,
+            global_cooldown: 0,
         },
+        cooldowns: Vec::new(),
+        auras: Vec::new(),
         target_of_target,
+        target_detail: mmorpg_core::TargetDetail::default(),
         events: combat.events.clone(),
         entities: relevant
             .into_iter()

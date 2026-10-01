@@ -317,7 +317,7 @@ fn invalid_scenarios_are_rejected_at_load() {
         ),
         (
             "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"start_attack\"\nentity = \"creature:1\"",
-            "entity is required for select_target",
+            "allowed only for it and use_ability",
         ),
         (
             "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"select_target\"\nentity = \"wolf:1\"",
@@ -337,7 +337,23 @@ fn invalid_scenarios_are_rejected_at_load() {
         ),
         (
             "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"health\"\nbot = \"a\"\nhealth = 50\nby_tick = 1",
-            "by_tick only for sees, event and unit",
+            "by_tick only for sees, event, unit and resource",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"choose_class\"\nclass = \"warden\"",
+            "class and sex are required only for choose_class",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"use_ability\"",
+            "ability is required only for use_ability",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"cancel_cast\"\nability = 1",
+            "ability is required only for use_ability",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"resource\"\nbot = \"a\"\ntick = 1",
+            "missing its required field",
         ),
     ] {
         let error = bots::load(text).unwrap_err();

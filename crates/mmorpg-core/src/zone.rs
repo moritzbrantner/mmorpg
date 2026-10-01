@@ -100,6 +100,16 @@ pub(crate) struct PlayerState {
     pub(crate) intents_dropped: bool,
     /// Events of the current tick.
     pub(crate) events: Vec<ZoneEvent>,
+    /// The one-time class choice; `None` keeps the class-agnostic baseline.
+    pub(crate) class: Option<crate::ClassChoice>,
+    /// The class resource and its regeneration timers (zero without a class).
+    pub(crate) resource: crate::class::ResourceClock,
+    pub(crate) global_cooldown: u16,
+    /// Running cooldowns ordered by ability.
+    pub(crate) cooldowns: Vec<crate::Cooldown>,
+    pub(crate) cast: Option<crate::CastState>,
+    /// Auras in slot order.
+    pub(crate) auras: Vec<crate::Aura>,
 }
 
 impl PlayerState {
@@ -127,6 +137,12 @@ impl PlayerState {
             intents: Vec::new(),
             intents_dropped: false,
             events: Vec::new(),
+            class: None,
+            resource: crate::class::ResourceClock::default(),
+            global_cooldown: 0,
+            cooldowns: Vec::new(),
+            cast: None,
+            auras: Vec::new(),
         }
     }
 
@@ -321,8 +337,16 @@ impl ZoneSimulation {
         if self.interest.remove(entity) {
             self.interest_work.bucket_removes += 1;
         }
+        self.forget_caster(entity);
         for creature in self.creatures.values_mut() {
             creature.forget(entity);
+            // A cast at a departed player resolves against nobody.
+            if creature
+                .cast
+                .is_some_and(|cast| cast.target == Some(entity))
+            {
+                creature.cast = None;
+            }
             if creature.tapped_by == Some(player_id) {
                 creature.tapped_by = None;
                 creature.loot = None;
@@ -390,6 +414,13 @@ impl ZoneSimulation {
                 destination,
                 quantity,
             }),
+            ZoneCommand::UseAbility { ability, target } => {
+                Some(PlayerIntent::UseAbility { ability, target })
+            }
+            ZoneCommand::CancelCast => Some(PlayerIntent::CancelCast),
+            ZoneCommand::ChooseClass { class, sex } => {
+                Some(PlayerIntent::ChooseClass { class, sex })
+            }
         };
         if let Some(intent) = intent {
             if player.intents.len() < MAX_PENDING_INTENTS {
@@ -404,15 +435,22 @@ impl ZoneSimulation {
 
     /// Advances one tick in a fixed order:
     ///
-    /// 1. every player's pending intents, in `(player id, sequence)` order;
+    /// 1. every player's pending intents, in `(player id, sequence)` order,
+    ///    including class choices and ability use (instant abilities resolve
+    ///    here, casts and channels start here);
     /// 2. creature AI decisions in creature-ID order (aggro, assist, chase,
-    ///    wander, leash and evade), which set creature velocities;
-    /// 3. player movement velocities and grounded jumps (dead players stand still);
+    ///    wander, leash, evade and creature ability casts), which set
+    ///    creature velocities; roots and stuns stop them, snares slow them;
+    /// 3. player movement velocities and grounded jumps (dead and stunned
+    ///    players stand still); movement or a jump interrupts a cast;
     /// 4. one physics step;
     /// 5. interest index maintenance from the new positions;
-    /// 6. combat in `EntityRef` order (players, then creatures): swing
-    ///    timers, range checks after movement, damage, threat, deaths, tapping;
-    /// 7. regeneration, corpse despawns and respawns in ID order;
+    /// 6. combat: global cooldowns, cooldowns and casts or channels (players,
+    ///    then creatures), aura pulses and expiry in `(EntityRef, aura slot)`
+    ///    order, then swings in `EntityRef` order: swing timers, range checks
+    ///    after movement, damage, threat, deaths, tapping;
+    /// 7. health and class-resource regeneration, corpse despawns and
+    ///    respawns in ID order;
     /// 8. the tick counter.
     ///
     /// Events of the previous tick are cleared first, so each player's queue
@@ -435,6 +473,8 @@ impl ZoneSimulation {
             player.jump_pending = false;
         }
         self.update_interest()?;
+        self.advance_casts(now)?;
+        self.advance_auras(now)?;
         self.resolve_combat(now)?;
         self.update_timers(now)?;
         self.tick = now;
@@ -442,8 +482,24 @@ impl ZoneSimulation {
     }
 
     /// Step 3: horizontal controller velocity from intent, vertical velocity
-    /// from physics or a grounded jump.
+    /// from physics or a grounded jump. Stunned players stand still, roots
+    /// and snares scale the controller velocity, and a non-zero movement
+    /// intent or a jump interrupts a cast or channel.
     fn drive_players(&mut self) -> Result<(), ZoneError> {
+        let moving: Vec<_> = self
+            .players
+            .iter()
+            .filter(|(_, state)| {
+                state.cast.is_some()
+                    && (state.forward != Axis::Zero
+                        || state.strafe != Axis::Zero
+                        || state.jump_pending)
+            })
+            .map(|(&player_id, _)| player_id)
+            .collect();
+        for player_id in moving {
+            self.interrupt_cast(EntityRef::Player(player_id), None, None);
+        }
         for (&player_id, state) in &self.players {
             let body_id = body_id(EntityRef::Player(player_id));
             let body = self
@@ -453,14 +509,20 @@ impl ZoneSimulation {
             // Setting velocities never moves bodies, so every grounded probe in
             // this pass observes the same pre-step positions regardless of order.
             let alive = state.is_alive();
+            let stunned = crate::aura::has_kind(&state.auras, crate::AuraKind::Stun);
             let vertical_velocity =
-                if alive && state.jump_pending && is_grounded(&self.world, body)? {
+                if alive && !stunned && state.jump_pending && is_grounded(&self.world, body)? {
                     JUMP_VELOCITY_UNITS_PER_TICK
                 } else {
                     body.velocity().y
                 };
             let mut velocity = if alive {
-                movement_velocity(state)?
+                let free = movement_velocity(state)?;
+                let [x, z] = crate::aura::scale_velocity(
+                    [free.x, free.z],
+                    crate::aura::speed_percent(&state.auras),
+                );
+                Vec3i::new(x, 0, z)
             } else {
                 Vec3i::ZERO
             };

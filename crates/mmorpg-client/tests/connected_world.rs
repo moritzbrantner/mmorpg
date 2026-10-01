@@ -9,8 +9,8 @@ use mmorpg_client::{
 };
 use mmorpg_core::{
     EntityFlags, EntityKind, EntitySnapshot, MAX_VISIBLE_ENTITIES, PLAYER_HALF_EXTENTS_UNITS,
-    SNAPSHOT_SCHEMA_VERSION, TICK_HZ, ViewerState, ZoneId, ZoneSnapshot, greyhaven_vale,
-    greyhaven_vale_definition,
+    SNAPSHOT_SCHEMA_VERSION, TICK_HZ, TargetDetail, ViewerState, ZoneId, ZoneSnapshot,
+    greyhaven_vale, greyhaven_vale_definition,
 };
 use mmorpg_game_server::{ZoneGameServerAdapter, zone_match_id};
 use mmorpg_protocol::{
@@ -638,6 +638,9 @@ async fn fragmented_projection_reaches_the_native_client() {
             ..ViewerState::default()
         },
         target_of_target: None,
+        target_detail: TargetDetail::default(),
+        cooldowns: Vec::new(),
+        auras: Vec::new(),
         events: Vec::new(),
         entities: (0..MAX_WIRE_ENTITIES)
             .map(|index| EntitySnapshot {

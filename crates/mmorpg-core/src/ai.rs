@@ -171,19 +171,25 @@ impl ZoneSimulation {
             _ => None,
         };
 
+        let home = spawn.position;
+        let leashed = distance_squared(home, here) > i64::from(LEASH_RADIUS_UNITS).pow(2);
+        // An engaged creature that keeps fighting may cast its ability.
+        let casting = match chase {
+            Some((target, to)) if !leashed => self.try_creature_ability(id, target, here, to)?,
+            _ => false,
+        };
         let Some(creature) = self.creatures.get_mut(&id) else {
             return Ok(());
         };
-        let home = spawn.position;
-        if creature.ai == CreatureAi::Engaged {
-            let leashed = distance_squared(home, here) > i64::from(LEASH_RADIUS_UNITS).pow(2);
-            if chase.is_none() || leashed {
-                creature.ai = CreatureAi::Evading { ticks: 0 };
-                creature.threat.clear();
-                creature.tapped_by = None;
-                creature.combat_timer = 0;
-            }
+        if creature.ai == CreatureAi::Engaged && (chase.is_none() || leashed) {
+            creature.ai = CreatureAi::Evading { ticks: 0 };
+            creature.threat.clear();
+            creature.tapped_by = None;
+            creature.combat_timer = 0;
+            creature.reset_abilities();
         }
+        let speed = crate::aura::speed_percent(&creature.auras);
+        let stunned = crate::aura::has_kind(&creature.auras, crate::AuraKind::Stun);
 
         let mut teleport_home = false;
         let (velocity, facing) = match creature.ai {
@@ -195,6 +201,11 @@ impl ZoneSimulation {
                 spawn.wander_radius,
             ),
             CreatureAi::Engaged => match chase {
+                // A casting creature stands and faces its target.
+                Some((_, to)) if casting => {
+                    let (dx, dz) = offset(here, to);
+                    ([0, 0], yaw_from_vector(dx, dz))
+                }
                 Some((target, to)) => {
                     let (dx, dz) = offset(here, to);
                     (
@@ -214,6 +225,7 @@ impl ZoneSimulation {
                     creature.swing_timer = 0;
                     creature.combat_timer = 0;
                     creature.tapped_by = None;
+                    creature.reset_abilities();
                     creature.ai = CreatureAi::Idle {
                         timer: wander_wait(&mut self.rng),
                         destination: None,
@@ -228,7 +240,11 @@ impl ZoneSimulation {
                 }
             }
         };
-        if let Some(facing) = facing {
+        // Stuns freeze a creature in place; roots stop it and snares slow it.
+        let velocity = crate::aura::scale_velocity(velocity, speed);
+        if let Some(facing) = facing
+            && !stunned
+        {
             creature.facing = facing;
         }
         if teleport_home {
@@ -285,6 +301,9 @@ impl ZoneSimulation {
         let was_idle = matches!(creature.ai, CreatureAi::Idle { .. });
         creature.add_threat(target, 0);
         creature.ai = CreatureAi::Engaged;
+        if was_idle {
+            self.arm_creature_ability(id)?;
+        }
         if !(was_idle && assist) {
             return Ok(());
         }

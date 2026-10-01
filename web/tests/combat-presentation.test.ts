@@ -3,6 +3,7 @@ import type { EntityState, ZoneEvent, ZoneSnapshot } from "../src/replication";
 import { decodeCatalog } from "../src/world/catalog";
 import { placeUnit } from "../src/world/unit-nodes";
 import { bodyHalfHeightUnits, creatureBodyNodes, disposition } from "../src/world/units/creature-bodies";
+import { abilitySlots, cancelCast, useAbilitySlot } from "../src/world/units/abilities";
 import { CombatHud, FEEDBACK_MS, combatStatus, eventText, unitName } from "../src/world/units/combat-hud";
 import { CLICK_SLOP_PIXELS, SecondaryClick, attackToggle, nextTabTarget } from "../src/world/units/targeting";
 import { catalogJson } from "./support/catalog";
@@ -55,6 +56,32 @@ describe("content catalog", () => {
     expect(broken((json) => { (json.items as Record<string, unknown>[])[1]!.id = 1; })).toThrow("unique");
     expect(broken((json) => { (json.items as Record<string, unknown>[])[0]!.id = 0; })).toThrow("item 0 id");
     expect(() => decodeCatalog("{")).toThrow("not JSON");
+  });
+});
+
+describe("ability input and HUD text", () => {
+  const caster = (cast: ZoneSnapshot["viewer"]["cast"] = null) => view([], {
+    classChoice: { classId: "warden", sex: "male" },
+    resource: { kind: "rage", value: 20, max: 100 },
+    cast,
+  });
+
+  test("slots 1–4 name the class abilities in catalog order; Escape cancels only a cast", () => {
+    expect(abilitySlots(caster(), catalog).map((ability) => ability.id)).toEqual([1, 2]);
+    expect(useAbilitySlot(2, caster(), catalog)).toEqual({ kind: "use-ability", ability: 2, target: null });
+    expect(useAbilitySlot(3, caster(), catalog)).toBeNull();
+    expect(useAbilitySlot(1, view([]), catalog)).toBeNull();
+    expect(cancelCast(caster())).toBeNull();
+    expect(cancelCast(caster({ ability: 9, elapsed: 3, total: 60, channel: false }))).toEqual({ kind: "cancel-cast" });
+  });
+
+  test("the status line shows the resource and cast progress", () => {
+    expect(combatStatus(caster({ ability: 9, elapsed: 3, total: 60, channel: false }), catalog))
+      .toBe("Health 50/50 · Rage 20/100 · Level 1 · Casting Firebolt 3/60");
+    const snapshot = caster();
+    const bolt = { kind: "cast-started", source: WOLF, target: { kind: "player", id: 1 }, ability: 13, ticks: 45 } as const;
+    expect(eventText(bolt, snapshot, catalog)).toBe("A creature begins Muck Bolt.");
+    expect(eventText({ kind: "error", code: "not-ready", target: null }, snapshot, catalog)).toBe("That is not ready yet.");
   });
 });
 

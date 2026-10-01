@@ -10,10 +10,13 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
     // broad-phase pairs, TOI tests, contact resolutions, projection candidates,
     // and total encoded player-projection bytes. A decrease is welcome; raising
     // a ceiling requires a deliberate workload/behavior/performance review.
+    // Content revision 6 raised the spread fights' pair checks, contacts and
+    // projection candidates: lurkers stop to cast Muck Bolt and bandits to
+    // cast Crude Bandage, which moves bodies differently.
     let ceilings: [[usize; 7]; FIXTURES.len()] = [
         [21_240, 120_960, 170_837, 4, 27_222, 190_080, 3_204_720],
-        [21_240, 118_080, 238_275, 20, 24_540, 70_336, 981_271],
-        [21_240, 126_720, 362_835, 41, 31_990, 364_710, 5_406_543],
+        [21_240, 118_080, 255_546, 20, 24_540, 70_336, 981_271],
+        [21_240, 126_720, 365_288, 41, 32_010, 366_813, 5_406_543],
         [20_106, 137_106, 462_299, 68, 39_928, 1_938_628, 24_499_402],
     ];
     for (fixture, ceiling) in FIXTURES.into_iter().zip(ceilings) {
@@ -46,11 +49,14 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             // v6 adds eight XP bytes per projection. v7 adds nine bag metadata
             // bytes per projection and 64 bag bytes every ten ticks. These
             // fixtures never move bags. v8 adds five repeated copper/presence bytes
-            // and at most 21 bytes per measured complete corpse sheet.
-            // Physics/work fences remain unchanged.
+            // and at most 21 bytes per measured complete corpse sheet. v9
+            // adds 23 fixed class/resource/cast/list-count bytes per
+            // projection; these fixtures never choose a class, so no
+            // cooldown or aura records follow. Physics/work fences remain
+            // unchanged.
             let ceiling = if index == 6 {
                 ceiling
-                    + 22 * fixture.players * TICKS
+                    + (22 + 23) * fixture.players * TICKS
                     + 64 * fixture.players * (TICKS / 10)
                     + 21 * report.loot_sheets
             } else {
@@ -71,7 +77,7 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             assert_eq!(report.ai_evaluations, 59 * TICKS);
         }
         if fixture.crowded {
-            assert_eq!(report.max_projection_bytes, 1_071);
+            assert_eq!(report.max_projection_bytes, 1_073);
             assert!(report.candidates_tested > 1_000_000);
         }
     }

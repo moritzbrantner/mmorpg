@@ -85,11 +85,21 @@ Creatures respawn 60 s after death unless noted and wander within 6 m of their s
 
 | Class | Resource | Abilities (unlock level) |
 | --- | --- | --- |
-| Warden (tank/melee) | Rage (gain on hit dealt/taken, decays out of combat) | Heroic Strike (1), Shield Bash: interrupt + 2 s stun (2), Rallying Cry: self heal-over-time (4), Cleave: frontal AoE (6) |
+| Warden (tank/melee) | Rage (gain on hit dealt/taken, decays out of combat) | Heroic Strike (1), Shield Bash: interrupt + 2 s stun (2), Rallying Cry: self heal-over-time (4), Cleave: target and two nearby enemies (6) |
 | Ranger (ranged physical) | Focus (regenerates) | Aimed Shot (1), Serpent Sting: DoT (2), Concussive Shot: snare (4), Rapid Fire: haste buff (6) |
 | Arcanist (caster) | Mana (regenerates, faster out of combat) | Firebolt: 2.0 s cast (1), Frost Nova: AoE root (2), Arcane Barrier: absorb shield (4), Blizzard: channelled AoE (6) |
 
 There is a 1.5 s global cooldown. Casts have a cast time, and moving or being stunned interrupts them. Auras have tick-precise durations and periodic effects.
+
+Step 8a implemented the kit in core (abilities 1–12 of the catalog; lurkers cast Muck Bolt, 13, and bandits Crude Bandage, 14, in content revision 6). Its numbers are in `mmorpg_core::ABILITY_CATALOG` and the rules in [ARCHITECTURE.md](ARCHITECTURE.md#units-combat-and-creature-ai). Recorded decisions:
+
+- Cleave hits the target and up to two more living creatures within 3 m of the target in `EntityRef` order, for weapon damage each, instead of a frontal arc.
+- "Per level" amounts scale with the caster's levels above 1, like the player damage curve; weapon damage is one draw from the player's melee range. Ability damage has no miss or critical roll.
+- Rage comes from auto-attack hits dealt and from every creature hit taken (swing or ability), even a fully absorbed one; death drains it.
+- Durations, cooldowns, the global cooldown and the five-second rule count the tick they start in; damage and heal over time pulse every period from there.
+- A cast completes against its target without a second range check; a target that died ends it as interrupted. A creature's cast at a player who dies or leaves ends silently.
+- Invalid or repeated class choices report the new `InvalidClass` error.
+- Class-specific health and damage, Ranger Auto Shot, Garrick's abilities, the action bar and cast bars are out of this step (8b and later).
 
 ### Creature AI
 
@@ -141,7 +151,7 @@ Each step is one issue and one PR, validated by the full gate from `AGENTS.md`. 
 5. **Greyhaven Vale content** (#20): larger zone definition (content revision 2) with colliders, the player spawn grid, road corridors and named subzones; the `mmorpg-scenery` crate (props, relief, water); interest radius, projection cap and byte-budget test. Native client renders scenery, and the browser's WASM `scenery()` export maps it. Creature spawn tables and NPC placement moved to step 7 (content revision 3); steps 9 (vendor) and 10 (quest givers) give the placed NPCs their behaviour, each with a new content revision.
 6. **Browser runs the shared simulation** (#21): `mmorpg-wasm` local host, build pipeline and Pages workflow. The web demo sends commands and renders decoded projections plus Rust scenery, and its duplicated illustrative rules are removed. *Landed before step 5* with a `scenery()` export that was a blockout of the hosted outpost's core colliders; step 5 mapped `mmorpg-scenery` and the vale's areas into the same versioned export without touching the browser render loop. World progress saves were removed until the composed character/world save flow (#40) exists, using the character record from step 15 (#30).
 7. **Units, combat and creature AI** (#22), in two pull requests. *7a*: `ZoneContent` with content identity, creature spawn tables and NPC posts, creatures, targeting, auto-attack, death/respawn, regen, threat/leash/assist, zone RNG, events, snapshot v5, the WASM content catalog and minimal browser and native presentation (placeholder bodies, Tab/F/R, text status). *7b*: browser target frame, nameplates, combat text.
-8. **Classes and abilities** (#23): resources, GCD, cooldowns, casts, auras, the ability kit above; action bar and cast bars.
+8. **Classes and abilities** (#23): resources, GCD, cooldowns, casts, auras, the ability kit above; action bar and cast bars. *8a landed* (#112): the kit in core, snapshot v9/command v4, keys 1–4 and text resource/cast status in both clients; 8b adds the action bar, frames, cast bars and aura icons.
 9. **Progression, loot, inventory, equipment, vendor** (#24): XP/levels, loot windows, bags, character pane, vendor NPC placement and window.
 10. **Quests** (#25): quest-giver NPC placement, definitions, NPC dialog, log, tracker, markers, chain and boss.
 11. **Starter-zone workload evidence** (#26): deterministic multi-player combat workload with work counters and a snapshot-byte ratchet (BENCH-016).

@@ -15,7 +15,7 @@ bun run --cwd web test:size-evidence
 
 `.performance/size.json` selects that one archive and records the target, profile, features, Rust/Cargo versions, Cargo manifests and lockfile, toolchain declaration, producer script and source-package dependency graph. The committed baseline in `.performance/baselines/mmorpg-core.json` retains the exact bytes and SHA-256. Source edits are candidates rather than comparability inputs. Compiler, target, feature or declared build-input differences are incomparable, not improvements or regressions; missing tools, baselines and artifacts are unavailable.
 
-The initial archive budget is 2 MiB, with at most 64 KiB growth against a compatible reviewed baseline. These limits provide headroom over the initial approximately 1.65 MiB archive while catching accidental growth. They are an explicit pilot decision, not an existing runtime or fleet-wide performance guarantee. The shared collector comes from the public `coding-tooling/size-evidence` source export at revision `122ad55cbc5fd82233f2aa4af17278554db5cc78`; package publication is unnecessary.
+The initial archive budget was 2 MiB (raised to 3 MiB by #112, below), with at most 64 KiB growth against a compatible reviewed baseline. These limits provide headroom over the initial approximately 1.65 MiB archive while catching accidental growth. They are an explicit pilot decision, not an existing runtime or fleet-wide performance guarantee. The shared collector comes from the public `coding-tooling/size-evidence` source export at revision `122ad55cbc5fd82233f2aa4af17278554db5cc78`; package publication is unnecessary.
 
 The script typecheck uses Bun's native `bun-types` provider for TOML parsing and declares its Undici type import explicitly. It preserves package symlinks so the isolated Bun dependency graph resolves through this consumer, with every declaration still checked.
 
@@ -70,3 +70,16 @@ records add 45,872 archive bytes. Raw archives include Rust metadata;
 this is not a linked-code or runtime cost estimate. Explicit capture passed the
 unchanged 2 MiB absolute limit. The ordinary comparison and adversarial acceptance
 checks retain both budgets and never update evidence automatically.
+
+The #112 classes-and-abilities/schema-v9 change raises the absolute budget once,
+by owner decision, from 2 MiB to **3 MiB** (`maxBytes` 3,145,728 in
+`.performance/size.json`) and advances the reviewed baseline to **2,546,286
+bytes**, SHA-256
+`9f27c3074126edfa71d48b7c72d01f8ad1ec0be801e4e1aa3a8233edb771f00a`. The ability
+catalog, casting, auras, class resources and their canonical and projection
+records add 574,732 archive bytes (metadata 1.03 → 1.43 MB, object code 0.84 →
+0.99 MB), in proportion to the added code, so the archive could not fit 2 MiB.
+[The failed comparison](../.performance/observations/class-abilities-v9-growth.json)
+retains the observation against the #103 baseline. Its complete build identity
+matches that baseline. The 64 KiB per-baseline growth gate is unchanged and applies
+to later changes; the explicit capture passed the new absolute limit.

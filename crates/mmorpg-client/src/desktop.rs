@@ -3,7 +3,7 @@ use mmorpg_client::{
     ClientError, camera::OrbitCamera, graphics::WindowRenderer, presentation::Presentation,
     world::WorldScene,
 };
-use mmorpg_core::ZoneContent;
+use mmorpg_core::{AbilityUser, PlayerClass, ZoneContent};
 use mmorpg_scenery::Scenery;
 use std::{
     collections::HashSet,
@@ -30,6 +30,7 @@ pub fn run(
     input: watch::Sender<PlayerInput>,
     updates: watch::Receiver<NetworkUpdate>,
     frames: Option<u32>,
+    class: PlayerClass,
 ) -> Result<(), ClientError> {
     let event_loop = EventLoop::new()?;
     let mut app = App {
@@ -50,6 +51,7 @@ pub fn run(
         frames,
         rendered: 0,
         next_frame: Instant::now(),
+        abilities: ability_slots(class),
     };
     event_loop.run_app(&mut app)?;
     match app.error {
@@ -79,7 +81,26 @@ struct App {
     frames: Option<u32>,
     rendered: u32,
     next_frame: Instant,
+    /// Ability IDs on keys 1–4: the class kit in catalog order.
+    abilities: Vec<u8>,
 }
+
+/// The class abilities in catalog ID order; every class has four.
+fn ability_slots(class: PlayerClass) -> Vec<u8> {
+    mmorpg_core::ABILITY_CATALOG
+        .iter()
+        .filter(|ability| ability.user == AbilityUser::Class(class))
+        .map(|ability| ability.id.get())
+        .take(4)
+        .collect()
+}
+
+const SLOT_KEYS: [KeyCode; 4] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+];
 
 const FORWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyW, KeyCode::ArrowUp];
 const BACKWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyS, KeyCode::ArrowDown];
@@ -88,7 +109,7 @@ const RIGHT_KEYS: [KeyCode; 3] = [KeyCode::KeyD, KeyCode::KeyE, KeyCode::ArrowRi
 
 /// Browser-style pixel scrolling: this many pixels count as one wheel line.
 const PIXELS_PER_WHEEL_LINE: f64 = 40.0;
-const CONTROL_HINTS: &str = "W/S move · A/D or Q/E strafe · Space jumps · Tab target · F attack · drag to orbit · wheel zooms · Esc closes";
+const CONTROL_HINTS: &str = "W/S move · A/D or Q/E strafe · Space jumps · Tab target · F attack · 1-4 abilities · drag to orbit · wheel zooms · Esc cancels a cast or closes";
 
 impl App {
     fn stop(&self) {
@@ -155,6 +176,15 @@ impl App {
             KeyCode::KeyR if latest.is_some_and(|latest| latest.viewer.dead) => {
                 self.input
                     .send_modify(|input| input.releases = input.releases.wrapping_add(1));
+            }
+            code if SLOT_KEYS.contains(&code) => {
+                let slot = SLOT_KEYS.iter().position(|key| *key == code).unwrap_or(0);
+                if let Some(&ability) = self.abilities.get(slot) {
+                    self.input.send_modify(|input| {
+                        input.ability = ability;
+                        input.ability_uses = input.ability_uses.wrapping_add(1);
+                    });
+                }
             }
             _ => {}
         }
@@ -257,6 +287,19 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if code == KeyCode::Escape && event.state == ElementState::Pressed {
+                        // Escape cancels the character's cast first, otherwise closes.
+                        let casting = self
+                            .presentation
+                            .latest()
+                            .is_some_and(|latest| latest.viewer.cast.is_some());
+                        if casting {
+                            if !event.repeat {
+                                self.input.send_modify(|input| {
+                                    input.cancels = input.cancels.wrapping_add(1);
+                                });
+                            }
+                            return;
+                        }
                         event_loop.exit();
                         return;
                     }
@@ -333,5 +376,17 @@ impl ApplicationHandler for App {
             self.next_frame = now + Duration::from_secs_f64(1.0 / 60.0);
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_one_to_four_hold_each_class_kit_in_catalog_order() {
+        assert_eq!(ability_slots(PlayerClass::Warden), [1, 2, 3, 4]);
+        assert_eq!(ability_slots(PlayerClass::Ranger), [5, 6, 7, 8]);
+        assert_eq!(ability_slots(PlayerClass::Arcanist), [9, 10, 11, 12]);
     }
 }

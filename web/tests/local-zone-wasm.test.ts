@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { GRASS_PACKAGE_DIRECTORY, record } from "../scripts/grass-package";
 import { RELIEF_GRID, RELIEF_PACKAGE_DIRECTORY } from "../scripts/relief-package";
 import { encodeCommand } from "../src/command-wire";
-import { decodeSnapshot, type EntityState } from "../src/replication";
+import { ABILITY_SHAPES, decodeSnapshot, type EntityState } from "../src/replication";
+import { abilitySlots, useAbilitySlot } from "../src/world/units/abilities";
+import { combatStatus } from "../src/world/units/combat-hud";
 import { BagState } from "../src/world/units/bag-state";
 import { LootState } from "../src/world/units/loot-state";
 import { createLocalWorld } from "../src/world/local-world";
@@ -144,7 +146,7 @@ describe("WASM local zone host", () => {
         }
       }
     }
-    expect(provider.scenery.contentRevision).toBe(5n);
+    expect(provider.scenery.contentRevision).toBe(6n);
   });
   test("multi-tick frames retain intermediate bag sheets and refusal feedback", () => {
     const { source } = createLocalWorld(wasm);
@@ -200,16 +202,23 @@ describe("WASM local zone host", () => {
   test("loads under Bun and hosts zone 1 with the shared content revision", () => {
     const zone = new wasm.LocalZone() as InstanceType<typeof wasm.LocalZone> & { zoneId(): number };
     expect(zone.zoneId()).toBe(1);
-    expect(zone.contentRevision()).toBe(5n);
-    const player = zone.join();
+    expect(zone.contentRevision()).toBe(6n);
+    const player = zone.join(2, 0);
     const projection = decodeSnapshot(zone.projection(player));
-    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 5n, viewerId: player });
+    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 6n, viewerId: player, acknowledgedSequence: 1 });
+    // The class choice resolves in the first tick.
     expect(projection.viewer).toEqual({
       copper: 0, health: 50, maxHealth: 50, experience: 0, experienceToNextLevel: 100, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
+      classChoice: null, resource: null, cast: null, globalCooldown: 0,
     });
-    expect(() => zone.submit(player, 1, Uint8Array.of(1, 1, 0, 0, 0, 0))).toThrow();
-    expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(true);
+    zone.tick();
+    expect(decodeSnapshot(zone.projection(player)).viewer).toMatchObject({
+      classChoice: { classId: "arcanist", sex: "female" }, resource: { kind: "mana", value: 110, max: 110 },
+    });
+    expect(() => zone.submit(player, 2, Uint8Array.of(1, 1, 0, 0, 0, 0))).toThrow();
     expect(zone.submit(player, 1, encodeCommand({ kind: "jump" }))).toBe(false);
+    expect(zone.submit(player, 2, encodeCommand({ kind: "jump" }))).toBe(true);
+    expect(zone.submit(player, 2, encodeCommand({ kind: "jump" }))).toBe(false);
     expect(zone.leave(player)).toBe(true);
     expect(() => zone.projection(player)).toThrow();
   });
@@ -268,7 +277,7 @@ describe("WASM local zone host", () => {
 
   test("scenery and areas come from the same content as the zone", () => {
     const { source, scenery } = createLocalWorld(wasm);
-    expect(scenery.scenery.contentRevision).toBe(5n);
+    expect(scenery.scenery.contentRevision).toBe(6n);
     expect(scenery.scenery.source).toBe("mmorpg-scenery");
     expect(scenery.scenery.playerHalfExtents).toEqual([30, 90, 30]);
     source.join();
@@ -310,8 +319,8 @@ describe("WASM local zone host", () => {
     const actual = provider.scenery.props.filter((prop) => prop.kind === "grass-tuft" && prop.position[0] >= -3500 && prop.position[0] <= 3500 && prop.position[2] >= -1300 && prop.position[2] <= 5300);
     expect(actual).toEqual(expected);
     expect(actual.length).toBe(55);
-    expect(provider.scenery.presentationFingerprint).toBe("d0937b2905317676");
-    expect(provider.scenery.contentRevision).toBe(5n);
+    expect(provider.scenery.presentationFingerprint).toBe("87adad4a68aec175");
+    expect(provider.scenery.contentRevision).toBe(6n);
   });
 
   test("the vale's static scene models every prop within a bounded node and vertex budget", () => {
@@ -355,7 +364,7 @@ describe("WASM local zone host", () => {
 describe("WASM local zone combat intents", () => {
   test("the catalog names the hosted units and matches the zone's content", () => {
     const { catalog } = createLocalWorld(wasm);
-    expect(catalog.contentRevision).toBe(5n);
+    expect(catalog.contentRevision).toBe(6n);
     expect([...catalog.items.values()]).toEqual([
       { id: 1, name: "Torn Fur", maxStack: 20 }, { id: 2, name: "Worn Dagger", maxStack: 1 },
     ]);
@@ -364,6 +373,40 @@ describe("WASM local zone combat intents", () => {
     ]);
     expect(catalog.npcs.get(5)).toEqual({ id: 5, name: "Brother Aldous", role: "spirit_healer", level: 10 });
     expect(catalog.areas.get(2)).toBe("Wolfrun Woods");
+    expect([...catalog.classes.values()].map((record) => [record.name, record.resource])).toEqual([
+      ["warden", "rage"], ["ranger", "focus"], ["arcanist", "mana"],
+    ]);
+    // The decoder's ability table matches the catalog the zone binds.
+    const auraKinds = ["damage-over-time", "heal-over-time", "absorb", "root", "snare", "stun", "haste"];
+    expect(catalog.abilities.size).toBe(ABILITY_SHAPES.size);
+    for (const ability of catalog.abilities.values()) {
+      const shape = ABILITY_SHAPES.get(ability.id);
+      expect([shape?.castTicks, shape?.channel, shape?.cooldown, shape?.aura]).toEqual([
+        ability.castTicks, ability.channel, ability.cooldown, ability.aura === null ? null : auraKinds[ability.aura - 1],
+      ]);
+    }
+  });
+
+  test("the chosen class reaches the zone and ability slots are refused or validated there", () => {
+    const { source, catalog } = createLocalWorld(wasm);
+    source.join({ classId: "arcanist", sex: "female" });
+    run(source, 1);
+    const projection = source.latestProjection()!;
+    expect(projection.viewer.classChoice).toEqual({ classId: "arcanist", sex: "female" });
+    expect(self(source).appearance).toBe(5);
+    expect(abilitySlots(projection, catalog).map((ability) => ability.name)).toEqual([
+      "Firebolt", "Frost Nova", "Arcane Barrier", "Blizzard",
+    ]);
+    expect(combatStatus(projection, catalog)).toBe("Health 50/50 · Mana 110/110 · Level 1");
+    // Firebolt needs a target; Frost Nova is learned at level 2.
+    for (const slot of [1, 2]) {
+      source.sendCommand(useAbilitySlot(slot, projection, catalog)!);
+    }
+    run(source, 1);
+    expect(source.latestProjection()?.events).toEqual([
+      { kind: "error", code: "invalid-target", target: null },
+      { kind: "error", code: "not-learned", target: null },
+    ]);
   });
 
   test("hub NPCs are visible, selectable and refuse to be attacked", () => {
@@ -410,7 +453,7 @@ function refusingWasmSource() {
   const zone = new wasm.LocalZone();
   let corrupt = true;
   const handle: LocalZoneHandle = {
-    join: () => zone.join(),
+    join: (classId, sex) => zone.join(classId, sex),
     leave: (player) => zone.leave(player),
     submit: (player, sequence, command) => zone.submit(player, sequence, command),
     tick: () => zone.tick(),

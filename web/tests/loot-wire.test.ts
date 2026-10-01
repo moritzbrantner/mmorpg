@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { decodeSnapshot } from "../src/replication";
 
-const bytes = Uint8Array.from(Buffer.from(readFileSync(new URL("../../fixtures/protocol/player-loot-v8.hex", import.meta.url), "utf8").trim(), "hex"));
+const bytes = Uint8Array.from(Buffer.from(readFileSync(new URL("../../fixtures/protocol/player-loot-v9.hex", import.meta.url), "utf8").trim(), "hex"));
 
 describe("Rust/browser corpse loot contract", () => {
   test("reads the complete fenced sheet and repeated balance from Rust's golden bytes", () => {
@@ -19,7 +19,9 @@ describe("Rust/browser corpse loot contract", () => {
     for (let length = 0; length < bytes.length; length += 1) {
       expect(() => decodeSnapshot(bytes.subarray(0, length))).toThrow();
     }
-    const presence = 137;
+    // Header and self (59), self abilities with two cooldowns and one aura (28), target section
+    // without detail auras (12), inventory revision, presence and bag (73).
+    const presence = 59 + 28 + 12 + 73;
     for (const [offset, value] of [[presence, 2], [presence + 4, 109], [presence + 12, 100], [presence + 17, 2], [presence + 19, 9], [presence + 21, 0]]) {
       if (offset === undefined || value === undefined) {
         throw new Error("Missing malformed fixture field");
@@ -28,7 +30,7 @@ describe("Rust/browser corpse loot contract", () => {
       invalid[offset] = value;
       expect(() => decodeSnapshot(invalid)).toThrow();
     }
-    const corpse = 138 + 21 + 1 + 7 * 14 + 2 + 21;
+    const corpse = presence + 1 + 21 + 1 + 14 * 14 + 2 + 21;
     for (const flags of [0x05, 0x84, 0x95, 0x8d]) {
       const invalid = bytes.slice();
       invalid[corpse + 20] = flags;
@@ -36,5 +38,7 @@ describe("Rust/browser corpse loot contract", () => {
     }
     const legacy = Uint8Array.from(Buffer.from(readFileSync(new URL("../../fixtures/protocol/player-snapshot-v7.hex", import.meta.url), "utf8").trim(), "hex"));
     expect(() => decodeSnapshot(legacy)).toThrow("version");
+    const v8 = Uint8Array.from(Buffer.from(readFileSync(new URL("../../fixtures/protocol/player-loot-v8.hex", import.meta.url), "utf8").trim(), "hex"));
+    expect(() => decodeSnapshot(v8)).toThrow("version");
   });
 });

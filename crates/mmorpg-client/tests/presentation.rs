@@ -4,7 +4,7 @@ use mmorpg_client::{
 };
 use mmorpg_core::{
     CreatureId, EntityFlags, EntityKind, EntityRef, EntitySnapshot, NpcId, SNAPSHOT_SCHEMA_VERSION,
-    ViewerState, ZoneId, ZoneSnapshot, greyhaven_vale,
+    TargetDetail, ViewerState, ZoneId, ZoneSnapshot, greyhaven_vale,
 };
 use mmorpg_scenery::greyhaven_vale_scenery;
 use std::{
@@ -36,6 +36,9 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
             ..ViewerState::default()
         },
         target_of_target: None,
+        target_detail: TargetDetail::default(),
+        cooldowns: Vec::new(),
+        auras: Vec::new(),
         events: Vec::new(),
         entities: vec![EntitySnapshot {
             kind: EntityKind::Player,
@@ -272,6 +275,24 @@ fn creatures_and_npcs_render_by_size_disposition_and_state() {
     assert_eq!(
         presentation.status().unwrap(),
         "HP 38/50 · in combat · target Timber Wolf (L2, 43%) · attacking"
+    );
+    let mut caster = presentation.latest().unwrap().clone();
+    caster.tick += 1;
+    caster.viewer.resource = Some(mmorpg_core::ResourceView {
+        kind: mmorpg_core::ResourceKind::Mana,
+        value: 85,
+        max: 110,
+    });
+    caster.viewer.cast = Some(mmorpg_core::CastView {
+        ability: mmorpg_core::AbilityId::new(9),
+        elapsed: 20,
+        total: 60,
+        channel: false,
+    });
+    presentation.push(caster, now).unwrap();
+    assert_eq!(
+        presentation.status().unwrap(),
+        "HP 38/50 · mana 85/110 · casting Firebolt 20/60 · in combat · target Timber Wolf (L2, 43%) · attacking"
     );
     assert_eq!(
         presentation.unit_name(EntityRef::Npc(NpcId::new(6))),

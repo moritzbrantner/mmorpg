@@ -68,7 +68,8 @@ impl UnitSpec {
 }
 
 /// A feedback event kind: `damage_dealt`, `damage_taken`, `miss`, `died`,
-/// `evade` or `error:<code>`.
+/// `evade`, `cast_started`, `ability_used`, `healed`, `aura_applied`,
+/// `aura_removed`, `interrupted`, `absorbed` or `error:<code>`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(try_from = "String")]
 pub enum EventSpec {
@@ -77,40 +78,58 @@ pub enum EventSpec {
     Miss,
     Died,
     Evade,
+    CastStarted,
+    AbilityUsed,
+    Healed,
+    AuraApplied,
+    AuraRemoved,
+    Interrupted,
+    Absorbed,
     Error(ErrorCode),
 }
+
+/// Event kinds without a payload, with their scenario names.
+const PLAIN_EVENTS: [(EventSpec, &str); 12] = [
+    (EventSpec::DamageDealt, "damage_dealt"),
+    (EventSpec::DamageTaken, "damage_taken"),
+    (EventSpec::Miss, "miss"),
+    (EventSpec::Died, "died"),
+    (EventSpec::Evade, "evade"),
+    (EventSpec::CastStarted, "cast_started"),
+    (EventSpec::AbilityUsed, "ability_used"),
+    (EventSpec::Healed, "healed"),
+    (EventSpec::AuraApplied, "aura_applied"),
+    (EventSpec::AuraRemoved, "aura_removed"),
+    (EventSpec::Interrupted, "interrupted"),
+    (EventSpec::Absorbed, "absorbed"),
+];
 
 impl TryFrom<String> for EventSpec {
     type Error = String;
 
     fn try_from(text: String) -> Result<Self, String> {
-        Ok(match text.as_str() {
-            "damage_dealt" => Self::DamageDealt,
-            "damage_taken" => Self::DamageTaken,
-            "miss" => Self::Miss,
-            "died" => Self::Died,
-            "evade" => Self::Evade,
-            _ => match text.strip_prefix("error:").and_then(parse_error_code) {
-                Some(code) => Self::Error(code),
-                None => {
-                    return Err(format!(
-                        "event {text:?} must be damage_dealt, damage_taken, miss, died, evade or error:<code>"
-                    ));
-                }
-            },
-        })
+        if let Some((spec, _)) = PLAIN_EVENTS.iter().find(|(_, name)| *name == text) {
+            return Ok(*spec);
+        }
+        match text.strip_prefix("error:").and_then(parse_error_code) {
+            Some(code) => Ok(Self::Error(code)),
+            None => Err(format!(
+                "event {text:?} must be damage_dealt, damage_taken, miss, died, evade, cast_started, ability_used, healed, aura_applied, aura_removed, interrupted, absorbed or error:<code>"
+            )),
+        }
     }
 }
 
 impl fmt::Display for EventSpec {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DamageDealt => formatter.write_str("damage_dealt"),
-            Self::DamageTaken => formatter.write_str("damage_taken"),
-            Self::Miss => formatter.write_str("miss"),
-            Self::Died => formatter.write_str("died"),
-            Self::Evade => formatter.write_str("evade"),
             Self::Error(code) => write!(formatter, "error:{}", error_code_name(*code)),
+            plain => formatter.write_str(
+                PLAIN_EVENTS
+                    .iter()
+                    .find(|(spec, _)| spec == plain)
+                    .map_or("", |(_, name)| name),
+            ),
         }
     }
 }
@@ -124,7 +143,14 @@ impl EventSpec {
             | (Self::DamageTaken, ZoneEvent::DamageTaken { .. })
             | (Self::Miss, ZoneEvent::Miss { .. })
             | (Self::Died, ZoneEvent::Died { .. })
-            | (Self::Evade, ZoneEvent::Evade { .. }) => true,
+            | (Self::Evade, ZoneEvent::Evade { .. })
+            | (Self::CastStarted, ZoneEvent::CastStarted { .. })
+            | (Self::AbilityUsed, ZoneEvent::AbilityUsed { .. })
+            | (Self::Healed, ZoneEvent::Healed { .. })
+            | (Self::AuraApplied, ZoneEvent::AuraApplied { .. })
+            | (Self::AuraRemoved, ZoneEvent::AuraRemoved { .. })
+            | (Self::Interrupted, ZoneEvent::Interrupted { .. })
+            | (Self::Absorbed, ZoneEvent::Absorbed { .. }) => true,
             (Self::Error(expected), ZoneEvent::Error { code, .. }) => expected == *code,
             _ => false,
         };
@@ -133,14 +159,30 @@ impl EventSpec {
 }
 
 /// The unit an event is about, seen from its recipient: whom it hit or who
-/// hit it, who died, who evaded, or the target an error concerned.
+/// hit it, who died, who evaded, the target an error concerned, the other
+/// party of a cast, ability, heal or shield, and the unit an aura or
+/// interrupt affected.
 pub fn concerned_unit(event: &ZoneEvent, viewer: EntityRef) -> Option<EntityRef> {
+    let other = |source: EntityRef, target: Option<EntityRef>| {
+        if source == viewer {
+            target.or(Some(source))
+        } else {
+            Some(source)
+        }
+    };
     match *event {
         ZoneEvent::DamageDealt { target, .. } | ZoneEvent::Evade { target, .. } => Some(target),
         ZoneEvent::DamageTaken { source, .. } => Some(source),
-        ZoneEvent::Miss { source, target } => Some(if source == viewer { target } else { source }),
+        ZoneEvent::Miss { source, target }
+        | ZoneEvent::Healed { source, target, .. }
+        | ZoneEvent::Absorbed { source, target, .. } => other(source, Some(target)),
+        ZoneEvent::CastStarted { source, target, .. }
+        | ZoneEvent::AbilityUsed { source, target, .. } => other(source, target),
         ZoneEvent::Died { entity, .. } => Some(entity),
         ZoneEvent::Error { target, .. } => target,
+        ZoneEvent::AuraApplied { target, .. }
+        | ZoneEvent::AuraRemoved { target, .. }
+        | ZoneEvent::Interrupted { target, .. } => Some(target),
     }
 }
 
@@ -208,6 +250,13 @@ pub const fn error_code_name(code: ErrorCode) -> &'static str {
         ErrorCode::EmptyLoot => "empty_loot",
         ErrorCode::MoneyOverflow => "money_overflow",
         ErrorCode::InventoryFull => "inventory_full",
+        ErrorCode::NoClass => "no_class",
+        ErrorCode::NotLearned => "not_learned",
+        ErrorCode::NotReady => "not_ready",
+        ErrorCode::NotEnoughResource => "not_enough_resource",
+        ErrorCode::Stunned => "stunned",
+        ErrorCode::AlreadyCasting => "already_casting",
+        ErrorCode::InvalidClass => "invalid_class",
     }
 }
 
@@ -227,6 +276,13 @@ fn parse_error_code(name: &str) -> Option<ErrorCode> {
         "empty_loot" => ErrorCode::EmptyLoot,
         "money_overflow" => ErrorCode::MoneyOverflow,
         "inventory_full" => ErrorCode::InventoryFull,
+        "no_class" => ErrorCode::NoClass,
+        "not_learned" => ErrorCode::NotLearned,
+        "not_ready" => ErrorCode::NotReady,
+        "not_enough_resource" => ErrorCode::NotEnoughResource,
+        "stunned" => ErrorCode::Stunned,
+        "already_casting" => ErrorCode::AlreadyCasting,
+        "invalid_class" => ErrorCode::InvalidClass,
         _ => return None,
     })
 }
@@ -251,6 +307,23 @@ pub fn event_token(event: &ZoneEvent, name: impl Fn(EntityRef) -> String) -> Str
         ZoneEvent::Died { entity, .. } => format!("died:{}", name(entity)),
         ZoneEvent::Evade { target, .. } => format!("evade:{}", name(target)),
         ZoneEvent::Error { code, .. } => format!("error:{}", error_code_name(code)),
+        ZoneEvent::CastStarted {
+            source, ability, ..
+        } => format!("cast:{}:{}", name(source), ability.get()),
+        ZoneEvent::AbilityUsed {
+            source, ability, ..
+        } => format!("used:{}:{}", name(source), ability.get()),
+        ZoneEvent::Healed { target, amount, .. } => format!("healed:{}:{amount}", name(target)),
+        ZoneEvent::AuraApplied {
+            target, ability, ..
+        } => format!("aura+:{}:{}", name(target), ability.get()),
+        ZoneEvent::AuraRemoved {
+            target, ability, ..
+        } => format!("aura-:{}:{}", name(target), ability.get()),
+        ZoneEvent::Interrupted {
+            target, ability, ..
+        } => format!("interrupted:{}:{}", name(target), ability.get()),
+        ZoneEvent::Absorbed { target, amount, .. } => format!("absorbed:{}:{amount}", name(target)),
     }
 }
 
@@ -293,9 +366,20 @@ mod tests {
             ErrorCode::NotDead,
             ErrorCode::InvalidTarget,
             ErrorCode::TooManyIntents,
+            ErrorCode::NoClass,
+            ErrorCode::NotLearned,
+            ErrorCode::NotReady,
+            ErrorCode::NotEnoughResource,
+            ErrorCode::Stunned,
+            ErrorCode::AlreadyCasting,
+            ErrorCode::InvalidClass,
         ] {
             let spec = EventSpec::Error(code);
             assert_eq!(EventSpec::try_from(spec.to_string()), Ok(spec));
+        }
+        for (spec, name) in PLAIN_EVENTS {
+            assert_eq!(spec.to_string(), name);
+            assert_eq!(EventSpec::try_from(name.to_owned()), Ok(spec));
         }
         assert!(EventSpec::try_from("error:bogus".to_owned()).is_err());
         let missed = ZoneEvent::Miss {

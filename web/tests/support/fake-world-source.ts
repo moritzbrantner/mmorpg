@@ -1,6 +1,6 @@
 import type { WorldCommand } from "../../src/command-wire";
 import type { EntityState, ZoneSnapshot } from "../../src/replication";
-import type { WorldSource } from "../../src/world/world-source";
+import { DEFAULT_JOIN_CHARACTER, type JoinCharacter, type WorldSource } from "../../src/world/world-source";
 import { playerEntity, testSnapshot } from "./snapshots";
 
 /** An in-memory world that honours the `WorldSource` contract without any rules. */
@@ -13,11 +13,15 @@ export class FakeWorldSource implements WorldSource {
   #tick = 0n;
   #latest: ZoneSnapshot | null = null;
 
-  join(): number {
+  /** Class choices of every accepted join, in order. */
+  readonly joinedAs: JoinCharacter[] = [];
+
+  join(character: JoinCharacter = DEFAULT_JOIN_CHARACTER): number {
     if (this.#player !== null) throw new Error("already joined");
     if (this.refuseJoins) throw new Error("join refused");
     this.#player = this.#nextPlayer;
     this.#nextPlayer += 1;
+    this.joinedAs.push(character);
     this.#publish();
     return this.#player;
   }

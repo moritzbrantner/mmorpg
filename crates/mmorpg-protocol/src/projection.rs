@@ -1,10 +1,14 @@
 //! Player-visible scope: one player's projection, packed into a single
-//! datagram by fixed section priority (header, self, target details,
-//! events, then entities by relevance until the budget is used).
+//! datagram by fixed section priority (header, self with its class,
+//! resource, cast, cooldowns and auras, target details with the target's
+//! cast and auras, sheets, events, then entities by relevance until the
+//! budget is used).
 
 use mmorpg_core::{
-    EntityFlags, EntityKind, EntitySnapshot, MAX_EVENTS_PER_PLAYER, MAX_VISIBLE_ENTITIES,
-    ViewerState, ZoneSnapshot,
+    AbilityId, AuraKind, AuraView, CastView, ClassChoice, Cooldown, EntityFlags, EntityKind,
+    EntitySnapshot, GLOBAL_COOLDOWN_TICKS, MAX_AURAS, MAX_COOLDOWNS, MAX_EVENTS_PER_PLAYER,
+    MAX_VISIBLE_ENTITIES, ResourceKind, ResourceView, TargetDetail, ViewerState, ZoneSnapshot,
+    ability_by_id,
 };
 
 use crate::inventory::{INVENTORY_RECORD_BYTES, decode_inventory, encode_inventory};
@@ -20,26 +24,42 @@ use crate::{MAX_PLAYER_PROJECTION_BYTES, ProtocolError};
 const HEADER_BYTES: usize = COMMON_HEADER_BYTES + 8 + 4 + 4;
 /// Health, maximum health, level, flags and the viewer's target.
 const SELF_BYTES: usize = 4 + 4 + 1 + 8 + 4 + 1 + ENTITY_REF_BYTES;
-/// The target's own target.
-const TARGET_BYTES: usize = ENTITY_REF_BYTES;
-/// Every section's fixed part: header, self, target, event count (`u8`)
-/// and entity count (`u16`).
+/// Ability ID, flags (bit 0 channel), elapsed and total ticks; ability 0
+/// means no cast.
+pub const CAST_RECORD_BYTES: usize = 1 + 1 + 2 + 2;
+/// Class code, resource kind/value/max, global cooldown, cast, then the
+/// cooldown and aura counts.
+const SELF_ABILITY_BYTES: usize = 1 + 1 + 2 + 2 + 2 + CAST_RECORD_BYTES + 1 + 1;
+/// The target's own target, the target's cast and its aura count.
+const TARGET_BYTES: usize = ENTITY_REF_BYTES + CAST_RECORD_BYTES + 1;
+/// Every section's fixed part: header, self, target, inventory revision
+/// and presence, loot presence, event count (`u8`) and entity count (`u16`).
 pub const PLAYER_SNAPSHOT_FIXED_BYTES: usize =
-    HEADER_BYTES + SELF_BYTES + TARGET_BYTES + 8 + 1 + 1 + 1 + 2;
+    HEADER_BYTES + SELF_BYTES + SELF_ABILITY_BYTES + TARGET_BYTES + 8 + 1 + 1 + 1 + 2;
+/// Ability ID and remaining ticks.
+pub const COOLDOWN_RECORD_BYTES: usize = 1 + 2;
+/// Ability ID, aura kind, remaining ticks and amount.
+pub const AURA_RECORD_BYTES: usize = 1 + 1 + 2 + 2;
+/// The largest cooldown and aura lists of the viewer and its target.
+const MAX_ABILITY_LIST_BYTES: usize =
+    MAX_COOLDOWNS * COOLDOWN_RECORD_BYTES + 2 * MAX_AURAS * AURA_RECORD_BYTES;
 /// Kind, flags, source and target references, `u16` amount.
 pub const EVENT_RECORD_BYTES: usize = 2 + 2 * ENTITY_REF_BYTES + 2;
 /// Kind, ID, appearance, `3 × i16` position, `3 × i8` velocity, `u16`
 /// facing, level, health percent and flags.
 pub const ENTITY_RECORD_BYTES: usize = 1 + 4 + 2 + 6 + 3 + 2 + 1 + 1 + 1;
-/// Records that fit the budget without events: (1,077 − 77) / 21 = 47 (without a bag sheet).
+/// Records that fit the budget without events, sheets, cooldowns or auras:
+/// (1,077 − 100) / 21 = 46.
 pub const MAX_WIRE_ENTITIES: usize =
     (MAX_PLAYER_PROJECTION_BYTES - PLAYER_SNAPSHOT_FIXED_BYTES) / ENTITY_RECORD_BYTES;
 const MAX_EVENT_SECTION_BYTES: usize = MAX_EVENTS_PER_PLAYER * EVENT_RECORD_BYTES;
 
-// With a full event section, the viewer and its target always fit:
-// 77 + 21 + 64 + 16 × 14 + 2 × 21 = 428 ≤ 1,077 bytes.
+// With every list full, both sheets and a full event section, the viewer
+// and its target always fit: 100 + 108 + 21 + 64 + 16 × 14 + 2 × 21 = 559
+// ≤ 1,077 bytes.
 const _: () = assert!(
     PLAYER_SNAPSHOT_FIXED_BYTES
+        + MAX_ABILITY_LIST_BYTES
         + crate::loot::MAX_LOOT_SHEET_BYTES
         + INVENTORY_RECORD_BYTES
         + MAX_EVENT_SECTION_BYTES
@@ -103,7 +123,34 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
         viewer.auto_attacking,
     ]));
     encode_entity_ref(&mut payload, viewer.target);
+    payload.push(
+        viewer
+            .class
+            .map_or(0, |choice| u8::try_from(choice.appearance()).unwrap_or(0)),
+    );
+    match viewer.resource {
+        Some(resource) => {
+            payload.push(resource_code(resource.kind));
+            payload.extend_from_slice(&resource.value.to_be_bytes());
+            payload.extend_from_slice(&resource.max.to_be_bytes());
+        }
+        None => payload.extend_from_slice(&[0; 5]),
+    }
+    payload.extend_from_slice(&viewer.global_cooldown.to_be_bytes());
+    encode_cast(&mut payload, viewer.cast);
+    payload.push(encode_u8_count(
+        snapshot.cooldowns.len(),
+        MAX_COOLDOWNS,
+        "player projection has too many cooldowns",
+    )?);
+    for cooldown in &snapshot.cooldowns {
+        payload.push(cooldown.ability.get());
+        payload.extend_from_slice(&cooldown.remaining.to_be_bytes());
+    }
+    encode_auras(&mut payload, &snapshot.auras)?;
     encode_entity_ref(&mut payload, snapshot.target_of_target);
+    encode_cast(&mut payload, snapshot.target_detail.cast);
+    encode_auras(&mut payload, &snapshot.target_detail.auras)?;
 
     payload.extend_from_slice(&snapshot.inventory_revision.to_be_bytes());
     payload.push(u8::from(snapshot.inventory.is_some()));
@@ -148,6 +195,94 @@ pub fn encode_snapshot(snapshot: &ZoneSnapshot) -> Result<Vec<u8>, ProtocolError
         ));
     }
     Ok(packed.payload)
+}
+
+const fn resource_code(kind: ResourceKind) -> u8 {
+    match kind {
+        ResourceKind::Rage => 1,
+        ResourceKind::Focus => 2,
+        ResourceKind::Mana => 3,
+    }
+}
+
+fn encode_cast(payload: &mut Vec<u8>, cast: Option<CastView>) {
+    match cast {
+        Some(cast) => {
+            payload.extend_from_slice(&[cast.ability.get(), u8::from(cast.channel)]);
+            payload.extend_from_slice(&cast.elapsed.to_be_bytes());
+            payload.extend_from_slice(&cast.total.to_be_bytes());
+        }
+        None => payload.extend_from_slice(&[0; CAST_RECORD_BYTES]),
+    }
+}
+
+/// A cast must name a casting catalog ability with its exact cast time and
+/// channel flag, and be in progress.
+fn decode_cast(payload: &[u8], offset: &mut usize) -> Result<Option<CastView>, ProtocolError> {
+    let ability = read_u8(payload, offset)?;
+    let [channel] = read_flags(read_u8(payload, offset)?)?;
+    let elapsed = u16::from_be_bytes(take(payload, offset)?);
+    let total = u16::from_be_bytes(take(payload, offset)?);
+    if ability == 0 {
+        if channel || elapsed != 0 || total != 0 {
+            return Err(ProtocolError::new("cast state is inconsistent"));
+        }
+        return Ok(None);
+    }
+    let ability = AbilityId::new(ability);
+    let valid = ability_by_id(ability).is_some_and(|catalog| {
+        catalog.cast.ticks() == total && catalog.cast.is_channel() == channel && elapsed < total
+    });
+    if !valid {
+        return Err(ProtocolError::new("cast state is inconsistent"));
+    }
+    Ok(Some(CastView {
+        ability,
+        elapsed,
+        total,
+        channel,
+    }))
+}
+
+fn encode_auras(payload: &mut Vec<u8>, auras: &[AuraView]) -> Result<(), ProtocolError> {
+    payload.push(encode_u8_count(
+        auras.len(),
+        MAX_AURAS,
+        "player projection has too many auras",
+    )?);
+    for aura in auras {
+        payload.extend_from_slice(&[aura.ability.get(), aura.kind.code()]);
+        payload.extend_from_slice(&aura.remaining.to_be_bytes());
+        payload.extend_from_slice(&aura.amount.to_be_bytes());
+    }
+    Ok(())
+}
+
+/// Auras name catalog abilities with their aura kind and time left.
+fn decode_auras(payload: &[u8], offset: &mut usize) -> Result<Vec<AuraView>, ProtocolError> {
+    let count = decode_u8_count(payload, offset, MAX_AURAS, "snapshot has too many auras")?;
+    let mut auras = Vec::with_capacity(count);
+    for _ in 0..count {
+        let ability = AbilityId::new(read_u8(payload, offset)?);
+        let kind = AuraKind::from_code(read_u8(payload, offset)?);
+        let remaining = u16::from_be_bytes(take(payload, offset)?);
+        let amount = u16::from_be_bytes(take(payload, offset)?);
+        let spec = ability_by_id(ability).and_then(|catalog| catalog.aura());
+        match (spec, kind) {
+            (Some(spec), Some(kind))
+                if spec.kind == kind && remaining > 0 && remaining <= spec.duration =>
+            {
+                auras.push(AuraView {
+                    ability,
+                    kind,
+                    remaining,
+                    amount,
+                });
+            }
+            _ => return Err(ProtocolError::new("aura record is inconsistent")),
+        }
+    }
+    Ok(auras)
 }
 
 fn encode_entity(payload: &mut Vec<u8>, entity: &EntitySnapshot) -> Result<(), ProtocolError> {
@@ -211,7 +346,70 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     {
         return Err(ProtocolError::new("viewer state is inconsistent"));
     }
+    let class_code = read_u8(payload, &mut offset)?;
+    let class = ClassChoice::from_appearance(u16::from(class_code));
+    if class_code != 0 && class.is_none() {
+        return Err(ProtocolError::new("viewer ability state is inconsistent"));
+    }
+    let resource_kind = read_u8(payload, &mut offset)?;
+    let resource_value = u16::from_be_bytes(take(payload, &mut offset)?);
+    let resource_max = u16::from_be_bytes(take(payload, &mut offset)?);
+    let global_cooldown = u16::from_be_bytes(take(payload, &mut offset)?);
+    let cast = decode_cast(payload, &mut offset)?;
+    let cooldown_count = decode_u8_count(
+        payload,
+        &mut offset,
+        MAX_COOLDOWNS,
+        "snapshot has too many cooldowns",
+    )?;
+    let mut cooldowns = Vec::with_capacity(cooldown_count);
+    for _ in 0..cooldown_count {
+        let ability = AbilityId::new(read_u8(payload, &mut offset)?);
+        let remaining = u16::from_be_bytes(take(payload, &mut offset)?);
+        let ordered = cooldowns
+            .last()
+            .is_none_or(|last: &Cooldown| last.ability < ability);
+        let valid = ability_by_id(ability)
+            .is_some_and(|catalog| remaining > 0 && remaining <= catalog.cooldown);
+        if !ordered || !valid {
+            return Err(ProtocolError::new("cooldown record is inconsistent"));
+        }
+        cooldowns.push(Cooldown { ability, remaining });
+    }
+    let auras = decode_auras(payload, &mut offset)?;
+    let resource = match (class, resource_kind) {
+        (None, 0) if resource_value == 0 && resource_max == 0 => None,
+        (Some(choice), code) if code == resource_code(choice.class.resource()) => {
+            let kind = choice.class.resource();
+            if resource_max != kind.max(level) || resource_value > resource_max {
+                return Err(ProtocolError::new("viewer resource is inconsistent"));
+            }
+            Some(ResourceView {
+                kind,
+                value: resource_value,
+                max: resource_max,
+            })
+        }
+        _ => return Err(ProtocolError::new("viewer resource is inconsistent")),
+    };
+    if global_cooldown > GLOBAL_COOLDOWN_TICKS
+        || (class.is_none()
+            && (global_cooldown != 0
+                || cast.is_some()
+                || !cooldowns.is_empty()
+                || !auras.is_empty()))
+        || (dead && (cast.is_some() || !auras.is_empty()))
+    {
+        return Err(ProtocolError::new("viewer ability state is inconsistent"));
+    }
     let target_of_target = decode_entity_ref(payload, &mut offset)?;
+    let target_detail = TargetDetail {
+        cast: decode_cast(payload, &mut offset)?,
+        auras: decode_auras(payload, &mut offset)?,
+    };
+    if target.is_none() && target_detail != TargetDetail::default() {
+        return Err(ProtocolError::new("target detail needs a target"));
+    }
 
     let inventory_revision = u64::from_be_bytes(take(payload, &mut offset)?);
     if inventory_revision == 0 {
@@ -297,8 +495,15 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
             in_combat,
             auto_attacking,
             target,
+            class,
+            resource,
+            cast,
+            global_cooldown,
         },
+        cooldowns,
+        auras,
         target_of_target,
+        target_detail,
         inventory_revision,
         inventory,
         loot,
@@ -381,6 +586,10 @@ mod tests {
 
     const VIEWER: EntityRef = EntityRef::Player(7);
     const WOLF: EntityRef = EntityRef::Creature(CreatureId::new(108));
+    const FIREBOLT: AbilityId = AbilityId::new(9);
+    const FROST_NOVA: AbilityId = AbilityId::new(10);
+    const ARCANE_BARRIER: AbilityId = AbilityId::new(11);
+    const MUCK_BOLT: AbilityId = AbilityId::new(13);
 
     fn player(id: u32, position: [i32; 3], velocity: [i8; 3], facing: u16) -> EntitySnapshot {
         EntitySnapshot {
@@ -396,8 +605,10 @@ mod tests {
         }
     }
 
-    /// The shared Rust/browser golden projection: a viewer fighting a
-    /// tapped wolf next to an NPC, with one event of every kind.
+    /// The shared Rust/browser golden projection: a level-4 Arcanist casting
+    /// Firebolt behind an Arcane Barrier at a rooted Mirefin Lurker that
+    /// casts Muck Bolt, next to an NPC and a corpse tapped by another player,
+    /// with one event of every kind.
     fn fixture_snapshot() -> ZoneSnapshot {
         let mut slots = [None; mmorpg_core::INVENTORY_SLOTS];
         slots[0] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 3).unwrap());
@@ -416,16 +627,62 @@ mod tests {
             viewer: ViewerState {
                 copper: 42,
                 experience: 37,
-                experience_to_next_level: 100,
+                experience_to_next_level: 400,
                 health: 38,
-                max_health: 50,
-                level: 1,
+                max_health: 95,
+                level: 4,
                 dead: false,
                 in_combat: true,
                 auto_attacking: true,
                 target: Some(WOLF),
+                class: Some(ClassChoice {
+                    class: mmorpg_core::PlayerClass::Arcanist,
+                    sex: mmorpg_core::Sex::Female,
+                }),
+                resource: Some(ResourceView {
+                    kind: ResourceKind::Mana,
+                    value: 121,
+                    max: 176,
+                }),
+                cast: Some(CastView {
+                    ability: FIREBOLT,
+                    elapsed: 20,
+                    total: 60,
+                    channel: false,
+                }),
+                global_cooldown: 25,
             },
+            cooldowns: vec![
+                Cooldown {
+                    ability: FROST_NOVA,
+                    remaining: 412,
+                },
+                Cooldown {
+                    ability: ARCANE_BARRIER,
+                    remaining: 700,
+                },
+            ],
+            auras: vec![AuraView {
+                ability: ARCANE_BARRIER,
+                kind: AuraKind::Absorb,
+                remaining: 500,
+                amount: 31,
+            }],
             target_of_target: Some(VIEWER),
+            target_detail: TargetDetail {
+                cast: Some(CastView {
+                    ability: MUCK_BOLT,
+                    elapsed: 10,
+                    total: 45,
+                    channel: false,
+                }),
+                auras: vec![AuraView {
+                    ability: FROST_NOVA,
+                    kind: AuraKind::Root,
+                    remaining: 150,
+                    amount: 0,
+                }],
+            },
             events: vec![
                 ZoneEvent::DamageDealt {
                     source: VIEWER,
@@ -456,13 +713,52 @@ mod tests {
                     target: Some(WOLF),
                 },
                 ZoneEvent::Error {
-                    code: ErrorCode::NoTarget,
+                    code: ErrorCode::NotEnoughResource,
                     target: None,
+                },
+                ZoneEvent::CastStarted {
+                    source: WOLF,
+                    target: Some(VIEWER),
+                    ability: MUCK_BOLT,
+                    ticks: 45,
+                },
+                ZoneEvent::AbilityUsed {
+                    source: VIEWER,
+                    target: None,
+                    ability: FROST_NOVA,
+                },
+                ZoneEvent::Healed {
+                    source: VIEWER,
+                    target: VIEWER,
+                    ability: AbilityId::new(3),
+                    amount: 2,
+                },
+                ZoneEvent::AuraApplied {
+                    source: VIEWER,
+                    target: WOLF,
+                    ability: FROST_NOVA,
+                    ticks: 180,
+                },
+                ZoneEvent::AuraRemoved {
+                    source: VIEWER,
+                    target: VIEWER,
+                    ability: ARCANE_BARRIER,
+                },
+                ZoneEvent::Interrupted {
+                    source: None,
+                    target: VIEWER,
+                    ability: FIREBOLT,
+                },
+                ZoneEvent::Absorbed {
+                    source: WOLF,
+                    target: VIEWER,
+                    amount: 5,
                 },
             ],
             entities: vec![
                 EntitySnapshot {
-                    health_percent: 76,
+                    appearance: 5,
+                    health_percent: 40,
                     flags: EntityFlags {
                         in_combat: true,
                         ..EntityFlags::default()
@@ -472,7 +768,7 @@ mod tests {
                 EntitySnapshot {
                     kind: EntityKind::Creature,
                     id: 108,
-                    appearance: 1,
+                    appearance: 5,
                     position: [-845, 45, 2_500],
                     velocity: [-13, 0, i8::MIN],
                     facing: 49_152,
@@ -520,18 +816,35 @@ mod tests {
         }
     }
 
-    fn fixture_bytes() -> Vec<u8> {
-        let fixture = include_str!("../../../fixtures/protocol/player-snapshot-v8.hex").trim();
+    fn hex(fixture: &str) -> Vec<u8> {
+        let fixture = fixture.trim();
         (0..fixture.len())
             .step_by(2)
             .map(|offset| u8::from_str_radix(&fixture[offset..offset + 2], 16).unwrap())
             .collect()
     }
 
+    fn fixture_bytes() -> Vec<u8> {
+        hex(include_str!(
+            "../../../fixtures/protocol/player-snapshot-v9.hex"
+        ))
+    }
+
     /// Byte offsets of the fixture's sections.
-    const EVENTS: usize = 64 + 8 + 1 + INVENTORY_RECORD_BYTES + 1;
-    const ENTITY_COUNT: usize = EVENTS + 1 + 7 * EVENT_RECORD_BYTES;
+    const CLASS: usize = 59;
+    const CAST: usize = CLASS + 8;
+    const COOLDOWNS: usize = CAST + CAST_RECORD_BYTES;
+    const AURAS: usize = COOLDOWNS + 1 + 2 * COOLDOWN_RECORD_BYTES;
+    const TARGET_OF_TARGET: usize = AURAS + 1 + AURA_RECORD_BYTES;
+    const TARGET_CAST: usize = TARGET_OF_TARGET + ENTITY_REF_BYTES;
+    const TARGET_AURAS: usize = TARGET_CAST + CAST_RECORD_BYTES;
+    const INVENTORY: usize = TARGET_AURAS + 1 + AURA_RECORD_BYTES;
+    const EVENT_COUNT: usize = 14;
+    const EVENTS: usize = INVENTORY + 8 + 1 + INVENTORY_RECORD_BYTES + 1;
+    const ENTITY_COUNT: usize = EVENTS + 1 + EVENT_COUNT * EVENT_RECORD_BYTES;
     const FIRST_ENTITY: usize = ENTITY_COUNT + 2;
+    /// Cooldown and aura records of the fixture.
+    const LIST_BYTES: usize = 2 * COOLDOWN_RECORD_BYTES + 2 * AURA_RECORD_BYTES;
 
     #[test]
     fn player_snapshot_matches_the_shared_golden_fixture() {
@@ -549,14 +862,24 @@ mod tests {
         assert_eq!(
             encoded.len(),
             PLAYER_SNAPSHOT_FIXED_BYTES
+                + LIST_BYTES
                 + INVENTORY_RECORD_BYTES
-                + 7 * EVENT_RECORD_BYTES
+                + EVENT_COUNT * EVENT_RECORD_BYTES
                 + 4 * ENTITY_RECORD_BYTES
         );
         assert_eq!(encoded, fixture_bytes());
         assert_eq!(decode_snapshot(&encoded).unwrap(), snapshot);
-        assert_eq!(encoded[EVENTS], 7);
+        assert_eq!(encoded[CLASS], 5, "Arcanist, female");
+        assert_eq!(encoded[EVENTS], 14);
         assert_eq!(encoded[FIRST_ENTITY], 1, "the viewer's record leads");
+        // The previous version's fixture is rejected, never reinterpreted.
+        let legacy = hex(include_str!(
+            "../../../fixtures/protocol/player-snapshot-v8.hex"
+        ));
+        assert_eq!(
+            decode_snapshot(&legacy).unwrap_err().to_string(),
+            "unsupported snapshot wire version"
+        );
     }
 
     #[test]
@@ -584,15 +907,26 @@ mod tests {
                 item: Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 2).unwrap()),
             },
         });
-        let hex = include_str!("../../../fixtures/protocol/player-loot-v8.hex").trim();
-        let expected = (0..hex.len())
-            .step_by(2)
-            .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
-            .collect::<Vec<_>>();
+        // A dead target has no target detail.
+        snapshot.target_detail = TargetDetail::default();
+        let expected = hex(include_str!(
+            "../../../fixtures/protocol/player-loot-v9.hex"
+        ));
+        if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
+            let bytes = encode_snapshot(&snapshot).unwrap();
+            println!(
+                "loot {}",
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            );
+        }
         let bytes = encode_snapshot(&snapshot).unwrap();
         assert_eq!(bytes, expected);
         assert_eq!(decode_snapshot(&bytes).unwrap(), snapshot);
-        let presence = EVENTS - 1;
+        // Without target detail auras the sheet sits one aura record earlier.
+        let presence = EVENTS - 1 - AURA_RECORD_BYTES;
         for length in 0..bytes.len() {
             assert!(decode_snapshot(&bytes[..length]).is_err());
         }
@@ -624,12 +958,12 @@ mod tests {
             }
             assert!(decode_snapshot(&encode_snapshot(&invalid).unwrap()).is_err());
         }
-        let legacy = include_str!("../../../fixtures/protocol/player-snapshot-v7.hex").trim();
-        let old = (0..legacy.len())
-            .step_by(2)
-            .map(|at| u8::from_str_radix(&legacy[at..at + 2], 16).unwrap())
-            .collect::<Vec<_>>();
-        assert!(decode_snapshot(&old).is_err());
+        for legacy in [
+            include_str!("../../../fixtures/protocol/player-snapshot-v7.hex"),
+            include_str!("../../../fixtures/protocol/player-loot-v8.hex"),
+        ] {
+            assert!(decode_snapshot(&hex(legacy)).is_err());
+        }
     }
 
     #[test]
@@ -652,9 +986,27 @@ mod tests {
             (53, 0b1000, "reserved flag bits are set"),
             (53, 0b111, "viewer state is inconsistent"),
             (54, 9, "unknown entity kind"),
-            (59, 0, "an absent entity must have ID 0"),
+            (CLASS, 7, "viewer ability state is inconsistent"),
+            (CLASS, 1, "viewer resource is inconsistent"),
+            (CLASS + 1, 1, "viewer resource is inconsistent"),
+            (CLASS + 4, 0xff, "viewer resource is inconsistent"),
+            (CLASS + 7, 46, "viewer ability state is inconsistent"),
+            (CAST, 1, "cast state is inconsistent"),
+            (CAST + 1, 1, "cast state is inconsistent"),
+            (CAST + 1, 2, "reserved flag bits are set"),
+            (CAST + 3, 60, "cast state is inconsistent"),
+            (COOLDOWNS, 5, "snapshot has too many cooldowns"),
+            (COOLDOWNS + 1, 11, "cooldown record is inconsistent"),
+            (COOLDOWNS + 2, 9, "cooldown record is inconsistent"),
+            (AURAS, 9, "snapshot has too many auras"),
+            (AURAS + 1, 9, "aura record is inconsistent"),
+            (AURAS + 2, 4, "aura record is inconsistent"),
+            (AURAS + 3, 9, "aura record is inconsistent"),
+            (TARGET_OF_TARGET, 0, "an absent entity must have ID 0"),
+            (TARGET_CAST, 0, "cast state is inconsistent"),
+            (TARGET_AURAS + 4, 0, "aura record is inconsistent"),
             (EVENTS, 17, "snapshot exceeds the per-player event capacity"),
-            (EVENTS + 1, 9, "unknown event kind"),
+            (EVENTS + 1, 14, "unknown event kind"),
             (EVENTS + 2, 2, "event flags are invalid"),
             (
                 EVENTS + 1 + 2 * EVENT_RECORD_BYTES + 1,
@@ -665,6 +1017,31 @@ mod tests {
                 EVENTS + 1 + 6 * EVENT_RECORD_BYTES + 13,
                 99,
                 "unknown error code",
+            ),
+            (
+                EVENTS + 1 + 7 * EVENT_RECORD_BYTES + 1,
+                15,
+                "unknown ability",
+            ),
+            (
+                EVENTS + 1 + 7 * EVENT_RECORD_BYTES + 1,
+                0,
+                "unknown ability",
+            ),
+            (
+                EVENTS + 1 + 7 * EVENT_RECORD_BYTES,
+                14,
+                "unknown event kind",
+            ),
+            (
+                EVENTS + 1 + 8 * EVENT_RECORD_BYTES + 13,
+                1,
+                "malformed event record",
+            ),
+            (
+                EVENTS + 1 + 13 * EVENT_RECORD_BYTES + 1,
+                1,
+                "event flags are invalid",
             ),
             (FIRST_ENTITY, 0, "unknown entity kind"),
             (FIRST_ENTITY, 4, "unknown entity kind"),
@@ -739,10 +1116,10 @@ mod tests {
     fn inventory_decoder_rejects_corrupt_slots_and_missing_revision() {
         let encoded = fixture_bytes();
         let mut zero_revision = encoded.clone();
-        zero_revision[64..72].fill(0);
+        zero_revision[INVENTORY..INVENTORY + 8].fill(0);
         assert!(decode_snapshot(&zero_revision).is_err());
         let mut invalid_flag = encoded.clone();
-        invalid_flag[72] = 2;
+        invalid_flag[INVENTORY + 8] = 2;
         assert!(decode_snapshot(&invalid_flag).is_err());
         for (slot, item, quantity) in [
             (0, 0_u16, 3_u16),
@@ -752,7 +1129,7 @@ mod tests {
             (1, 2, 2),
         ] {
             let mut invalid = encoded.clone();
-            let offset = 73 + slot * 4;
+            let offset = INVENTORY + 9 + slot * 4;
             invalid[offset..offset + 2].copy_from_slice(&item.to_be_bytes());
             invalid[offset + 2..offset + 4].copy_from_slice(&quantity.to_be_bytes());
             assert!(decode_snapshot(&invalid).is_err());
@@ -798,9 +1175,9 @@ mod tests {
                 EVENT_RECORD_BYTES,
                 ENTITY_RECORD_BYTES
             ),
-            (77, 14, 21)
+            (100, 14, 21)
         );
-        assert_eq!(MAX_WIRE_ENTITIES, 47);
+        assert_eq!(MAX_WIRE_ENTITIES, 46);
         let viewer_id = u32::MAX;
         let target = EntityRef::Creature(CreatureId::new(u32::MAX));
         let entities: Vec<_> = (0..MAX_VISIBLE_ENTITIES)
@@ -864,21 +1241,28 @@ mod tests {
                 in_combat: true,
                 auto_attacking: true,
                 target: Some(target),
+                class: None,
+                resource: None,
+                cast: None,
+                global_cooldown: 0,
             },
+            cooldowns: Vec::new(),
+            auras: Vec::new(),
             target_of_target: Some(EntityRef::Npc(NpcId::new(u32::MAX))),
+            target_detail: TargetDetail::default(),
             events: vec![event; MAX_EVENTS_PER_PLAYER],
             entities,
         };
         let packed = pack_snapshot(&snapshot).unwrap();
-        // (1,077 − 77 − 16 × 14) / 21 = 36 records fit beside a full event section.
-        assert_eq!(packed.packed_entities, 36);
+        // (1,077 − 100 − 16 × 14) / 21 = 35 records fit beside a full event section.
+        assert_eq!(packed.packed_entities, 35);
         assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
         assert!(
             packed.payload.len() + SESSION_SNAPSHOT_HEADER_BYTES + DATAGRAM_SAFETY_MARGIN_BYTES
                 <= MEASURED_MIN_DATAGRAM_BYTES
         );
         let decoded = decode_snapshot(&packed.payload).unwrap();
-        assert_eq!(decoded.entities[..], snapshot.entities[..36]);
+        assert_eq!(decoded.entities[..], snapshot.entities[..35]);
         assert_eq!(
             decoded.entities[1].entity(),
             target,
@@ -889,7 +1273,7 @@ mod tests {
             encode_snapshot(&snapshot).unwrap_err().to_string(),
             "player projection exceeds the byte budget"
         );
-        // Without events or a bag sheet the budget holds 47 records.
+        // Without events or a bag sheet the budget holds 46 records.
         let quiet = ZoneSnapshot {
             events: Vec::new(),
             ..snapshot
@@ -918,13 +1302,13 @@ mod tests {
             assert_eq!(decoded.entities[1].entity(), target);
             assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
             if events == 0 {
-                assert_eq!(packed.packed_entities, 44);
+                assert_eq!(packed.packed_entities, 43);
             }
             if events == 16 {
-                assert_eq!(packed.packed_entities, 33);
+                assert_eq!(packed.packed_entities, 32);
             }
         }
-        assert_eq!(maximum_bytes, 1_072);
+        assert_eq!(maximum_bytes, 1_074);
         for item in [
             None,
             Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap()),
@@ -960,11 +1344,70 @@ mod tests {
                 assert_eq!(decoded.inventory, with_loot.inventory);
                 assert_eq!(decoded.entities[1].entity(), target);
                 if events == 16 && item.is_some() {
-                    assert_eq!(packed.packed_entities, 32);
+                    assert_eq!(packed.packed_entities, 31);
                 }
             }
         }
-        assert_eq!(maximum_bytes, 1_075);
+        assert_eq!(maximum_bytes, 1_077);
+        // Full cooldown and aura lists for the viewer and its target, both
+        // sheets and every event still leave the viewer and its target.
+        let aura = |ability: u8| {
+            let ability = AbilityId::new(ability);
+            let spec = ability_by_id(ability).unwrap().aura().unwrap();
+            AuraView {
+                ability,
+                kind: spec.kind,
+                remaining: spec.duration,
+                amount: u16::MAX,
+            }
+        };
+        let full_auras: Vec<_> = [2, 3, 6, 7, 8, 10, 11, 3].into_iter().map(aura).collect();
+        let mut loaded = quiet.clone();
+        loaded.inventory = Some(full_bag);
+        loaded.events = vec![event; MAX_EVENTS_PER_PLAYER];
+        loaded.viewer.class = Some(ClassChoice {
+            class: mmorpg_core::PlayerClass::Warden,
+            sex: mmorpg_core::Sex::Male,
+        });
+        loaded.viewer.resource = Some(ResourceView {
+            kind: ResourceKind::Rage,
+            value: 100,
+            max: 100,
+        });
+        loaded.viewer.global_cooldown = GLOBAL_COOLDOWN_TICKS;
+        loaded.viewer.cast = Some(CastView {
+            ability: AbilityId::new(12),
+            elapsed: 179,
+            total: 180,
+            channel: true,
+        });
+        loaded.cooldowns = [2, 3, 4, 5]
+            .into_iter()
+            .map(|ability| Cooldown {
+                ability: AbilityId::new(ability),
+                remaining: ability_by_id(AbilityId::new(ability)).unwrap().cooldown,
+            })
+            .collect();
+        loaded.auras = full_auras.clone();
+        loaded.target_detail = TargetDetail {
+            cast: Some(CastView {
+                ability: AbilityId::new(14),
+                elapsed: 89,
+                total: 90,
+                channel: false,
+            }),
+            auras: full_auras,
+        };
+        let packed = pack_snapshot(&loaded).unwrap();
+        // (1,077 − 100 − 108 − 64 − 16 × 14) / 21 = 27 records.
+        assert_eq!(packed.packed_entities, 27);
+        assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
+        let decoded = decode_snapshot(&packed.payload).unwrap();
+        assert_eq!(decoded.entities[1].entity(), target);
+        assert_eq!(
+            (decoded.cooldowns, decoded.auras, decoded.target_detail),
+            (loaded.cooldowns, loaded.auras, loaded.target_detail)
+        );
     }
 
     #[test]

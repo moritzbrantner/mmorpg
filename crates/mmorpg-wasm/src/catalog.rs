@@ -5,7 +5,8 @@
 //! [`CATALOG_FORMAT`], version [`CATALOG_FORMAT_VERSION`]) exports those
 //! tables of the hosted [`ZoneContent`] as compact JSON: creature templates
 //! (name, family, behaviour, levels, elite, body size), NPCs (name, role,
-//! level), areas (name) and items (name, stack limit). It carries the content
+//! level), areas (name), items (name, stack limit), classes (name, resource)
+//! and abilities (name, user, unlock level, cost, cast time, cooldown, aura). It carries the content
 //! revision and fingerprint,
 //! so a client can refuse a catalog of other content. Combat numbers,
 //! spawn points and AI stay on the server side.
@@ -18,7 +19,7 @@ use serde::Serialize;
 use crate::host::hosted_content;
 
 pub const CATALOG_FORMAT: &str = "mmorpg.catalog";
-pub const CATALOG_FORMAT_VERSION: u32 = 2;
+pub const CATALOG_FORMAT_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +35,37 @@ pub struct CatalogExport {
     pub areas: Vec<AreaNameExport>,
     pub item_catalog_revision: String,
     pub items: Vec<ItemExport>,
+    /// Class choices by wire value (0 Warden, 1 Ranger, 2 Arcanist).
+    pub classes: Vec<ClassExport>,
+    pub ability_catalog_revision: String,
+    pub abilities: Vec<AbilityExport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ClassExport {
+    pub id: u8,
+    pub name: &'static str,
+    pub resource: &'static str,
+}
+
+/// What clients show and validate about an ability; its effect numbers
+/// stay on the server.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbilityExport {
+    pub id: u8,
+    pub name: &'static str,
+    /// A class name, or `creature`.
+    pub user: &'static str,
+    pub level: u8,
+    pub cost: u16,
+    /// 0 for instants.
+    pub cast_ticks: u16,
+    pub channel: bool,
+    pub cooldown: u16,
+    /// The wire code of the aura kind it applies (1 damage over time …
+    /// 7 haste, as in snapshot aura records), if any.
+    pub aura: Option<u8>,
 }
 
 /// `[id, name, family, behaviour, minLevel, maxLevel, elite, halfExtents]`
@@ -91,6 +123,32 @@ pub fn catalog(content: &ZoneContent) -> CatalogExport {
             })
             .collect(),
         content_fingerprint: format!("{:016x}", content.fingerprint()),
+        classes: mmorpg_core::PlayerClass::ALL
+            .iter()
+            .map(|class| ClassExport {
+                id: class.code(),
+                name: class.name(),
+                resource: class.resource().name(),
+            })
+            .collect(),
+        ability_catalog_revision: mmorpg_core::ABILITY_CATALOG_REVISION.to_string(),
+        abilities: mmorpg_core::ABILITY_CATALOG
+            .iter()
+            .map(|ability| AbilityExport {
+                id: ability.id.get(),
+                name: ability.name,
+                user: match ability.user {
+                    mmorpg_core::AbilityUser::Class(class) => class.name(),
+                    mmorpg_core::AbilityUser::Creature => "creature",
+                },
+                level: ability.level,
+                cost: ability.cost,
+                cast_ticks: ability.cast.ticks(),
+                channel: ability.cast.is_channel(),
+                cooldown: ability.cooldown,
+                aura: ability.aura().map(|aura| aura.kind.code()),
+            })
+            .collect(),
         creature_templates: content
             .creature_templates()
             .iter()
@@ -185,6 +243,24 @@ mod tests {
             value["npcs"][4],
             json!({ "id": 5, "name": "Brother Aldous", "role": "spirit_healer", "level": 10 })
         );
+        assert_eq!(
+            value["classes"],
+            json!([
+                {"id": 0, "name": "warden", "resource": "rage"},
+                {"id": 1, "name": "ranger", "resource": "focus"},
+                {"id": 2, "name": "arcanist", "resource": "mana"}
+            ])
+        );
+        assert_eq!(value["abilityCatalogRevision"], "1");
+        assert_eq!(
+            value["abilities"][8],
+            json!({
+                "id": 9, "name": "Firebolt", "user": "arcanist", "level": 1, "cost": 25,
+                "castTicks": 60, "channel": false, "cooldown": 0, "aura": null
+            })
+        );
+        assert_eq!(value["abilities"][12]["user"], "creature");
+        assert_eq!(value["abilities"][9]["aura"], 4, "Frost Nova roots");
         let names: Vec<_> = value["areas"]
             .as_array()
             .unwrap()

@@ -21,7 +21,21 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "not-loot-owner": "That loot belongs to another player.",
   "empty-loot": "No loot remains.",
   "money-overflow": "You cannot hold any more copper.",
+  "no-class": "Choose a class first.",
+  "not-learned": "You have not learned that ability.",
+  "not-ready": "That is not ready yet.",
+  "not-enough-resource": "Not enough resource.",
+  "stunned": "You are stunned.",
+  "already-casting": "You are already casting.",
+  "invalid-class": "That class choice is not available.",
 };
+
+const RESOURCE_NAMES = { rage: "Rage", focus: "Focus", mana: "Mana" } as const;
+
+/** An ability's catalog name. */
+export function abilityName(ability: number, catalog: ContentCatalog): string {
+  return catalog.abilities.get(ability)?.name ?? `ability ${ability}`;
+}
 
 /** A unit's display name: catalog names for creatures and NPCs, "you" for the viewer. */
 export function unitName(entity: EntityRef, snapshot: ZoneSnapshot, catalog: ContentCatalog): string {
@@ -43,7 +57,15 @@ export function combatStatus(snapshot: ZoneSnapshot, catalog: ContentCatalog): s
   if (viewer.dead) {
     return "You are dead. Press R to release your spirit to the graveyard.";
   }
-  const parts = [`Health ${viewer.health}/${viewer.maxHealth}`, `Level ${viewer.level}`];
+  const parts = [`Health ${viewer.health}/${viewer.maxHealth}`];
+  if (viewer.resource) {
+    parts.push(`${RESOURCE_NAMES[viewer.resource.kind]} ${viewer.resource.value}/${viewer.resource.max}`);
+  }
+  parts.push(`Level ${viewer.level}`);
+  if (viewer.cast) {
+    const verb = viewer.cast.channel ? "Channelling" : "Casting";
+    parts.push(`${verb} ${abilityName(viewer.cast.ability, catalog)} ${viewer.cast.elapsed}/${viewer.cast.total}`);
+  }
   if (viewer.inCombat) {
     parts.push("In combat");
   }
@@ -53,7 +75,9 @@ export function combatStatus(snapshot: ZoneSnapshot, catalog: ContentCatalog): s
     const detail = record === undefined
       ? "out of sight"
       : record.flags.dead ? `level ${record.level}, dead` : `level ${record.level}, ${record.healthPercent}%`;
-    parts.push(`Target: ${name} (${detail})`);
+    const cast = snapshot.targetDetail.cast;
+    const casting = cast ? `, casting ${abilityName(cast.ability, catalog)} ${cast.elapsed}/${cast.total}` : "";
+    parts.push(`Target: ${name} (${detail}${casting})`);
   }
   if (viewer.autoAttacking) {
     parts.push("Attacking");
@@ -64,6 +88,7 @@ export function combatStatus(snapshot: ZoneSnapshot, catalog: ContentCatalog): s
 /** One feedback line per event, from the viewer's point of view. */
 export function eventText(event: ZoneEvent, snapshot: ZoneSnapshot, catalog: ContentCatalog): string {
   const name = (entity: EntityRef) => unitName(entity, snapshot, catalog);
+  const isViewer = (entity: EntityRef) => entity.kind === "player" && entity.id === snapshot.viewerId;
   const critical = (isCritical: boolean) => (isCritical ? " (critical)" : "");
   switch (event.kind) {
     case "damage-dealt":
@@ -82,6 +107,20 @@ export function eventText(event: ZoneEvent, snapshot: ZoneSnapshot, catalog: Con
         : `${capitalise(name(event.entity))} dies.`;
     case "error":
       return ERROR_TEXT[event.code];
+    case "cast-started":
+      return `${capitalise(name(event.source))} ${isViewer(event.source) ? "begin" : "begins"} ${abilityName(event.ability, catalog)}.`;
+    case "ability-used":
+      return `${capitalise(name(event.source))} ${isViewer(event.source) ? "use" : "uses"} ${abilityName(event.ability, catalog)}.`;
+    case "healed":
+      return `${abilityName(event.ability, catalog)} heals ${name(event.target)} for ${event.amount}.`;
+    case "aura-applied":
+      return `${capitalise(name(event.target))} ${isViewer(event.target) ? "gain" : "gains"} ${abilityName(event.ability, catalog)}.`;
+    case "aura-removed":
+      return `${abilityName(event.ability, catalog)} fades from ${name(event.target)}.`;
+    case "interrupted":
+      return `${capitalise(name(event.target))} ${isViewer(event.target) ? "are" : "is"} interrupted (${abilityName(event.ability, catalog)}).`;
+    case "absorbed":
+      return `A shield absorbs ${event.amount} damage.`;
   }
 }
 

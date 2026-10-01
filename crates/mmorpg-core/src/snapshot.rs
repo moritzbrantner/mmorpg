@@ -8,7 +8,12 @@ use std::sync::Arc;
 
 use physics_engine::RigidBody;
 
+use crate::ability::{
+    AbilityId, AuraKind, CREATURE_ABILITY_JITTER_TICKS, GLOBAL_COOLDOWN_TICKS, MAX_AURAS,
+    MAX_COOLDOWNS, ability_by_id, learned,
+};
 use crate::ai::is_wander_point;
+use crate::class::ResourceClock;
 use crate::content::within_content_range;
 use crate::creature::{CreatureState, Life, MAX_THREAT_ENTRIES};
 use crate::entity::body_id;
@@ -18,8 +23,9 @@ use crate::zone::{
     Axis, MAX_PENDING_INTENTS, PLAYER_HALF_EXTENTS, PlayerState, physics_error, vector,
 };
 use crate::{
-    CreatureId, EntityRef, MAX_EVENTS_PER_PLAYER, MAX_PLAYERS_PER_ZONE, PlayerId,
-    SNAPSHOT_SCHEMA_VERSION, ZoneContent, ZoneError, ZoneEvent, ZoneId, ZoneSimulation,
+    Aura, CastState, ClassChoice, Cooldown, CreatureId, EntityRef, MAX_EVENTS_PER_PLAYER,
+    MAX_PLAYERS_PER_ZONE, PlayerId, SNAPSHOT_SCHEMA_VERSION, ZoneContent, ZoneError, ZoneEvent,
+    ZoneId, ZoneSimulation,
 };
 
 /// A queued discrete intent, consumed by the next tick in sequence order.
@@ -34,6 +40,15 @@ pub enum PlayerIntent {
         source: u8,
         destination: u8,
         quantity: u16,
+    },
+    UseAbility {
+        ability: u8,
+        target: Option<EntityRef>,
+    },
+    CancelCast,
+    ChooseClass {
+        class: u8,
+        sex: u8,
     },
 }
 
@@ -87,6 +102,35 @@ pub struct CanonicalPlayerCombat {
     pub intents_dropped: bool,
     /// Events of the current tick.
     pub events: Vec<ZoneEvent>,
+    pub abilities: CanonicalPlayerAbilities,
+}
+
+/// Class, resource and ability state of a player; all zero and empty until
+/// the player chooses a class.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CanonicalPlayerAbilities {
+    pub class: Option<ClassChoice>,
+    pub resource: u16,
+    /// Ticks counted toward the next resource step.
+    pub resource_ticks: u16,
+    /// Arcanist five-second rule: ticks left without mana regeneration.
+    pub mana_delay: u16,
+    pub global_cooldown: u16,
+    /// Running cooldowns in ability order.
+    pub cooldowns: Vec<Cooldown>,
+    pub cast: Option<CastState>,
+    /// Auras in slot order.
+    pub auras: Vec<Aura>,
+}
+
+/// Ability state of a creature: its content-bound ability's timer, its cast
+/// and its auras.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CanonicalCreatureAbilities {
+    pub ability_timer: u16,
+    pub cast: Option<CastState>,
+    /// Auras in slot order.
+    pub auras: Vec<Aura>,
 }
 
 impl Default for CanonicalPlayerCombat {
@@ -105,6 +149,7 @@ impl Default for CanonicalPlayerCombat {
             intents: Vec::new(),
             intents_dropped: false,
             events: Vec::new(),
+            abilities: CanonicalPlayerAbilities::default(),
         }
     }
 }
@@ -145,6 +190,7 @@ pub struct CanonicalCreatureSnapshot {
     pub combat_timer: u16,
     pub tapped_by: Option<PlayerId>,
     pub loot: Option<crate::LootRewards>,
+    pub abilities: CanonicalCreatureAbilities,
 }
 
 /// Everything authoritative about a zone at a tick boundary, with its
@@ -202,6 +248,16 @@ impl ZoneSimulation {
                         intents: state.intents.clone(),
                         intents_dropped: state.intents_dropped,
                         events: state.events.clone(),
+                        abilities: CanonicalPlayerAbilities {
+                            class: state.class,
+                            resource: state.resource.value,
+                            resource_ticks: state.resource.ticks,
+                            mana_delay: state.resource.delay,
+                            global_cooldown: state.global_cooldown,
+                            cooldowns: state.cooldowns.clone(),
+                            cast: state.cast,
+                            auras: state.auras.clone(),
+                        },
                     },
                 })
             })
@@ -244,6 +300,11 @@ impl ZoneSimulation {
                     combat_timer: creature.combat_timer,
                     tapped_by: creature.tapped_by,
                     loot: creature.loot,
+                    abilities: CanonicalCreatureAbilities {
+                        ability_timer: creature.ability_timer,
+                        cast: creature.cast,
+                        auras: creature.auras.clone(),
+                    },
                 })
             })
             .collect::<Result<Vec<_>, ZoneError>>()?;
@@ -338,6 +399,7 @@ impl ZoneSimulation {
         if combat.health == 0 && combat.auto_attack {
             return Err(ZoneError::new("a dead player cannot auto-attack"));
         }
+        validate_player_abilities(&combat.abilities, combat.level, combat.health > 0)?;
         self.world
             .add_body(RigidBody::dynamic(
                 body_id(EntityRef::Player(player.player_id)),
@@ -371,6 +433,16 @@ impl ZoneSimulation {
                 intents: combat.intents,
                 intents_dropped: combat.intents_dropped,
                 events: combat.events,
+                class: combat.abilities.class,
+                resource: ResourceClock {
+                    value: combat.abilities.resource,
+                    ticks: combat.abilities.resource_ticks,
+                    delay: combat.abilities.mana_delay,
+                },
+                global_cooldown: combat.abilities.global_cooldown,
+                cooldowns: combat.abilities.cooldowns,
+                cast: combat.abilities.cast,
+                auras: combat.abilities.auras,
             },
         );
         Ok(())
@@ -475,6 +547,12 @@ impl ZoneSimulation {
         if !matches!(record.ai, CreatureAi::Engaged) && !record.threat.is_empty() {
             return Err(ZoneError::new("only engaged creatures have threat"));
         }
+        validate_creature_abilities(
+            &record.abilities,
+            content.creature_ability(spawn.template),
+            record.life == CreatureLife::Alive,
+            record.ai == CreatureAi::Engaged,
+        )?;
         self.creatures.insert(
             record.creature_id,
             CreatureState {
@@ -488,6 +566,9 @@ impl ZoneSimulation {
                 combat_timer: record.combat_timer,
                 tapped_by: record.tapped_by,
                 loot: record.loot,
+                ability_timer: record.abilities.ability_timer,
+                cast: record.abilities.cast,
+                auras: record.abilities.auras,
             },
         );
         Ok(())
@@ -501,9 +582,80 @@ impl ZoneSimulation {
             EntityRef::Creature(creature_id) => self.creatures.contains_key(&creature_id),
             EntityRef::Npc(npc_id) => self.content.npc(npc_id).is_some(),
         };
+        let unit_refs_exist = |cast: Option<CastState>, auras: &[Aura]| {
+            cast.and_then(|cast| cast.target).is_none_or(exists)
+                && auras.iter().all(|aura| exists(aura.caster))
+        };
+        // Players cast at creatures and creatures at players.
+        let player_targets = self
+            .players
+            .values()
+            .filter_map(|player| player.cast?.target);
+        let creature_targets = self
+            .creatures
+            .values()
+            .filter_map(|creature| creature.cast?.target);
+        if player_targets
+            .into_iter()
+            .any(|target| !matches!(target, EntityRef::Creature(_)))
+            || creature_targets
+                .into_iter()
+                .any(|target| !matches!(target, EntityRef::Player(_)))
+        {
+            return Err(ZoneError::new("a cast names a target of the wrong kind"));
+        }
         for player in self.players.values() {
             if player.target.is_some_and(|target| !exists(target)) {
                 return Err(ZoneError::new("player target does not exist"));
+            }
+            if !unit_refs_exist(player.cast, &player.auras) {
+                return Err(ZoneError::new(
+                    "a cast target or aura caster does not exist",
+                ));
+            }
+        }
+        for creature in self.creatures.values() {
+            if !unit_refs_exist(creature.cast, &creature.auras) {
+                return Err(ZoneError::new(
+                    "a cast target or aura caster does not exist",
+                ));
+            }
+        }
+        // Every aura is reachable: a living player cast it with a learned
+        // ability, on itself for self-centred auras and on a creature otherwise.
+        let reachable = |unit: EntityRef, aura: &Aura| {
+            let EntityRef::Player(caster_id) = aura.caster else {
+                return false;
+            };
+            let learned = self.players.get(&caster_id).is_some_and(|caster| {
+                caster.is_alive()
+                    && caster.class.is_some_and(|choice| {
+                        learned(choice.class, caster.level, aura.ability).is_some()
+                    })
+            });
+            let on_caster =
+                ability_by_id(aura.ability).is_some_and(|ability| ability.aura_on_caster());
+            learned
+                && if on_caster {
+                    unit == aura.caster
+                } else {
+                    matches!(unit, EntityRef::Creature(_))
+                }
+        };
+        let units = self
+            .players
+            .iter()
+            .map(|(&id, player)| (EntityRef::Player(id), &player.auras))
+            .chain(
+                self.creatures
+                    .iter()
+                    .map(|(&id, creature)| (EntityRef::Creature(id), &creature.auras)),
+            );
+        for (unit, auras) in units {
+            if !auras.iter().all(|aura| reachable(unit, aura)) {
+                return Err(ZoneError::new(
+                    "an aura's caster or recipient is unreachable",
+                ));
             }
         }
         for creature in self.creatures.values() {
@@ -528,4 +680,147 @@ impl ZoneSimulation {
         }
         Ok(())
     }
+}
+
+/// Auras on a recovered unit: bounded, from catalog abilities that apply an
+/// aura, with time left within the duration and the amount their kind fixes.
+fn validate_auras(auras: &[Aura]) -> Result<(), ZoneError> {
+    if auras.len() > MAX_AURAS {
+        return Err(ZoneError::new("unit has too many auras"));
+    }
+    for (index, aura) in auras.iter().enumerate() {
+        let Some(spec) = aura.spec() else {
+            return Err(ZoneError::new("aura names an ability without an aura"));
+        };
+        // Fixed amounts must match; variable ones lie in 1..= the largest
+        // amount any player level reaches (an absorb only shrinks).
+        let top = crate::progression::MAX_PLAYER_LEVEL;
+        let valid_amount = match ability_by_id(aura.ability).map(|ability| ability.effect) {
+            Some(
+                crate::AbilityEffect::Snare { percent, .. }
+                | crate::AbilityEffect::Haste { percent, .. },
+            ) => aura.amount == percent,
+            Some(
+                crate::AbilityEffect::DamageOverTime {
+                    base, per_level, ..
+                }
+                | crate::AbilityEffect::Absorb {
+                    base, per_level, ..
+                },
+            ) => (1..=crate::ability::scaled(base, per_level, top)).contains(&aura.amount),
+            Some(crate::AbilityEffect::HealOverTime { percent, .. }) => {
+                let most = crate::unit::percent_of(player_max_health(top), u32::from(percent));
+                aura.amount > 0 && u32::from(aura.amount) <= most
+            }
+            _ => matches!(spec.kind, AuraKind::Root | AuraKind::Stun) && aura.amount == 0,
+        };
+        if aura.remaining == 0 || aura.remaining > spec.duration || !valid_amount {
+            return Err(ZoneError::new("aura state is out of range"));
+        }
+        if auras[..index]
+            .iter()
+            .any(|other| other.ability == aura.ability && other.caster == aura.caster)
+        {
+            return Err(ZoneError::new("a caster's aura of one ability is unique"));
+        }
+    }
+    Ok(())
+}
+
+/// A recovered cast: `ability` casts or channels, the elapsed time stays
+/// below its cast time, a hostile ability has a target and only a channel
+/// keeps a target point.
+fn validate_cast(cast: CastState) -> Result<(), ZoneError> {
+    let valid = ability_by_id(cast.ability).is_some_and(|ability| {
+        cast.elapsed < ability.cast.ticks()
+            && cast.point.is_some() == ability.cast.is_channel()
+            && cast.target.is_some() == ability.needs_target()
+            && cast
+                .point
+                .is_none_or(|point| point.into_iter().all(within_content_range))
+    });
+    if valid {
+        Ok(())
+    } else {
+        Err(ZoneError::new("cast state is out of range"))
+    }
+}
+
+fn validate_player_abilities(
+    abilities: &CanonicalPlayerAbilities,
+    level: u8,
+    alive: bool,
+) -> Result<(), ZoneError> {
+    let Some(ClassChoice { class, .. }) = abilities.class else {
+        if *abilities != CanonicalPlayerAbilities::default() {
+            return Err(ZoneError::new(
+                "a player without a class has no ability state",
+            ));
+        }
+        return Ok(());
+    };
+    let clock = ResourceClock {
+        value: abilities.resource,
+        ticks: abilities.resource_ticks,
+        delay: abilities.mana_delay,
+    };
+    let cooldowns_valid = abilities.cooldowns.len() <= MAX_COOLDOWNS
+        && abilities
+            .cooldowns
+            .windows(2)
+            .all(|pair| pair[0].ability < pair[1].ability)
+        && abilities.cooldowns.iter().all(|cooldown: &Cooldown| {
+            learned(class, level, cooldown.ability).is_some_and(|ability| {
+                cooldown.remaining > 0 && cooldown.remaining <= ability.cooldown
+            })
+        });
+    if !clock.is_valid(class.resource(), level)
+        || abilities.global_cooldown > GLOBAL_COOLDOWN_TICKS
+        || !cooldowns_valid
+    {
+        return Err(ZoneError::new("player ability state is out of range"));
+    }
+    if let Some(cast) = abilities.cast {
+        if learned(class, level, cast.ability).is_none() {
+            return Err(ZoneError::new("cast state is out of range"));
+        }
+        validate_cast(cast)?;
+    }
+    validate_auras(&abilities.auras)?;
+    if !alive && (abilities.cast.is_some() || !abilities.auras.is_empty()) {
+        return Err(ZoneError::new("the dead neither cast nor keep auras"));
+    }
+    // Death drains rage and its decay clock.
+    if !alive
+        && class.resource() == crate::ResourceKind::Rage
+        && (abilities.resource != 0 || abilities.resource_ticks != 0)
+    {
+        return Err(ZoneError::new("a dead Warden has no rage"));
+    }
+    Ok(())
+}
+
+fn validate_creature_abilities(
+    abilities: &CanonicalCreatureAbilities,
+    bound: Option<AbilityId>,
+    alive: bool,
+    engaged: bool,
+) -> Result<(), ZoneError> {
+    if !alive && *abilities != CanonicalCreatureAbilities::default() {
+        return Err(ZoneError::new("dead creature state is inconsistent"));
+    }
+    let timer_limit = bound.and_then(ability_by_id).map_or(0, |ability| {
+        (ability.cooldown + CREATURE_ABILITY_JITTER_TICKS)
+            .max(crate::casting::SHIELD_BASH_LOCKOUT_TICKS)
+    });
+    if abilities.ability_timer > timer_limit {
+        return Err(ZoneError::new("creature ability timer is out of range"));
+    }
+    if let Some(cast) = abilities.cast {
+        if Some(cast.ability) != bound || !engaged {
+            return Err(ZoneError::new("cast state is out of range"));
+        }
+        validate_cast(cast)?;
+    }
+    validate_auras(&abilities.auras)
 }
