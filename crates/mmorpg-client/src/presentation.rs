@@ -2,12 +2,17 @@
 //! Units stand on the shared presentation relief: a rendered position is the
 //! physics position plus `Scenery::height_at` at its XZ, never fed back.
 //!
-//! Players render as a character box, creatures as a box of their template's
-//! collision size and NPCs as a character-sized post, each with a facing
-//! marker. Creatures are coloured by disposition (hostile red-ish, neutral
-//! yellow-ish) and shaded by family, NPCs green-ish; corpses lie flat, and
-//! the viewer's target stands on a marker. Names come from the zone content.
-use crate::{ClientError, camera::CameraView};
+//! Units are low-poly models (`unit_models`) fitted to their collision box:
+//! humanoid players and NPCs, quadruped or humanoid creatures by template
+//! family, and a box with a nose for unknown templates. Creatures are coloured
+//! by disposition (hostile red-ish, neutral yellow-ish) and shaded by family,
+//! NPCs green-ish; corpses lie flat, and the viewer's target stands on a
+//! marker. Names come from the zone content.
+use crate::{
+    ClientError,
+    camera::CameraView,
+    unit_models::{Gait, MODEL_BOX_BUDGET, Placement, UnitModel, append_unit},
+};
 use mmorpg_core::{
     CreatureFamily, CreatureTemplateId, EntityKind, EntityRef, EntitySnapshot, NpcRole,
     PLAYER_HALF_EXTENTS_UNITS, TICK_HZ, UNITS_PER_METRE, ZoneContent, ZoneSnapshot,
@@ -19,26 +24,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Nose marker in metres: small enough to read as facing, not as a collider.
-const NOSE_SIZE: [f32; 3] = [0.14, 0.14, 0.2];
-/// The nose sits at head height, just in front of the body's face.
-const NOSE_HEIGHT_ABOVE_CENTER: f32 = 0.55;
 const SELF_COLOR: [f32; 3] = [0.95, 0.75, 0.25];
 const PLAYER_COLOR: [f32; 3] = [0.3, 0.6, 0.95];
 const FRIENDLY_COLOR: [f32; 3] = [0.3, 0.62, 0.36];
 const GUARD_COLOR: [f32; 3] = [0.22, 0.52, 0.3];
 const TAPPED_COLOR: [f32; 3] = [0.5, 0.5, 0.5];
 const TARGET_MARKER_COLOR: [f32; 3] = [0.95, 0.82, 0.35];
-/// Corpses keep their colour at this brightness.
-const CORPSE_SHADE: f32 = 0.45;
-/// A corpse lies flat at this thickness.
-const CORPSE_HEIGHT: f32 = 0.16;
 const HEALTH_BAR_WIDTH: f32 = 1.0;
 const HEALTH_BAR_BACKGROUND: [f32; 3] = [0.12, 0.12, 0.14];
 const HEALTH_BAR_FILL: [f32; 3] = [0.18, 0.9, 0.25];
 
-/// Body, nose and two health-bar boxes per projected unit, plus one target marker.
-pub const MAX_SCENE_BOXES: usize = 4 * mmorpg_core::MAX_VISIBLE_ENTITIES + 1;
+/// One model (at most [`MODEL_BOX_BUDGET`] boxes) and two health-bar boxes per
+/// projected unit, plus one target marker.
+pub const MAX_SCENE_BOXES: usize = (MODEL_BOX_BUDGET + 2) * mmorpg_core::MAX_VISIBLE_ENTITIES + 1;
 
 /// A box rotated by `yaw` radians about +Y (0 keeps local +Z on world +Z).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,6 +69,8 @@ pub struct Presentation {
     content: Arc<ZoneContent>,
     history: VecDeque<ZoneSnapshot>,
     latest_received: Instant,
+    /// Origin of the walk-cycle clock.
+    epoch: Instant,
 }
 
 impl Presentation {
@@ -91,6 +91,7 @@ impl Presentation {
             content,
             history: VecDeque::new(),
             latest_received: now,
+            epoch: now,
         })
     }
 
@@ -224,13 +225,13 @@ impl Presentation {
             .collect()
     }
 
-    /// Per-frame bodies, facing markers and living-unit health bars,
-    /// plus a marker under the viewer's target. Static scenery is uploaded
-    /// once (`world::WorldScene`).
+    /// Per-frame unit models, living-unit health bars, plus a marker under
+    /// the viewer's target. Static scenery is uploaded once (`world::WorldScene`).
     #[must_use]
     pub fn scene(&self, now: Instant, view: CameraView) -> Vec<SceneBox> {
         let target = self.latest().and_then(|latest| latest.viewer.target);
         let bar_yaw = (view.target[0] - view.eye[0]).atan2(view.target[2] - view.eye[2]);
+        let seconds = now.saturating_duration_since(self.epoch).as_secs_f32();
         let mut boxes = Vec::new();
         for (entity, unit) in self.units(now) {
             let (color, half) = self.unit_look(entity, &unit.record);
@@ -246,43 +247,23 @@ impl Presentation {
                     yaw: pose.yaw,
                 });
             }
-            if unit.record.flags.dead && entity.kind() == EntityKind::Creature {
-                // A corpse lies flat: its height becomes its length.
-                boxes.push(SceneBox {
-                    position: [
-                        pose.position[0],
-                        feet + CORPSE_HEIGHT / 2.0,
-                        pose.position[2],
-                    ],
-                    size: [size[0], CORPSE_HEIGHT, size[1]],
-                    color: color.map(|channel| channel * CORPSE_SHADE),
-                    yaw: pose.yaw,
-                });
-                continue;
-            }
-            boxes.push(SceneBox {
-                position: pose.position,
-                size,
+            let corpse = unit.record.flags.dead && entity.kind() == EntityKind::Creature;
+            // Horizontal speed in m/s of the sample this pose interpolates from.
+            let [vx, _, vz] = unit.record.velocity;
+            let speed = (vx as f32).hypot(vz as f32) / UNITS_PER_METRE as f32 * TICK_HZ as f32;
+            let gait = Gait::new(speed, seconds, (unit.record.id % 64) as f32);
+            append_unit(
+                &mut boxes,
+                self.unit_model(entity, &unit.record),
                 color,
-                yaw: pose.yaw,
-            });
-            // The nose touches the body's front face: half depth plus half nose depth.
-            let reach = (size[2] + NOSE_SIZE[2]) / 2.0;
-            let height = if entity.kind() == EntityKind::Creature {
-                half[1] * 0.5
-            } else {
-                NOSE_HEIGHT_ABOVE_CENTER
-            };
-            boxes.push(SceneBox {
-                position: [
-                    pose.position[0] + pose.yaw.sin() * reach,
-                    pose.position[1] + height,
-                    pose.position[2] + pose.yaw.cos() * reach,
-                ],
-                size: NOSE_SIZE,
-                color: color.map(|channel| channel * 0.45),
-                yaw: pose.yaw,
-            });
+                Placement {
+                    centre: pose.position,
+                    half,
+                    yaw: pose.yaw,
+                },
+                gait,
+                corpse,
+            );
             if !unit.record.flags.dead && entity.kind() != EntityKind::Npc {
                 append_health_bar(
                     &mut boxes,
@@ -390,6 +371,26 @@ impl Presentation {
             parts.push("attacking".into());
         }
         Some(parts.join(" · "))
+    }
+
+    /// The model a unit is drawn with, from the zone content.
+    fn unit_model(&self, entity: EntityRef, record: &EntitySnapshot) -> UnitModel {
+        let template = (entity.kind() == EntityKind::Creature)
+            .then(|| {
+                self.content
+                    .creature_template(CreatureTemplateId::new(record.appearance))
+            })
+            .flatten();
+        let role = match entity {
+            EntityRef::Npc(id) => self.content.npc(id).map(|npc| npc.role),
+            _ => None,
+        };
+        UnitModel::choose(
+            entity.kind(),
+            template.map(|template| template.family),
+            template.is_some_and(|template| template.elite),
+            role,
+        )
     }
 
     /// Colour and half extents in metres of a unit.
