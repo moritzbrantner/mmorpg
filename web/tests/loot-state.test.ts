@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ErrorCode, LootView } from "../src/replication";
+import type { ErrorCode, LootView, ZoneEvent } from "../src/replication";
 import { LootState } from "../src/world/units/loot-state";
 import { HEALTHY_VIEWER, playerEntity, testSnapshot } from "./support/snapshots";
 
@@ -215,4 +215,19 @@ test("generic death feedback describes the currently dead viewer", () => {
   expect(state.feedback).toContain("while dead");
   expect(state.sheet).toBeNull();
   expect(state.canClaim).toBe(false);
+});
+
+test("a specific claim refusal takes priority over generic capacity feedback in either order", () => {
+  const specific: ZoneEvent = { kind: "error", code: "inventory-full", target: { kind: "creature", id: 108 } };
+  const generic: ZoneEvent = { kind: "error", code: "too-many-intents", target: null };
+  for (const events of [[specific, generic], [generic, specific]]) {
+    const state = new LootState();
+    state.update(projection());
+    intent(state)(projection());
+    state.update({ ...projection(13n), acknowledgedSequence: 24, events });
+    expect(state.feedback).toContain("bags are full");
+    expect(state.sheet).toEqual(sheet());
+    expect(state.copper).toBe(0);
+    expect(state.canClaim).toBe(true);
+  }
 });

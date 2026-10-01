@@ -74,6 +74,7 @@ export class LootState {
     this.#sheet = copySheet(sheet);
     // Only feedback for this pending corpse action belongs in its window.
     if (pending?.sent && !targetChanged && (sheet === null || sameClaim(sheet, pending.sheet))) {
+      let specificRefusal = false;
       for (const event of snapshot.events) {
         if (event.kind !== "error") {
           continue;
@@ -85,9 +86,12 @@ export class LootState {
           continue;
         }
         const message = REFUSALS[event.code];
-        if (message !== null) {
+        if (message !== null && (event.target !== null || !specificRefusal)) {
           this.#feedback = message;
           this.#pending = null;
+          if (event.target !== null) {
+            specificRefusal = true;
+          }
         }
       }
     }
