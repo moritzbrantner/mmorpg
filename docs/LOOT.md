@@ -105,3 +105,18 @@ deterministic hosted wolf hunt and checks money, bags and stale claims through
 connection resume. A WASM integration test repeats the actual hunt and recovers
 an intentionally missed bag sheet. See [PROTOCOL.md](PROTOCOL.md) for v8/v3
 compatibility and [SCENARIOS.md](SCENARIOS.md) for the scenario vocabulary.
+
+## Browser projection state (#108)
+
+`LootState` copies only received copper and the complete optional selected-corpse
+sheet. Increasing ticks within the joined zone/content/viewer identity replace
+that state; absence clears loot, while a dropped publication recovers from the
+next complete sheet. Target/death changes clear old feedback. Reset invalidates
+queued actions even when a session-local ID is reused.
+
+`claimIntent()` queues one existing `Loot` command, then rechecks the freshest
+projection's identity, tick, living viewer, selected creature and death fence at
+dispatch. It never changes rewards, copper or bags. Refused claims retain the
+received sheet; a later acknowledged projection restores the control even when
+cosmetic refusal feedback was lost. Bag recovery stays in the existing bag cache.
+The DOM window and real Chromium interaction are the separate #109 child of #90.
