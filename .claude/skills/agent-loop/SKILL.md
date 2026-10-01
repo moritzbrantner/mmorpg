@@ -56,7 +56,7 @@ For each `spec:draft` issue (often drafted in a ChatGPT chat):
 - **Opus and Sonnet:** each keeps exactly one startable task.
 - **Sol:** keeps up to three. Give Sol only work that nothing else will depend on soon. Examples: native parity, workloads, physics adoption slices, or independent core rules. Put critical-path core work (whatever the next presentation or plan step needs) on `agent:opus`.
 - Never make an Opus or Sonnet task "Start after" an unstarted Sol task.
-- If a Sol task already blocks queued work and has not been started for 24 hours, reassign it to `agent:opus`: swap the label and comment why.
+- If a Sol task already blocks queued work and has not been started for 24 hours, reassign it to `agent:opus`: swap the label, update the header's "Intended implementer" line in the issue body, and comment why.
 
 For each agent below its target:
 
