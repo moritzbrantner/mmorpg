@@ -24,6 +24,7 @@ const START_ATTACK_INTENT: u8 = 2;
 const STOP_ATTACK_INTENT: u8 = 3;
 const RELEASE_SPIRIT_INTENT: u8 = 4;
 const MOVE_ITEM_INTENT: u8 = 5;
+const LOOT_INTENT: u8 = 6;
 const ALIVE: u8 = 1;
 const CORPSE: u8 = 2;
 const DESPAWNED: u8 = 3;
@@ -55,6 +56,7 @@ pub fn encode_canonical_snapshot(
     payload.extend_from_slice(&snapshot.content_revision.to_be_bytes());
     payload.extend_from_slice(&snapshot.content_fingerprint.to_be_bytes());
     payload.extend_from_slice(&snapshot.rng_state.to_be_bytes());
+    payload.extend_from_slice(&snapshot.loot_rng_state.to_be_bytes());
     payload.extend_from_slice(&player_count.to_be_bytes());
     for player in &snapshot.players {
         encode_player(&mut payload, player)?;
@@ -83,6 +85,7 @@ fn encode_player(
     payload.extend_from_slice(&player.inventory_revision.to_be_bytes());
     payload.extend_from_slice(&player.inventory_changed_at.to_be_bytes());
     encode_inventory(payload, &player.inventory);
+    payload.extend_from_slice(&player.copper.to_be_bytes());
     let combat = &player.combat;
     payload.push(combat.level);
     payload.extend_from_slice(&combat.experience.to_be_bytes());
@@ -106,6 +109,11 @@ fn encode_player(
         let (code, target) = match *intent {
             PlayerIntent::SelectTarget(target) => (SELECT_TARGET_INTENT, target),
             PlayerIntent::StartAttack => (START_ATTACK_INTENT, None),
+            PlayerIntent::Loot(claim) => {
+                payload.push(LOOT_INTENT);
+                crate::loot::encode_claim(payload, claim);
+                continue;
+            }
             PlayerIntent::StopAttack => (STOP_ATTACK_INTENT, None),
             PlayerIntent::ReleaseSpirit => (RELEASE_SPIRIT_INTENT, None),
             PlayerIntent::MoveItem {
@@ -176,6 +184,10 @@ fn encode_creature(
     payload.extend_from_slice(&creature.combat_timer.to_be_bytes());
     payload.push(u8::from(creature.tapped_by.is_some()));
     payload.extend_from_slice(&creature.tapped_by.unwrap_or(0).to_be_bytes());
+    payload.push(u8::from(creature.loot.is_some()));
+    if let Some(rewards) = creature.loot {
+        crate::loot::encode_rewards(payload, rewards);
+    }
     Ok(())
 }
 
@@ -186,6 +198,7 @@ pub fn decode_canonical_snapshot(payload: &[u8]) -> Result<CanonicalZoneSnapshot
     let content_revision = u64::from_be_bytes(take(payload, &mut offset)?);
     let content_fingerprint = u64::from_be_bytes(take(payload, &mut offset)?);
     let rng_state = u64::from_be_bytes(take(payload, &mut offset)?);
+    let loot_rng_state = u64::from_be_bytes(take(payload, &mut offset)?);
     let player_count = decode_u16_count(
         payload,
         &mut offset,
@@ -214,6 +227,7 @@ pub fn decode_canonical_snapshot(payload: &[u8]) -> Result<CanonicalZoneSnapshot
         content_revision,
         content_fingerprint,
         rng_state,
+        loot_rng_state,
         players,
         creatures,
     })
@@ -239,6 +253,7 @@ fn decode_player(
     let inventory_revision = u64::from_be_bytes(take(payload, offset)?);
     let inventory_changed_at = u64::from_be_bytes(take(payload, offset)?);
     let inventory = decode_inventory(payload, offset)?;
+    let copper = u32::from_be_bytes(take(payload, offset)?);
     let level = read_u8(payload, offset)?;
     let experience = u32::from_be_bytes(take(payload, offset)?);
     let health = u32::from_be_bytes(take(payload, offset)?);
@@ -257,6 +272,12 @@ fn decode_player(
     let mut intents = Vec::with_capacity(intent_count);
     for _ in 0..intent_count {
         let code = read_u8(payload, offset)?;
+        if code == LOOT_INTENT {
+            intents.push(PlayerIntent::Loot(crate::loot::decode_claim(
+                payload, offset,
+            )?));
+            continue;
+        }
         if code == MOVE_ITEM_INTENT {
             let [source, destination, high, low, reserved] = take(payload, offset)?;
             if reserved != 0 {
@@ -300,6 +321,7 @@ fn decode_player(
         last_sequence,
         spawn_slot,
         inventory,
+        copper,
         inventory_revision,
         inventory_changed_at,
         combat: CanonicalPlayerCombat {
@@ -379,6 +401,11 @@ fn decode_creature(
         (false, 0) => None,
         (false, _) => return Err(ProtocolError::new("malformed creature tap")),
     };
+    let loot = if read_bool(payload, offset)? {
+        Some(crate::loot::decode_rewards(payload, offset)?)
+    } else {
+        None
+    };
     Ok(CanonicalCreatureSnapshot {
         creature_id,
         level,
@@ -392,6 +419,7 @@ fn decode_creature(
         swing_timer,
         combat_timer,
         tapped_by,
+        loot,
     })
 }
 
@@ -407,6 +435,7 @@ mod tests {
     fn snapshot() -> CanonicalZoneSnapshot {
         let wolf = EntityRef::Creature(CreatureId::new(4));
         CanonicalZoneSnapshot {
+            loot_rng_state: 0,
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(42),
             tick: 99,
@@ -415,6 +444,7 @@ mod tests {
             rng_state: u64::MAX,
             players: vec![
                 CanonicalPlayerSnapshot {
+                    copper: 0,
                     player_id: 7,
                     position: [10, 20, -30],
                     velocity: [1, -2, 70_000],
@@ -471,6 +501,7 @@ mod tests {
                     },
                 },
                 CanonicalPlayerSnapshot {
+                    copper: 0,
                     player_id: 8,
                     position: [0; 3],
                     velocity: [0; 3],
@@ -488,6 +519,7 @@ mod tests {
             ],
             creatures: vec![
                 CanonicalCreatureSnapshot {
+                    loot: None,
                     creature_id: CreatureId::new(4),
                     level: 1,
                     health: 30,
@@ -505,6 +537,7 @@ mod tests {
                     tapped_by: Some(7),
                 },
                 CanonicalCreatureSnapshot {
+                    loot: None,
                     creature_id: CreatureId::new(5),
                     level: 1,
                     health: 0,
@@ -522,6 +555,7 @@ mod tests {
                     tapped_by: Some(8),
                 },
                 CanonicalCreatureSnapshot {
+                    loot: None,
                     creature_id: CreatureId::new(6),
                     level: 1,
                     health: 30,
@@ -539,6 +573,7 @@ mod tests {
                     tapped_by: None,
                 },
                 CanonicalCreatureSnapshot {
+                    loot: None,
                     creature_id: CreatureId::new(7),
                     level: 1,
                     health: 12,
@@ -553,6 +588,34 @@ mod tests {
                     tapped_by: None,
                 },
             ],
+        }
+    }
+
+    #[test]
+    fn canonical_loot_stream_balance_rewards_and_pending_fences_round_trip() {
+        let mut state = snapshot();
+        state.loot_rng_state = 0xfedc_ba98_7654_3210;
+        state.players[0].copper = u32::MAX;
+        state.players[0]
+            .combat
+            .intents
+            .push(PlayerIntent::Loot(mmorpg_core::LootClaim {
+                creature: CreatureId::new(5),
+                died_at: 90,
+            }));
+        for item in [
+            None,
+            Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap()),
+        ] {
+            state.creatures[1].loot = Some(mmorpg_core::LootRewards {
+                money: u32::MAX,
+                item,
+            });
+            let encoded = encode_canonical_snapshot(&state).unwrap();
+            assert_eq!(decode_canonical_snapshot(&encoded).unwrap(), state);
+            for length in 0..encoded.len() {
+                assert!(decode_canonical_snapshot(&encoded[..length]).is_err());
+            }
         }
     }
 
@@ -572,13 +635,13 @@ mod tests {
         trailing.push(0);
         assert!(decode_canonical_snapshot(&trailing).is_err());
         // Header 16, identity 24, then the first player record.
-        let jump_flag = 16 + 24 + 2 + 32;
+        let jump_flag = 16 + 32 + 2 + 32;
         assert_eq!(encoded[jump_flag], 1);
         for (offset, value, message) in [
             (jump_flag, 2, "jump flag must be 0 or 1"),
             (0, 4, "unsupported snapshot wire version"),
             (3, 4, "unsupported core snapshot schema version"),
-            (40, 2, "snapshot exceeds configured zone player capacity"),
+            (48, 2, "snapshot exceeds configured zone player capacity"),
         ] {
             let mut invalid = encoded.clone();
             invalid[offset] = value;
@@ -594,8 +657,8 @@ mod tests {
     fn canonical_decoding_rejects_malformed_unit_state() {
         let encoded = encode_canonical_snapshot(&snapshot()).unwrap();
         // Player 7's auto-attack flag follows its target reference.
-        let player = 16 + 24 + 2;
-        let auto_attack = player + 39 + 80 + 1 + 4 + 4 + 5;
+        let player = 16 + 32 + 2;
+        let auto_attack = player + 39 + 84 + 1 + 4 + 4 + 5;
         let intents = auto_attack + 1 + 8;
         let mut cases = vec![
             (auto_attack, 2, "boolean field must be 0 or 1"),
@@ -625,7 +688,7 @@ mod tests {
             ..snapshot()
         };
         let encoded = encode_canonical_snapshot(&without_players).unwrap();
-        let creature = 16 + 24 + 2 + 2;
+        let creature = 16 + 32 + 2 + 2;
         let life = creature + 4 + 1 + 4 + 2 + 24;
         let ai = life + 9;
         for (offset, value, message) in [
@@ -638,7 +701,7 @@ mod tests {
             (ai + 13, 0, "an absent entity must have ID 0"),
             (ai + 12 + 1 + 9 + 4, 2, "boolean field must be 0 or 1"),
             (ai + 12 + 1 + 9 + 4, 0, "malformed creature tap"),
-            (42, 5, "snapshot exceeds the creature spawn capacity"),
+            (50, 5, "snapshot exceeds the creature spawn capacity"),
         ] {
             let mut invalid = encoded.clone();
             invalid[offset] = value;

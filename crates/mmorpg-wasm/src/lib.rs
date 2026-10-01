@@ -57,7 +57,7 @@ impl LocalZone {
         self.host.leave(player)
     }
 
-    /// Applies one command-wire-v2 payload. Returns `true` when applied and
+    /// Applies one command-wire-v3 payload. Returns `true` when applied and
     /// `false` when the sequence is stale; throws for malformed bytes.
     pub fn submit(&mut self, player: u32, sequence: u32, command: &[u8]) -> Result<bool, JsError> {
         self.host

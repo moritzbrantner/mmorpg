@@ -32,6 +32,7 @@ fn zone_at(positions: &[[i32; 3]]) -> ZoneSimulation {
         .iter()
         .enumerate()
         .map(|(slot, &position)| CanonicalPlayerSnapshot {
+            copper: 0,
             // Reverse IDs deliberately: spatial traversal must not change wire order.
             player_id: u32::try_from(positions.len() - slot).unwrap(),
             position,

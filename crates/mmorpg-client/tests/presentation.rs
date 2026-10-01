@@ -18,6 +18,7 @@ fn snapshot(tick: u64, position: [i32; 3]) -> ZoneSnapshot {
 
 fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
     ZoneSnapshot {
+        loot: None,
         schema_version: SNAPSHOT_SCHEMA_VERSION,
         zone_id: ZoneId::new(1),
         tick,

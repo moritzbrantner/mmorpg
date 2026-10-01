@@ -120,3 +120,10 @@ Native smoke explicitly renders the same poses on the GPU; setting
 `MMORPG_SMOKE_FRAME_DIR` saves their PPM frames. Tests verify every source and
 selected node, shared WASM/grid consumption, unchanged surrounding scenery,
 clearance flatness and centimetre boundary continuity.
+
+The authoring captures and adoption checksums above describe revision 4. Corpse
+loot activation changes only live content identity metadata: Greyhaven revision 5,
+fingerprint `5dcb5d3b46dc5451`, snapshot v8/command v3. Live scenery hash is
+`ffd9c5ebe62f7786` and complete browser export fingerprint is `d0937b2905317676`.
+All authored masks, placements, heights and source revision-4 provenance remain
+unchanged; economy identity does not require recapturing geometry.

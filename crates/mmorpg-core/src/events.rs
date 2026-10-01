@@ -37,6 +37,14 @@ pub enum ErrorCode {
     InvalidInventoryMove,
     /// The complete requested quantity cannot fit the destination stack.
     InventoryFull,
+    /// The corpse death is stale, absent or expired.
+    InvalidLoot,
+    /// The viewer did not tap this death.
+    NotLootOwner,
+    /// No rewards remain.
+    EmptyLoot,
+    /// Crediting rewards would overflow the copper balance.
+    MoneyOverflow,
 }
 
 /// One feedback event addressed to a player.

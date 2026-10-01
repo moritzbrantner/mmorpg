@@ -1,12 +1,11 @@
-//! Command wire version 2. Tags 3–7 add targeting, combat and bag moves;
-//! earlier tags are unchanged, so the version stays 2.
+//! Command wire version 3 adds a fenced corpse claim (tag 8).
 
 use mmorpg_core::ZoneCommand;
 
 use crate::ProtocolError;
 use crate::wire::{decode_entity_ref, encode_entity_ref};
 
-pub const COMMAND_WIRE_VERSION: u8 = 2;
+pub const COMMAND_WIRE_VERSION: u8 = 3;
 
 const MOVE_TAG: u8 = 1;
 const JUMP_TAG: u8 = 2;
@@ -15,6 +14,7 @@ const START_ATTACK_TAG: u8 = 4;
 const STOP_ATTACK_TAG: u8 = 5;
 const RELEASE_SPIRIT_TAG: u8 = 6;
 const MOVE_ITEM_TAG: u8 = 7;
+const LOOT_TAG: u8 = 8;
 const MOVE_COMMAND_BYTES: usize = 6;
 const SELECT_TARGET_COMMAND_BYTES: usize = 7;
 const BARE_COMMAND_BYTES: usize = 2;
@@ -32,6 +32,11 @@ pub fn encode_command(command: ZoneCommand) -> Vec<u8> {
             payload.extend_from_slice(&forward.to_be_bytes());
             payload.extend_from_slice(&strafe.to_be_bytes());
             payload.extend_from_slice(&facing.to_be_bytes());
+            payload
+        }
+        ZoneCommand::Loot(claim) => {
+            let mut payload = vec![COMMAND_WIRE_VERSION, LOOT_TAG];
+            crate::loot::encode_claim(&mut payload, claim);
             payload
         }
         ZoneCommand::Jump => vec![COMMAND_WIRE_VERSION, JUMP_TAG],
@@ -79,6 +84,18 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
         }
     };
     match *tag {
+        LOOT_TAG => {
+            if payload.len() != 14 {
+                return Err(ProtocolError::new(
+                    "loot command payload must be exactly 14 bytes",
+                ));
+            }
+            let mut offset = BARE_COMMAND_BYTES;
+            Ok(ZoneCommand::Loot(crate::loot::decode_claim(
+                payload,
+                &mut offset,
+            )?))
+        }
         MOVE_ITEM_TAG => {
             let [_, _, source, destination, high, low] = payload else {
                 return Err(ProtocolError::new(
@@ -142,21 +159,21 @@ mod tests {
             strafe: 1,
             facing: 0xabcd,
         };
-        assert_eq!(encode_command(movement), [2, 1, 0xff, 1, 0xab, 0xcd]);
-        assert_eq!(encode_command(ZoneCommand::Jump), [2, 2]);
+        assert_eq!(encode_command(movement), [3, 1, 0xff, 1, 0xab, 0xcd]);
+        assert_eq!(encode_command(ZoneCommand::Jump), [3, 2]);
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(Some(EntityRef::Creature(
                 CreatureId::new(0x0102_0304)
             )))),
-            [2, 3, 2, 1, 2, 3, 4]
+            [3, 3, 2, 1, 2, 3, 4]
         );
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(None)),
-            [2, 3, 0, 0, 0, 0, 0]
+            [3, 3, 0, 0, 0, 0, 0]
         );
-        assert_eq!(encode_command(ZoneCommand::StartAttack), [2, 4]);
-        assert_eq!(encode_command(ZoneCommand::StopAttack), [2, 5]);
-        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [2, 6]);
+        assert_eq!(encode_command(ZoneCommand::StartAttack), [3, 4]);
+        assert_eq!(encode_command(ZoneCommand::StopAttack), [3, 5]);
+        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [3, 6]);
         for command in [
             movement,
             ZoneCommand::Jump,
@@ -228,9 +245,17 @@ mod tests {
                 destination: 0,
                 quantity: 0,
             },
+            ZoneCommand::Loot(mmorpg_core::LootClaim {
+                creature: CreatureId::new(1),
+                died_at: 99,
+            }),
+            ZoneCommand::Loot(mmorpg_core::LootClaim {
+                creature: CreatureId::new(u32::MAX),
+                died_at: u64::MAX,
+            }),
         ];
         let mut fixture = String::from(
-            "# Command wire v2 golden fixture, verified by mmorpg-protocol and web tests.\n",
+            "# Command wire v3 golden fixture, verified by mmorpg-protocol and web tests.\n",
         );
         for command in commands {
             let hex = encode_command(command)
@@ -244,6 +269,9 @@ mod tests {
                     facing,
                 } => format!("move {forward} {strafe} {facing}"),
                 ZoneCommand::Jump => "jump".to_owned(),
+                ZoneCommand::Loot(claim) => {
+                    format!("loot {} {}", claim.creature.get(), claim.died_at)
+                }
                 ZoneCommand::SelectTarget(None) => "select_target 0 0".to_owned(),
                 ZoneCommand::SelectTarget(Some(target)) => {
                     let kind = match target.kind() {
@@ -269,7 +297,7 @@ mod tests {
 
     #[test]
     fn commands_match_the_shared_golden_fixture() {
-        let checked_in = include_str!("../../../fixtures/protocol/commands-v2.hex");
+        let checked_in = include_str!("../../../fixtures/protocol/commands-v3.hex");
         assert_eq!(checked_in, command_fixture());
         for line in checked_in.lines().filter(|line| !line.starts_with('#')) {
             let hex = line.split_whitespace().next().unwrap();
@@ -278,6 +306,21 @@ mod tests {
                 .map(|offset| u8::from_str_radix(&hex[offset..offset + 2], 16).unwrap())
                 .collect::<Vec<_>>();
             assert_eq!(encode_command(decode_command(&bytes).unwrap()), bytes);
+        }
+    }
+
+    #[test]
+    fn actual_legacy_v2_command_fixture_is_rejected() {
+        for line in include_str!("../../../fixtures/protocol/commands-v2.hex")
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.is_empty())
+        {
+            let hex = line.split_whitespace().next().unwrap();
+            let old = (0..hex.len())
+                .step_by(2)
+                .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+                .collect::<Vec<_>>();
+            assert!(decode_command(&old).is_err());
         }
     }
 
@@ -291,7 +334,11 @@ mod tests {
         let select = encode_command(ZoneCommand::SelectTarget(Some(EntityRef::Creature(
             CreatureId::new(7),
         ))));
-        for encoded in [&movement, &select] {
+        let loot = encode_command(ZoneCommand::Loot(mmorpg_core::LootClaim {
+            creature: CreatureId::new(1),
+            died_at: 99,
+        }));
+        for encoded in [&movement, &select, &loot] {
             for length in 0..encoded.len() {
                 assert!(decode_command(&encoded[..length]).is_err(), "{length}");
             }
@@ -301,18 +348,18 @@ mod tests {
         }
         for tag in [2, 4, 5, 6] {
             assert_eq!(
-                decode_command(&[2, tag, 0]).unwrap_err().to_string(),
+                decode_command(&[3, tag, 0]).unwrap_err().to_string(),
                 "command payload must be exactly 2 bytes",
                 "tag {tag} has no body"
             );
         }
-        for unknown in [0, 8, u8::MAX] {
+        for unknown in [0, 9, u8::MAX] {
             assert_eq!(
-                decode_command(&[2, unknown]).unwrap_err().to_string(),
+                decode_command(&[3, unknown]).unwrap_err().to_string(),
                 "unknown command tag"
             );
         }
-        for version in [1, 3] {
+        for version in [1, 2, 4] {
             let mut other = movement.clone();
             other[0] = version;
             assert_eq!(
@@ -334,13 +381,13 @@ mod tests {
             );
         }
         assert_eq!(
-            decode_command(&[2, 3, 4, 0, 0, 0, 1])
+            decode_command(&[3, 3, 4, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "unknown entity kind"
         );
         assert_eq!(
-            decode_command(&[2, 3, 0, 0, 0, 0, 1])
+            decode_command(&[3, 3, 0, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "an absent entity must have ID 0"

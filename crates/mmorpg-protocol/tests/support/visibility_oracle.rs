@@ -50,6 +50,7 @@ pub fn exhaustive_projection(
         _ => None,
     };
     ZoneSnapshot {
+        loot: None,
         content_revision: canonical.content_revision,
         acknowledged_sequence: observer.last_sequence,
         viewer_id: observer.player_id,
@@ -61,6 +62,7 @@ pub fn exhaustive_projection(
         zone_id: canonical.zone_id,
         tick: canonical.tick,
         viewer: ViewerState {
+            copper: observer.copper,
             experience: combat.experience,
             experience_to_next_level: mmorpg_core::experience_to_next_level(combat.level).unwrap(),
             health: combat.health,

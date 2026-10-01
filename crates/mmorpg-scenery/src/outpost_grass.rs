@@ -48,7 +48,9 @@ mod tests {
     #[test]
     fn saved_family_is_the_exact_original_acceptance_and_other_scenery_is_unchanged() {
         let before = unmasked_greyhaven_vale_scenery();
-        assert_eq!(before.stable_hash(), 0xbfbc_7757_2f3a_f7fd);
+        let mut captured_revision = before.clone();
+        captured_revision.content_revision = 4;
+        assert_eq!(captured_revision.stable_hash(), 0xbfbc_7757_2f3a_f7fd);
         let mut previous_revision = before.clone();
         previous_revision.content_revision = 3;
         assert_eq!(previous_revision.stable_hash(), 0x8495_49d6_874e_b332);

@@ -11,12 +11,12 @@ use mmorpg_core::{
 
 /// Pins every content table of revision 4. Changing creatures, NPCs,
 /// colliders or areas requires a new revision and a new recorded value.
-const FINGERPRINT: u64 = 0x5738_a86d_e795_e940;
+const FINGERPRINT: u64 = 0x5dcb_5d3b_46dc_5451;
 
 #[test]
 fn the_content_identity_is_pinned() {
     let content = greyhaven_vale::content();
-    assert_eq!(content.revision(), 4);
+    assert_eq!(content.revision(), 5);
     assert_eq!(content.rng_seed(), 0x3cbc_808b_be89_b29c);
     assert_eq!(
         content.definition(),

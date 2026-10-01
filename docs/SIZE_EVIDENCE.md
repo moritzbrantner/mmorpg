@@ -57,3 +57,16 @@ retains the exact comparison. The preceding #88 loot catalog measured
 archive bytes. These are raw archive/metadata bytes, not a linked-code or runtime
 cost estimate. Explicit capture passed the unchanged 2 MiB absolute limit;
 the ordinary gate and its adversarial acceptance checks do not update baselines.
+
+The #103 corpse authority/schema-v8 change advances the reviewed baseline to
+**1,971,554 bytes**, SHA-256
+`e02b7da4676de49a783d3959fa50793b3cab882847d5922daf452d1f3b791bc2`.
+Its complete build identity and inputs match the #102 baseline. The cumulative
+78,366-byte increase exceeds the unchanged 65,536-byte growth gate;
+[the failed comparison](../.performance/observations/corpse-loot-v8-growth.json)
+retains the observation. The preceding #105 content-binding archive measured
+1,925,682 bytes, so corpse generation, claim authority and canonical public
+records add 45,872 archive bytes. Raw archives include Rust metadata;
+this is not a linked-code or runtime cost estimate. Explicit capture passed the
+unchanged 2 MiB absolute limit. The ordinary comparison and adversarial acceptance
+checks retain both budgets and never update evidence automatically.

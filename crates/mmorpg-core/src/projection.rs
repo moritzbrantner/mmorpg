@@ -34,6 +34,8 @@ pub struct EntityFlags {
     pub evading: bool,
     /// Its own target is the viewer.
     pub targets_viewer: bool,
+    /// Remaining rewards on a corpse owned by this viewer. Range is checked on claim.
+    pub lootable: bool,
 }
 
 /// One unit in a player-visible projection.
@@ -64,6 +66,7 @@ impl EntitySnapshot {
 /// The viewer's own exact unit state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ViewerState {
+    pub copper: u32,
     pub experience: u32,
     pub experience_to_next_level: u32,
     pub health: u32,
@@ -93,6 +96,8 @@ pub struct ZoneSnapshot {
     pub inventory_revision: u64,
     /// Complete self bag on admission/change ticks and every ten ticks.
     pub inventory: Option<crate::Inventory>,
+    /// Complete eligible selected corpse sheet, repeated every projection.
+    pub loot: Option<crate::LootView>,
     /// Feedback the viewer received this tick.
     pub events: Vec<ZoneEvent>,
     pub entities: Vec<EntitySnapshot>,
@@ -158,6 +163,7 @@ impl ZoneSimulation {
                 zone_id: self.zone_id,
                 tick: self.tick,
                 viewer: ViewerState {
+                    copper: viewer.copper,
                     experience: viewer.experience,
                     experience_to_next_level: crate::experience_to_next_level(viewer.level)
                         .unwrap_or(0),
@@ -174,6 +180,10 @@ impl ZoneSimulation {
                 inventory: (self.tick == viewer.inventory_changed_at
                     || self.tick.is_multiple_of(crate::INVENTORY_RESEND_TICKS))
                 .then(|| viewer.inventory.clone()),
+                loot: match viewer.target {
+                    Some(EntityRef::Creature(id)) => self.loot_view_for(player_id, id)?,
+                    _ => None,
+                },
                 events: viewer.events.clone(),
                 entities,
             },
@@ -274,6 +284,9 @@ impl ZoneSimulation {
                         hostile: template.behaviour == CreatureBehaviour::Aggressive,
                         attackable: alive,
                         tapped_by_other: creature.tapped_by.is_some_and(|tapper| tapper != viewer),
+                        lootable: !alive
+                            && creature.tapped_by == Some(viewer)
+                            && creature.loot.is_some_and(crate::corpse_loot::has_rewards),
                         evading: matches!(creature.ai, CreatureAi::Evading { .. }),
                         targets_viewer,
                     },

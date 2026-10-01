@@ -11,6 +11,7 @@ mod ai;
 mod areas;
 mod combat;
 mod content;
+mod corpse_loot;
 mod creature;
 mod entity;
 mod events;
@@ -34,6 +35,7 @@ pub use content::{
     MAX_WANDER_RADIUS_UNITS, Npc, NpcRole, SpawnGrid, StaticCollider, UNITS_PER_METRE, XzBounds,
     ZoneContent, ZoneDefinition,
 };
+pub use corpse_loot::{LOOT_REACH_UNITS, LootClaim, LootView};
 pub use creature::{
     AGGRO_MAX_RADIUS_UNITS, AGGRO_MIN_RADIUS_UNITS, AGGRO_PER_LEVEL_UNITS, AGGRO_RADIUS_UNITS,
     ARRIVAL_RADIUS_UNITS, ASSIST_RADIUS_UNITS, CREATURE_EVADE_SPEED_UNITS_PER_TICK,
@@ -67,7 +69,7 @@ pub type PlayerId = u32;
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
 /// Core schema of canonical and player-visible snapshots.
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 7;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 8;
 /// Inclusive XZ radius of player-scoped relevance (45 m).
 pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
 /// Deterministic relevance cap of one player projection: the viewer, its
@@ -113,6 +115,8 @@ pub enum ZoneCommand {
     Jump,
     /// Selects a unit, or clears the selection with `None`.
     SelectTarget(Option<EntityRef>),
+    /// Claim all remaining rewards from one fenced corpse death.
+    Loot(LootClaim),
     /// Starts auto-attacking the selected target.
     StartAttack,
     StopAttack,

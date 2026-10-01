@@ -1,6 +1,6 @@
 /**
- * Command wire version 2, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
- * `fixtures/protocol/commands-v2.hex` holds both encoders to the same bytes.
+ * Command wire version 3, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
+ * `fixtures/protocol/commands-v3.hex` holds both encoders to the same bytes.
  * The session supplies player identity and sequence separately.
  */
 import { entityKindCode, isU32, type EntityRef } from "./entity-ref";
@@ -9,6 +9,7 @@ export type Axis = -1 | 0 | 1;
 
 export type WorldCommand =
   | { kind: "move"; forward: Axis; strafe: Axis; facing: number }
+  | { kind: "loot"; creatureId: number; diedAt: bigint }
   | { kind: "jump" }
   /** Selects a unit, or clears the selection with `null`. */
   | { kind: "select-target"; target: EntityRef | null }
@@ -17,7 +18,7 @@ export type WorldCommand =
   | { kind: "release-spirit" }
   | { kind: "move-item"; source: number; destination: number; quantity: number };
 
-const COMMAND_WIRE_VERSION = 2;
+const COMMAND_WIRE_VERSION = 3;
 const MOVE_TAG = 1;
 const JUMP_TAG = 2;
 const SELECT_TARGET_TAG = 3;
@@ -25,6 +26,7 @@ const START_ATTACK_TAG = 4;
 const STOP_ATTACK_TAG = 5;
 const RELEASE_SPIRIT_TAG = 6;
 const MOVE_ITEM_TAG = 7;
+const LOOT_TAG = 8;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
@@ -61,6 +63,18 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       view.setUint8(2, command.source);
       view.setUint8(3, command.destination);
       view.setUint16(4, command.quantity);
+      return payload;
+    }
+    case "loot": {
+      if (!isU32(command.creatureId) || command.diedAt < 0n || command.diedAt > 0xffff_ffff_ffff_ffffn) {
+        throw new Error("Loot claims require a u32 creature and u64 death tick.");
+      }
+      const payload = new Uint8Array(14);
+      const view = new DataView(payload.buffer);
+      view.setUint8(0, COMMAND_WIRE_VERSION);
+      view.setUint8(1, LOOT_TAG);
+      view.setUint32(2, command.creatureId);
+      view.setBigUint64(6, command.diedAt);
       return payload;
     }
     case "jump":

@@ -33,13 +33,8 @@ Money arithmetic widens before computing the inclusive range, supporting
 0..=u32::MAX without overflow.
 
 Public-API tests cover malformed authoring, exact bucket/range boundaries,
-maximum values/weights, every hosted template, reproducibility and unchanged
-live zone snapshots after independent rolls. The catalog is not activated in
-zone gameplay yet: #89 owns death generation, tapper/range/claim fencing,
-remaining corpse rewards, money/bag transactions, canonical state, wire and
-scenario acceptance. #90 owns the browser window. Activation must bind the
-catalog to revisioned content identity and decide the authoritative roll source;
-these standalone rules leave content identity, combat RNG and existing bytes intact.
+maximum values/weights, every hosted template and reproducibility. Greyhaven
+revision 5 activates all seven tables; #90 owns the browser window.
 
 `settle_loot` (#102) credits one validated `LootRewards` value into an inventory
 and u32 copper balance. It checks copper overflow first, then uses the existing
@@ -51,8 +46,8 @@ details, and overflow wins when both limits would be exceeded.
 
 The caller retains the supplied reward and consumes its authoritative claim
 only after success. Settlement itself owns no player identity, eligibility,
-range or duplicate-claim fencing. #103 integrates those preconditions with
-corpse generation, revisions, canonical state and wire recovery under #89.
+range or duplicate-claim fencing. The corpse authority integrates those
+preconditions with generation, revisions, canonical state and wire recovery.
 
 `ZoneContent::with_loot_tables` (#105) binds an explicit nonzero loot revision
 and a bounded table of already validated `LootTable` values. Template IDs must
@@ -64,7 +59,49 @@ Immutable queries expose the revision and ordered rules without allowing mutatio
 Bound content uses fingerprint domain `mmorpg.zone-content/v3`: the existing v2
 content fingerprint, loot revision and every ordered rule field enter identity.
 Thus changing any money bound, outcome kind, item, quantity bound or weight
-refuses recovery against the old identity. Binding retains the declared RNG seed
-and introduces no reward generation or simulation reads. Unbound content keeps
-its existing v2 fingerprint exactly; Greyhaven remains revision 4 and unbound
-until #103 activates the catalog with corpse authority.
+refuses recovery against the old identity. Binding retains the declared RNG seed. Unbound content keeps
+its existing v2 fingerprint exactly. Greyhaven revision 5 binds catalog revision 1
+and has fingerprint `5dcb5d3b46dc5451`, while preserving its physical definition,
+units and revision-3 AI/combat seed `3cbc808bbe89b29c`.
+
+## Corpse authority
+
+On creature death, core draws exactly three values from a separate `ZoneRng`
+initialized with `content.rng_seed() XOR 0x6c6f6f742f763031`. Each value is the
+upper 32 bits of the next 64-bit draw, in money/outcome/quantity order. A bound
+table rolls once; the tapper's corpse retains that result, including an empty
+roll, until successful settlement or expiry. Queries and refused claims draw
+nothing. This stream's state is canonical; it never advances the AI/combat RNG.
+
+`Loot { creature, died_at }` is sequenced and queued like other discrete intents.
+The next tick requires a living sender, that exact unexpired corpse death,
+ownership by its tapper, inclusive 300-unit (3 m) Euclidean distance between
+authoritative centres in XYZ, and nonempty remaining rewards. Ownership does
+not depend on the client's selection. The corpse's projected lootable flag
+means owned rewards exist; range and player life are separate eligibility checks.
+The selected eligible corpse's complete sheet is repeated on every projection.
+
+Settlement stages the fixed bag and u32 copper balance, preflights any bag revision
+increment, then commits both credits and consumes remaining loot together. Full
+bags, copper overflow or revision exhaustion leave player and corpse unchanged.
+Money-only rewards work with a full bag and do not bump its revision. Item credit
+updates the existing bag revision/change tick; periodic complete sheets recover
+a lost update. Duplicate claims cannot credit again, and a respawn's new death
+tick fences claims for an earlier life. Looting preserves the existing corpse
+despawn and respawn schedule. Removing a player clears its tap and rewards, so
+a reused session-local ID cannot inherit them.
+
+Refusals use existing `YouAreDead`, `OutOfRange`, `InventoryFull` and
+`InvalidInventoryMove` (revision exhaustion), plus `InvalidLoot`, `NotLootOwner`,
+`EmptyLoot` and `MoneyOverflow`. Feedback is cosmetic; money, bag revision and
+complete loot presence/state are durable projection facts.
+
+Canonical recovery retains copper, both RNG states, remaining rewards, tapper,
+death tick and pending claims. It validates rewards against the bound table and
+requires an existing owner and unexpired corpse. Raw wire continuation tests
+cover pending, refused and consumed claims; a native two-client transport test
+covers ownership, resume and duplicate credit. `corpse-loot-resume` reuses the
+deterministic hosted wolf hunt and checks money, bags and stale claims through
+connection resume. A WASM integration test repeats the actual hunt and recovers
+an intentionally missed bag sheet. See [PROTOCOL.md](PROTOCOL.md) for v8/v3
+compatibility and [SCENARIOS.md](SCENARIOS.md) for the scenario vocabulary.

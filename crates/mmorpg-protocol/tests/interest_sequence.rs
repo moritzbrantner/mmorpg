@@ -51,6 +51,7 @@ fn zone_at(positions: &[[i32; 3]], definition: ZoneDefinition) -> ZoneSimulation
         .iter()
         .enumerate()
         .map(|(index, &position)| CanonicalPlayerSnapshot {
+            copper: 0,
             player_id: u32::try_from(positions.len() - index).unwrap(),
             position,
             velocity: [0; 3],

@@ -26,6 +26,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlayerIntent {
     SelectTarget(Option<EntityRef>),
+    Loot(crate::LootClaim),
     StartAttack,
     StopAttack,
     ReleaseSpirit,
@@ -119,6 +120,7 @@ pub struct CanonicalPlayerSnapshot {
     pub jump_pending: bool,
     pub last_sequence: u32,
     pub spawn_slot: u16,
+    pub copper: u32,
     pub inventory: crate::Inventory,
     pub inventory_revision: u64,
     pub inventory_changed_at: u64,
@@ -142,6 +144,7 @@ pub struct CanonicalCreatureSnapshot {
     pub swing_timer: u16,
     pub combat_timer: u16,
     pub tapped_by: Option<PlayerId>,
+    pub loot: Option<crate::LootRewards>,
 }
 
 /// Everything authoritative about a zone at a tick boundary, with its
@@ -154,6 +157,7 @@ pub struct CanonicalZoneSnapshot {
     pub content_revision: u64,
     pub content_fingerprint: u64,
     pub rng_state: u64,
+    pub loot_rng_state: u64,
     /// Ordered by player ID.
     pub players: Vec<CanonicalPlayerSnapshot>,
     /// One record per content spawn, in creature-ID order.
@@ -181,6 +185,7 @@ impl ZoneSimulation {
                     jump_pending: state.jump_pending,
                     last_sequence: state.last_sequence,
                     spawn_slot: state.spawn_slot,
+                    copper: state.copper,
                     inventory: state.inventory.clone(),
                     inventory_revision: state.inventory_revision,
                     inventory_changed_at: state.inventory_changed_at,
@@ -238,6 +243,7 @@ impl ZoneSimulation {
                     swing_timer: creature.swing_timer,
                     combat_timer: creature.combat_timer,
                     tapped_by: creature.tapped_by,
+                    loot: creature.loot,
                 })
             })
             .collect::<Result<Vec<_>, ZoneError>>()?;
@@ -248,6 +254,7 @@ impl ZoneSimulation {
             content_revision: self.content.revision(),
             content_fingerprint: self.content.fingerprint(),
             rng_state: self.rng.state(),
+            loot_rng_state: self.loot_rng.state(),
             players,
             creatures,
         })
@@ -276,6 +283,7 @@ impl ZoneSimulation {
         let mut zone = Self::without_creatures(snapshot.zone_id, content)?;
         zone.tick = snapshot.tick;
         zone.rng = ZoneRng::from_state(snapshot.rng_state);
+        zone.loot_rng = ZoneRng::from_state(snapshot.loot_rng_state);
         let mut spawn_slots = BTreeSet::new();
         for player in snapshot.players {
             zone.restore_player(player, &mut spawn_slots)?;
@@ -347,6 +355,7 @@ impl ZoneSimulation {
                 jump_pending: player.jump_pending,
                 last_sequence: player.last_sequence,
                 spawn_slot: player.spawn_slot,
+                copper: player.copper,
                 inventory: player.inventory,
                 inventory_revision: player.inventory_revision,
                 inventory_changed_at: player.inventory_changed_at,
@@ -439,6 +448,30 @@ impl ZoneSimulation {
                 return Err(ZoneError::new("dead creature state is inconsistent"));
             }
         };
+        if let Some(rewards) = record.loot {
+            let valid_corpse = matches!(record.life, CreatureLife::Corpse { died_at }
+                if self.tick < died_at.saturating_add(u64::from(crate::unit::CORPSE_TICKS)));
+            let valid_rewards = content.loot_table(spawn.template).is_some_and(|table| {
+                let [min, max] = table.money_range();
+                (min..=max).contains(&rewards.money)
+                    && table
+                        .outcomes()
+                        .iter()
+                        .any(|outcome| match (outcome, rewards.item) {
+                            (crate::LootOutcome::Nothing { .. }, None) => true,
+                            (crate::LootOutcome::Item { item, quantity, .. }, Some(stack)) => {
+                                stack.item() == *item
+                                    && (quantity[0]..=quantity[1]).contains(&stack.quantity())
+                            }
+                            _ => false,
+                        })
+            });
+            if !valid_corpse || record.tapped_by.is_none() || !valid_rewards {
+                return Err(ZoneError::new(
+                    "corpse loot is inconsistent with life, owner or content",
+                ));
+            }
+        }
         if !matches!(record.ai, CreatureAi::Engaged) && !record.threat.is_empty() {
             return Err(ZoneError::new("only engaged creatures have threat"));
         }
@@ -454,6 +487,7 @@ impl ZoneSimulation {
                 swing_timer: record.swing_timer,
                 combat_timer: record.combat_timer,
                 tapped_by: record.tapped_by,
+                loot: record.loot,
             },
         );
         Ok(())
@@ -473,6 +507,12 @@ impl ZoneSimulation {
             }
         }
         for creature in self.creatures.values() {
+            if creature
+                .tapped_by
+                .is_some_and(|player| !self.players.contains_key(&player))
+            {
+                return Err(ZoneError::new("creature tap names an absent player"));
+            }
             for entry in &creature.threat {
                 let EntityRef::Player(player_id) = entry.entity else {
                     return Err(ZoneError::new("only players can be on a threat table"));

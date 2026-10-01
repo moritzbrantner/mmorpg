@@ -16,7 +16,11 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "invalid-target": "Invalid target.",
   "too-many-intents": "Too many actions at once.",
   "invalid-inventory-move": "Bag move refused.",
-  "inventory-full": "That stack is full.",
+  "inventory-full": "Your bags cannot hold those items.",
+  "invalid-loot": "That corpse is no longer available.",
+  "not-loot-owner": "That loot belongs to another player.",
+  "empty-loot": "No loot remains.",
+  "money-overflow": "You cannot hold any more copper.",
 };
 
 /** A unit's display name: catalog names for creatures and NPCs, "you" for the viewer. */
