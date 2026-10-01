@@ -1,4 +1,7 @@
-use mmorpg_client::presentation::Presentation;
+use mmorpg_client::{
+    camera::OrbitCamera,
+    presentation::{MAX_SCENE_BOXES, Presentation},
+};
 use mmorpg_core::{
     CreatureId, EntityFlags, EntityKind, EntityRef, EntitySnapshot, NpcId, SNAPSHOT_SCHEMA_VERSION,
     ViewerState, ZoneId, ZoneSnapshot, greyhaven_vale,
@@ -86,9 +89,12 @@ fn units_render_on_the_shared_relief_with_entity_dimensions() {
     presentation
         .push(facing_snapshot(1, [x, 90, z], 16_384), now)
         .unwrap();
-    let scene = presentation.scene(now);
-    // Each player renders a body and a facing marker; scenery is static.
-    let [body, nose] = scene[..] else {
+    let scene = presentation.scene(
+        now,
+        OrbitCamera::default().view(presentation.camera_target(now)),
+    );
+    // Body, facing marker and two health-bar boxes; scenery is static.
+    let [body, nose, _, _] = scene[..] else {
         panic!("one body and one nose: {scene:?}");
     };
     let lifted = 0.9 + relief as f32 / 100.0;
@@ -217,10 +223,13 @@ fn creatures_and_npcs_render_by_size_disposition_and_state() {
         },
     ]);
     presentation.push(snapshot, now).unwrap();
-    let scene = presentation.scene(now);
+    let scene = presentation.scene(
+        now,
+        OrbitCamera::default().view(presentation.camera_target(now)),
+    );
     // Player: body + nose; wolf: target marker + body + nose; boar: body +
     // nose; corpse: one flat body; NPC: body + nose.
-    assert_eq!(scene.len(), 2 + 3 + 2 + 1 + 2);
+    assert_eq!(scene.len(), 4 + 5 + 4 + 1 + 2);
     let at = |x: f32, z: f32| {
         scene
             .iter()
@@ -277,4 +286,90 @@ fn scenery_and_content_of_different_revisions_are_refused() {
     let mut scenery = greyhaven_vale_scenery();
     scenery.content_revision += 1;
     assert!(Presentation::new(1, scenery, greyhaven_vale::content(), Instant::now()).is_err());
+}
+
+#[test]
+fn health_bars_use_projected_percent_and_face_the_camera_above_the_body() {
+    let now = Instant::now();
+    for (percent, expected_width) in [(100, 1.0), (43, 0.43), (0, 0.0)] {
+        let mut presentation = presentation(now);
+        let mut sample = snapshot(1, [0, 90, 0]);
+        sample.entities[0].health_percent = percent;
+        // Exact viewer health must not override the entity's quantized record.
+        sample.viewer.health = 1;
+        presentation.push(sample, now).unwrap();
+        let mut camera = OrbitCamera::default();
+        camera.orbit(150.0, 0.0);
+        let view = camera.view(presentation.camera_target(now));
+        let scene = presentation.scene(now, view);
+        let body = scene[0];
+        let background = scene[2];
+        assert!(background.position[1] > body.position[1] + body.size[1] / 2.0);
+        let yaw = (view.target[0] - view.eye[0]).atan2(view.target[2] - view.eye[2]);
+        assert!((background.yaw - yaw).abs() < 1e-5);
+        if percent == 0 {
+            assert_eq!(scene.len(), 3, "zero health has no fill geometry");
+        } else {
+            assert_eq!(scene.len(), 4);
+            let fill = scene[3];
+            assert!((fill.size[0] - expected_width).abs() < 1e-5);
+            assert_eq!(fill.yaw, background.yaw);
+            let dx = fill.position[0] - background.position[0];
+            let dz = fill.position[2] - background.position[2];
+            let local_x = dx * yaw.cos() - dz * yaw.sin();
+            let local_z = dx * yaw.sin() + dz * yaw.cos();
+            assert!((local_x + expected_width / 2.0 - 0.5).abs() < 1e-5);
+            assert!(local_z < 0.0, "the fill sits on the eye side");
+        }
+    }
+}
+
+#[test]
+fn old_packets_cannot_restore_health_and_reset_discards_bars() {
+    let now = Instant::now();
+    let mut presentation = presentation(now);
+    presentation.push(snapshot(10, [0, 90, 0]), now).unwrap();
+    let mut damaged = snapshot(12, [0, 90, 0]);
+    damaged.entities[0].health_percent = 20;
+    presentation.push(damaged, now).unwrap();
+    assert!(!presentation.push(snapshot(11, [0, 90, 0]), now).unwrap());
+    let sampled = now + Duration::from_secs(1);
+    let view = OrbitCamera::default().view(presentation.camera_target(sampled));
+    assert!((presentation.scene(sampled, view)[3].size[0] - 0.2).abs() < 1e-5);
+    presentation.reset(sampled);
+    assert!(presentation.scene(sampled, view).is_empty());
+    presentation.push(snapshot(1, [0, 90, 0]), sampled).unwrap();
+    assert_eq!(presentation.scene(sampled, view)[3].size[0], 1.0);
+    let mut dead = snapshot(2, [0, 90, 0]);
+    dead.entities[0].flags.dead = true;
+    dead.entities[0].health_percent = 0;
+    presentation.push(dead, sampled).unwrap();
+    assert_eq!(
+        presentation
+            .scene(sampled + Duration::from_secs(1), view)
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn maximum_projection_fits_the_instance_budget_and_larger_input_is_refused() {
+    let now = Instant::now();
+    let mut presentation = presentation(now);
+    let mut sample = snapshot(1, [0, 90, 0]);
+    for id in 2..=u32::try_from(mmorpg_core::MAX_VISIBLE_ENTITIES).unwrap() {
+        let mut player = sample.entities[0].clone();
+        player.id = id;
+        sample.entities.push(player);
+    }
+    sample.viewer.target = Some(EntityRef::Player(2));
+    presentation.push(sample.clone(), now).unwrap();
+    let view = OrbitCamera::default().view(presentation.camera_target(now));
+    assert_eq!(presentation.scene(now, view).len(), MAX_SCENE_BOXES);
+    sample.tick += 1;
+    let mut extra = sample.entities[0].clone();
+    extra.id = 100;
+    sample.entities.push(extra);
+    assert!(presentation.push(sample, now).is_err());
+    assert_eq!(presentation.latest().unwrap().tick, 1);
 }

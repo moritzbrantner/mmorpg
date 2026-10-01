@@ -4,7 +4,7 @@
 use crate::{
     ClientError,
     camera::CameraView,
-    presentation::SceneBox,
+    presentation::{MAX_SCENE_BOXES, SceneBox},
     world::{Mesh as WorldMesh, WorldScene},
 };
 use bytemuck::{Pod, Zeroable};
@@ -14,8 +14,7 @@ use three_d_core::{Mesh, Vec3};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-/// A body and a facing marker per player each frame.
-const MAX_DYNAMIC_INSTANCES: usize = 2 * mmorpg_core::MAX_PLAYERS_PER_ZONE;
+const MAX_DYNAMIC_INSTANCES: usize = MAX_SCENE_BOXES;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Sees across the 240 m vale to the mountains 200 m out.
 const FAR_PLANE_METRES: f32 = 600.0;
@@ -490,6 +489,25 @@ pub async fn render_offscreen(
     scene: &[SceneBox],
     view: CameraView,
 ) -> Result<usize, ClientError> {
+    let bytes = offscreen_pixels(world, scene, view).await?;
+    let mut colors = std::collections::BTreeMap::<[u8; 3], usize>::new();
+    for pixel in bytes.as_chunks::<4>().0 {
+        *colors.entry([pixel[0], pixel[1], pixel[2]]).or_default() += 1;
+    }
+    let count = colors.len();
+    let dominant = colors.values().copied().max().unwrap_or(0);
+    let pixels = bytes.len() / 4;
+    if count < 3 || dominant * 4 > pixels * 3 {
+        return Err("GPU frame did not contain visible scene geometry".into());
+    }
+    Ok(count)
+}
+
+async fn offscreen_pixels(
+    world: &WorldScene,
+    scene: &[SceneBox],
+    view: CameraView,
+) -> Result<Vec<u8>, ClientError> {
     const WIDTH: u32 = 640;
     const HEIGHT: u32 = 360;
     let instance = wgpu::Instance::default();
@@ -553,19 +571,83 @@ pub async fn render_offscreen(
     })?;
     receiver.recv_timeout(Duration::from_secs(10))??;
     let bytes = buffer.slice(..).get_mapped_range()?;
-    let mut colors = std::collections::BTreeMap::<[u8; 3], usize>::new();
-    for pixel in bytes.as_chunks::<4>().0 {
-        *colors.entry([pixel[0], pixel[1], pixel[2]]).or_default() += 1;
-    }
+    let pixels = bytes.to_vec();
     drop(bytes);
     buffer.unmap();
-    let count = colors.len();
-    // Terrain and props must cover the frame: no single colour, such as the
-    // sky's clear colour, may fill three quarters of it.
-    let dominant = colors.values().copied().max().unwrap_or(0);
-    let pixels = usize::try_from(WIDTH * HEIGHT)?;
-    if count < 3 || dominant * 4 > pixels * 3 {
-        return Err("GPU frame did not contain visible scene geometry".into());
+    Ok(pixels)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{camera::OrbitCamera, presentation::Presentation};
+    use mmorpg_core::{ZoneId, ZoneSimulation, greyhaven_vale};
+    use mmorpg_scenery::greyhaven_vale_scenery;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore = "requires a GPU; scripts/smoke-native.py runs this explicitly"]
+    fn projected_health_bars_change_gpu_pixels() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let content = greyhaven_vale::content();
+            let mut zone =
+                ZoneSimulation::with_content(ZoneId::new(1), Arc::clone(&content)).unwrap();
+            zone.add_player(1).unwrap();
+            let mut state = zone.snapshot().unwrap();
+            state.players[0].position = [0, 90, -2_000];
+            state.creatures[0].position = [180, 45, -1_700];
+            let scenery = greyhaven_vale_scenery();
+            let world = WorldScene::new(&scenery);
+            let now = Instant::now();
+            let mut frames = Vec::new();
+            for damaged in [false, true] {
+                let mut checkpoint = state.clone();
+                if damaged {
+                    checkpoint.creatures[0].health /= 2;
+                }
+                let restored =
+                    ZoneSimulation::from_snapshot(checkpoint, Arc::clone(&content)).unwrap();
+                let projection = restored.snapshot_for_player(1).unwrap();
+                assert!(projection.entities.iter().any(|entity| {
+                    entity.entity()
+                        == mmorpg_core::EntityRef::Creature(state.creatures[0].creature_id)
+                        && entity.health_percent == if damaged { 50 } else { 100 }
+                }));
+                let mut presentation =
+                    Presentation::new(1, scenery.clone(), Arc::clone(&content), now).unwrap();
+                presentation.push(projection, now).unwrap();
+                let view = OrbitCamera::default().view(presentation.camera_target(now));
+                let pixels = offscreen_pixels(&world, &presentation.scene(now, view), view)
+                    .await
+                    .unwrap();
+                if let Some(directory) = std::env::var_os("MMORPG_SMOKE_FRAME_DIR") {
+                    let directory = std::path::PathBuf::from(directory);
+                    std::fs::create_dir_all(&directory).unwrap();
+                    let mut ppm = b"P6\n640 360\n255\n".to_vec();
+                    for pixel in pixels.as_chunks::<4>().0 {
+                        ppm.extend_from_slice(&pixel[..3]);
+                    }
+                    std::fs::write(
+                        directory.join(if damaged { "damaged.ppm" } else { "full.ppm" }),
+                        ppm,
+                    )
+                    .unwrap();
+                }
+                frames.push(pixels);
+            }
+            let changed = frames[0]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(frames[1].as_chunks::<4>().0)
+                .filter(|(full, damaged)| full != damaged)
+                .count();
+            assert!(
+                changed >= 10,
+                "projected damage must visibly shorten the bar: {changed} pixels"
+            );
+            println!("projected creature damage changed {changed} GPU pixels");
+        });
     }
-    Ok(count)
 }

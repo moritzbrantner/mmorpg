@@ -308,11 +308,9 @@ impl ApplicationHandler for App {
                         return;
                     }
                 }
+                let view = self.camera.view(self.presentation.camera_target(now));
                 if let Some(renderer) = &mut self.renderer
-                    && let Err(error) = renderer.render(
-                        &self.presentation.scene(now),
-                        self.camera.view(self.presentation.camera_target(now)),
-                    )
+                    && let Err(error) = renderer.render(&self.presentation.scene(now, view), view)
                 {
                     self.fail(event_loop, error);
                     return;
