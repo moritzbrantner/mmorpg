@@ -24,6 +24,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Longest frame gap the walk cycle advances over.
+const MAX_GAIT_STEP_SECONDS: f32 = 0.25;
 const SELF_COLOR: [f32; 3] = [0.95, 0.75, 0.25];
 const PLAYER_COLOR: [f32; 3] = [0.3, 0.6, 0.95];
 const FRIENDLY_COLOR: [f32; 3] = [0.3, 0.62, 0.36];
@@ -69,8 +71,10 @@ pub struct Presentation {
     content: Arc<ZoneContent>,
     history: VecDeque<ZoneSnapshot>,
     latest_received: Instant,
-    /// Origin of the walk-cycle clock.
-    epoch: Instant,
+    /// Walk-cycle phase per visible unit, advanced by distance travelled.
+    gait_phases: BTreeMap<EntityRef, f32>,
+    /// Time of the previous `scene` call.
+    last_scene: Instant,
 }
 
 impl Presentation {
@@ -91,7 +95,8 @@ impl Presentation {
             content,
             history: VecDeque::new(),
             latest_received: now,
-            epoch: now,
+            gait_phases: BTreeMap::new(),
+            last_scene: now,
         })
     }
 
@@ -228,12 +233,20 @@ impl Presentation {
     /// Per-frame unit models, living-unit health bars, plus a marker under
     /// the viewer's target. Static scenery is uploaded once (`world::WorldScene`).
     #[must_use]
-    pub fn scene(&self, now: Instant, view: CameraView) -> Vec<SceneBox> {
+    pub fn scene(&mut self, now: Instant, view: CameraView) -> Vec<SceneBox> {
         let target = self.latest().and_then(|latest| latest.viewer.target);
         let bar_yaw = (view.target[0] - view.eye[0]).atan2(view.target[2] - view.eye[2]);
-        let seconds = now.saturating_duration_since(self.epoch).as_secs_f32();
+        // A stall must not fast-forward the limbs.
+        let dt = now
+            .saturating_duration_since(self.last_scene)
+            .as_secs_f32()
+            .min(MAX_GAIT_STEP_SECONDS);
+        self.last_scene = self.last_scene.max(now);
+        let units = self.units(now);
+        self.gait_phases
+            .retain(|entity, _| units.contains_key(entity));
         let mut boxes = Vec::new();
-        for (entity, unit) in self.units(now) {
+        for (entity, unit) in units {
             let (color, half) = self.unit_look(entity, &unit.record);
             let size = half.map(|value| value * 2.0);
             let pose = unit.pose;
@@ -251,7 +264,12 @@ impl Presentation {
             // Horizontal speed in m/s of the sample this pose interpolates from.
             let [vx, _, vz] = unit.record.velocity;
             let speed = (vx as f32).hypot(vz as f32) / UNITS_PER_METRE as f32 * TICK_HZ as f32;
-            let gait = Gait::new(speed, seconds, (unit.record.id % 64) as f32);
+            let phase = self
+                .gait_phases
+                .entry(entity)
+                .or_insert((unit.record.id % 64) as f32);
+            *phase = Gait::advance(*phase, speed, dt);
+            let gait = Gait::new(speed, *phase);
             append_unit(
                 &mut boxes,
                 self.unit_model(entity, &unit.record),

@@ -5,8 +5,7 @@
 //! by translation alone. Every part is placed as a fraction of the unit's full
 //! box (`-0.5..=0.5` per axis, +Z facing), so a model fits any template's box.
 //! Models draw at most [`MODEL_BOX_BUDGET`] boxes and fit their box within 10%
-//! at rest. Walk cycles are pure functions of horizontal speed and presentation
-//! time; speed zero is the exact rest pose.
+//! at rest. Walk-cycle phase accumulates distance travelled (`Gait::advance`); speed zero is the exact rest pose.
 use crate::presentation::SceneBox;
 use mmorpg_core::{CreatureFamily, EntityKind, NpcRole};
 use std::f32::consts::{PI, TAU};
@@ -19,6 +18,8 @@ const NOSE_SIZE: [f32; 3] = [0.14, 0.14, 0.2];
 pub const CORPSE_HEIGHT: f32 = 0.16;
 /// Corpses keep their colour at this brightness.
 pub const CORPSE_SHADE: f32 = 0.45;
+/// Horizontal speed in m/s below which a unit stands at rest.
+const REST_SPEED: f32 = 0.05;
 /// Horizontal speed in m/s at which the walk cycle reaches full swing.
 const FULL_SWING_SPEED: f32 = 3.0;
 /// Ground covered per full leg cycle, in metres.
@@ -90,16 +91,26 @@ impl Gait {
         swing: 0.0,
     };
 
-    /// Deterministic gait from horizontal speed (m/s), presentation time (s)
-    /// and a per-unit offset so a crowd does not step in unison. The phase
-    /// advances with distance covered; the swing grows with speed.
+    /// Phase (radians) after covering `speed` m/s for `dt` seconds: it advances
+    /// with distance travelled, so a speed change never makes it jump.
+    /// Below the rest threshold the phase is held.
     #[must_use]
-    pub fn new(speed: f32, seconds: f32, offset: f32) -> Self {
-        if speed.is_nan() || speed < 0.05 {
+    pub fn advance(phase: f32, speed: f32, dt: f32) -> f32 {
+        if speed.is_nan() || speed < REST_SPEED || dt.is_nan() || dt <= 0.0 {
+            return phase;
+        }
+        (phase + dt * speed * TAU / STRIDE_METRES).rem_euclid(TAU)
+    }
+
+    /// Gait from an accumulated phase and the current horizontal speed (m/s);
+    /// the swing grows with speed and speed zero is the exact rest pose.
+    #[must_use]
+    pub fn new(speed: f32, phase: f32) -> Self {
+        if speed.is_nan() || speed < REST_SPEED {
             return Self::IDLE;
         }
         Self {
-            phase: (seconds * speed * TAU / STRIDE_METRES + offset).rem_euclid(TAU),
+            phase,
             swing: (speed / FULL_SWING_SPEED).clamp(0.0, 1.0),
         }
     }

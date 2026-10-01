@@ -122,13 +122,13 @@ fn models_fit_their_box_within_ten_percent_and_the_box_budget() {
 
 #[test]
 fn units_are_idle_at_zero_speed_and_move_their_legs_when_running() {
-    assert_eq!(Gait::new(0.0, 12.3, 5.0), Gait::IDLE);
-    assert_eq!(Gait::new(0.01, 12.3, 5.0), Gait::IDLE);
-    assert_eq!(Gait::new(6.3, 1.0, 0.0), Gait::new(6.3, 1.0, 0.0));
+    assert_eq!(Gait::new(0.0, 12.3), Gait::IDLE);
+    assert_eq!(Gait::new(0.01, 12.3), Gait::IDLE);
+    assert_eq!(Gait::new(6.3, 1.0), Gait::new(6.3, 1.0));
     for (model, half) in every_model() {
         let rest = draw(model, half, Gait::IDLE, false);
-        assert_eq!(rest, draw(model, half, Gait::new(0.0, 3.0, 1.0), false));
-        let running = draw(model, half, Gait::new(6.3, 0.2, 0.0), false);
+        assert_eq!(rest, draw(model, half, Gait::new(0.0, 3.0), false));
+        let running = draw(model, half, Gait::new(6.3, 0.2), false);
         assert_eq!(rest.len(), running.len());
         let moved = rest.iter().zip(&running).filter(|(a, b)| a != b).count();
         assert!(moved >= 4, "{model:?} moved {moved} boxes");
@@ -163,16 +163,30 @@ fn corpses_lie_flat_and_darkened() {
 #[test]
 fn unknown_templates_keep_the_single_box_with_a_nose() {
     let half = [0.4, 0.45, 0.4];
-    let boxes = draw(
-        UnitModel::Placeholder,
-        half,
-        Gait::new(6.3, 1.0, 0.0),
-        false,
-    );
+    let boxes = draw(UnitModel::Placeholder, half, Gait::new(6.3, 1.0), false);
     assert_eq!(boxes.len(), 2);
     assert_eq!(boxes[0].size, [0.8, 0.9, 0.8]);
     assert!(boxes[1].position[2] > 0.4, "the nose is in front");
     let corpse = draw(UnitModel::Placeholder, half, Gait::IDLE, true);
     assert_eq!(corpse.len(), 1);
     assert!(corpse[0].size[1] < 0.2);
+}
+
+#[test]
+fn walk_phase_is_continuous_across_speed_changes() {
+    use std::f32::consts::{PI, TAU};
+    let dt = 1.0 / 60.0;
+    let wrapped = |a: f32, b: f32| ((a - b + PI).rem_euclid(TAU) - PI).abs();
+    let mut phase = 1.0;
+    for speed in [2.0_f32, 2.0, 7.0, 7.0, 2.0, 0.3, 7.0] {
+        let next = Gait::advance(phase, speed, dt);
+        // The step is proportional to the new speed, never a jump to a
+        // different time-times-speed product.
+        let step = wrapped(next, phase);
+        assert!(step < 0.7, "phase jumped at speed {speed}: {step}");
+        assert!((step - Gait::advance(0.0, speed, dt)).abs() < 1e-4);
+        phase = next;
+    }
+    // Standing still holds the phase.
+    assert_eq!(Gait::advance(phase, 0.0, dt), phase);
 }
