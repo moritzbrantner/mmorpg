@@ -190,3 +190,35 @@ fn walk_phase_is_continuous_across_speed_changes() {
     // Standing still holds the phase.
     assert_eq!(Gait::advance(phase, 0.0, dt), phase);
 }
+
+#[test]
+fn swing_eases_at_a_bounded_rate_and_settles_to_rest() {
+    use mmorpg_client::unit_models::SWING_RATE;
+    let dt = 1.0 / 60.0;
+    let mut gait = Gait {
+        phase: 1.0,
+        swing: 0.0,
+    };
+    let run = |gait: &mut Gait, speed: f32, frames: usize| {
+        for _ in 0..frames {
+            let next = gait.step(speed, dt);
+            assert!((next.swing - gait.swing).abs() <= SWING_RATE * dt + 1e-6);
+            assert!((0.0..=1.0).contains(&next.swing));
+            *gait = next;
+        }
+    };
+    run(&mut gait, 6.3, 5);
+    assert!(gait.swing > 0.0 && gait.swing < 1.0);
+    run(&mut gait, 6.3, 30);
+    assert_eq!(gait.swing, 1.0);
+    run(&mut gait, 0.0, 5);
+    assert!(gait.swing > 0.0 && gait.swing < 1.0);
+    let phase = gait.phase;
+    run(&mut gait, 0.0, 1);
+    assert_ne!(gait.phase, phase, "phase keeps advancing while settling");
+    run(&mut gait, 0.0, 30);
+    assert_eq!(gait.swing, 0.0);
+    let held = gait.phase;
+    run(&mut gait, 0.0, 10);
+    assert_eq!(gait.phase, held);
+}

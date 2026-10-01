@@ -71,8 +71,8 @@ pub struct Presentation {
     content: Arc<ZoneContent>,
     history: VecDeque<ZoneSnapshot>,
     latest_received: Instant,
-    /// Walk-cycle phase per visible unit, advanced by distance travelled.
-    gait_phases: BTreeMap<EntityRef, f32>,
+    /// Walk-cycle phase and eased swing per visible unit.
+    gaits: BTreeMap<EntityRef, Gait>,
     /// Time of the previous `scene` call.
     last_scene: Instant,
 }
@@ -95,7 +95,7 @@ impl Presentation {
             content,
             history: VecDeque::new(),
             latest_received: now,
-            gait_phases: BTreeMap::new(),
+            gaits: BTreeMap::new(),
             last_scene: now,
         })
     }
@@ -243,8 +243,7 @@ impl Presentation {
             .min(MAX_GAIT_STEP_SECONDS);
         self.last_scene = self.last_scene.max(now);
         let units = self.units(now);
-        self.gait_phases
-            .retain(|entity, _| units.contains_key(entity));
+        self.gaits.retain(|entity, _| units.contains_key(entity));
         let mut boxes = Vec::new();
         for (entity, unit) in units {
             let (color, half) = self.unit_look(entity, &unit.record);
@@ -264,12 +263,12 @@ impl Presentation {
             // Horizontal speed in m/s of the sample this pose interpolates from.
             let [vx, _, vz] = unit.record.velocity;
             let speed = (vx as f32).hypot(vz as f32) / UNITS_PER_METRE as f32 * TICK_HZ as f32;
-            let phase = self
-                .gait_phases
-                .entry(entity)
-                .or_insert((unit.record.id % 64) as f32);
-            *phase = Gait::advance(*phase, speed, dt);
-            let gait = Gait::new(speed, *phase);
+            let state = self.gaits.entry(entity).or_insert(Gait {
+                phase: (unit.record.id % 64) as f32,
+                swing: 0.0,
+            });
+            *state = state.step(speed, dt);
+            let gait = *state;
             append_unit(
                 &mut boxes,
                 self.unit_model(entity, &unit.record),

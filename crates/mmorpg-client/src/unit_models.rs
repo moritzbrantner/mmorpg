@@ -5,7 +5,7 @@
 //! by translation alone. Every part is placed as a fraction of the unit's full
 //! box (`-0.5..=0.5` per axis, +Z facing), so a model fits any template's box.
 //! Models draw at most [`MODEL_BOX_BUDGET`] boxes and fit their box within 10%
-//! at rest. Walk-cycle phase accumulates distance travelled (`Gait::advance`); speed zero is the exact rest pose.
+//! at rest. Walk-cycle phase accumulates distance travelled (`Gait::step`, easing the swing); speed zero is the exact rest pose.
 use crate::presentation::SceneBox;
 use mmorpg_core::{CreatureFamily, EntityKind, NpcRole};
 use std::f32::consts::{PI, TAU};
@@ -22,6 +22,8 @@ pub const CORPSE_SHADE: f32 = 0.45;
 const REST_SPEED: f32 = 0.05;
 /// Horizontal speed in m/s at which the walk cycle reaches full swing.
 const FULL_SWING_SPEED: f32 = 3.0;
+/// Swing change per second: the full range takes 0.2 s.
+pub const SWING_RATE: f32 = 5.0;
 /// Ground covered per full leg cycle, in metres.
 const STRIDE_METRES: f32 = 2.5;
 
@@ -100,6 +102,29 @@ impl Gait {
             return phase;
         }
         (phase + dt * speed * TAU / STRIDE_METRES).rem_euclid(TAU)
+    }
+
+    /// Next gait state: the swing eases toward its target for `speed` at
+    /// `SWING_RATE`, and the phase keeps advancing while any swing remains,
+    /// so limbs settle instead of snapping to or from the rest pose.
+    #[must_use]
+    pub fn step(self, speed: f32, dt: f32) -> Self {
+        let speed = if speed.is_nan() || speed < REST_SPEED {
+            0.0
+        } else {
+            speed
+        };
+        let dt = if dt.is_nan() { 0.0 } else { dt.max(0.0) };
+        let target = (speed / FULL_SWING_SPEED).clamp(0.0, 1.0);
+        let max_delta = SWING_RATE * dt;
+        let swing = self.swing + (target - self.swing).clamp(-max_delta, max_delta);
+        let phase = if swing > 0.0 {
+            let effective = speed.max(swing * FULL_SWING_SPEED);
+            (self.phase + dt * effective * TAU / STRIDE_METRES).rem_euclid(TAU)
+        } else {
+            self.phase
+        };
+        Self { phase, swing }
     }
 
     /// Gait from an accumulated phase and the current horizontal speed (m/s);
