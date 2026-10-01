@@ -98,7 +98,7 @@ fn main() -> Result<(), ClientError> {
             presentation.push(snapshot, Instant::now())?;
             let now = Instant::now();
             let view = OrbitCamera::default().view(presentation.camera_target(now));
-            let colors = render_offscreen(&world, &presentation.scene(now), view).await?;
+            let colors = render_offscreen(&world, &presentation.scene(now, view), view).await?;
             println!("{{\"event\":\"client_smoke_passed\",\"player_id\":{player_id},\"tick\":{tick},\"connection_epoch\":{connection_epoch},\"rendered_colors\":{colors}}}");
             Ok(())
         });

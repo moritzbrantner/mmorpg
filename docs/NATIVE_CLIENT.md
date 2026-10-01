@@ -14,7 +14,7 @@ The smoke helper additionally needs Python 3 and OpenSSL. Rust integration tests
 python3 scripts/smoke-native.py --window
 ```
 
-The helper builds locked sources, creates a disposable certificate/key, starts a real host on OS-selected ports, waits for readiness, connects the client, resumes the same player on a new connection epoch, and reads back a rendered GPU frame of the vale, which must contain several colours with no single colour (such as the sky) covering three quarters of it. With `--window`, it then opens a native game window for 120 frames. It stops its processes and removes temporary credentials on success or failure.
+The helper builds locked sources, creates a disposable certificate/key, starts a real host on OS-selected ports, waits for readiness, connects the client, resumes the same player on a new connection epoch, and reads back a rendered GPU frame of the vale, which must contain several colours with no single colour (such as the sky) covering three quarters of it. It also runs the explicit GPU health-bar test: restore two authoritative fixtures differing only in one creature's health, project them through core, and require visible pixel changes. With `--window`, it then opens a native game window for 120 frames. It stops its processes and removes temporary credentials on success or failure.
 
 ## Interactive play
 
@@ -54,7 +54,7 @@ Controls:
 
 The third-person camera orbits your gold avatar; other players are blue. Each body shows a small dark nose on its facing side. While a movement key is held, your character turns to face the camera's direction, so W always runs away from the camera; releasing the keys leaves the character facing where it last moved. Running and strafing move at 6.3 m/s, backpedalling is slower. Losing focus clears held movement. Movement is sent on change and retransmitted at 20 Hz so a lost key-release datagram is corrected; each Space, Tab, F or R press sends one command and is never replayed after a reconnect.
 
-Creatures and NPCs are placeholder boxes sized by their collision boxes, with the same facing nose: hostile creatures red-ish, neutral ones yellow-ish, friendly NPCs green (guards darker), creatures tapped by another player grey. Corpses lie flat and darkened, and a gold marker stands under your target. The window title shows your health, combat state, target (name from the zone content, level and health percent) and whether you are attacking, or that R releases your spirit. Targeting and attacking are intents: the zone validates range and target and reports refusals as events. There is no local movement prediction yet, so input response includes network and interpolation delay.
+Creatures and NPCs are placeholder boxes sized by their collision boxes, with the same facing nose: hostile creatures red-ish, neutral ones yellow-ish, friendly NPCs green (guards darker), creatures tapped by another player grey. Corpses lie flat and darkened, and a gold marker stands under your target. Living players and creatures show a green health bar above their rendered bodies, aligned with the orbit camera's horizontal direction. Its fill uses the received quantized health percentage and follows the interpolated snapshot sample; NPCs and corpses omit bars. The window title shows your health, combat state, target (name from the zone content, level and health percent) and whether you are attacking, or that R releases your spirit. Targeting and attacking are intents: the zone validates range and target and reports refusals as events. There is no local movement prediction yet, so input response includes network and interpolation delay.
 
 The default endpoint is `https://localhost:4433/game/matches/zone-1`. For another configured zone:
 
@@ -78,7 +78,7 @@ A rejected, expired, incompatible, or incomplete resume ends the session with an
 
 - This is a connected gameplay/graphics slice, not a production account system. Sessions are anonymous; account/character binding, persistent resume across application launches, and live zone handoff are pending.
 - The host remains standalone; do not run competing hosts for one zone without the planned distributed lease integration.
-- Scenery and units are a coloured blockout (boxes for trunks and canopies, walls, roof slabs, creatures and NPCs), not final art; full presentation parity is issue #28. Combat feedback is limited to the window title: target frames, nameplates and combat text come with #22's browser step and #28. Classes, inventory and NPC interaction are not implemented.
+- Scenery and units are a coloured blockout (boxes for trunks and canopies, walls, roof slabs, creatures and NPCs), not final art; full presentation parity is issue #28. Combat feedback includes projected world-space health bars and window-title status; target frames, nameplates and combat text remain pending. Classes, inventory and NPC interaction are not implemented.
 - The shared transport fragments oversized session snapshots and the client reassembles them per connection. The current v5 MMO projection policy still keeps at most 64 relevant units and packs as many 21-byte records as fit 1,077 bytes (48 without events); additional projected sections require a separate protocol and budget change.
 - The built-in Greyhaven Vale (content revision 3, with creatures and NPCs) and snapshot v5 change the standalone host's initial simulation state. Recovery bundles captured with earlier content or snapshot versions cannot be silently reused; arrange an explicit migration or fresh development state.
 - Linux is the exercised desktop platform in this change. Windows/macOS builds and installers remain unverified.
@@ -96,3 +96,11 @@ python3 scripts/smoke-native.py --window
 The live convention stack for this change resolved to sourceRevision `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`. No existing locked package identity was removed during native dependency acquisition.
 
 Native resume was implemented from repository baseline `80acad9d0d810fd048019fd824d42a1633774953`. At that baseline the shared `game-server` pin was `769de47005cc37891011fc76ae183c18b7c5e0ae`; the current pin is listed in the README. The client now directly declares the already-locked `url` 2.5.8 parser; no locked package version changed.
+
+Health-bar slice (#71): rendering keeps the existing instanced-box path with at
+most four boxes per admitted unit plus one target marker (257 at the core
+projection cap of 64). Oversized presentation input fails before history changes.
+No gameplay, projection bytes or scenery identity changes. The optional
+`MMORPG_SMOKE_FRAME_DIR` environment variable saves the full/damaged GPU fixtures
+as PPM files during native smoke. These are test artifacts, not gameplay state.
+Resolved conventions sourceRevision: `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
