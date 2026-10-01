@@ -1,4 +1,4 @@
-# Starter loot rules (#88)
+# Starter loot rules
 
 The immutable rule catalog has revision 1 and one table per hosted creature
 template. Each roll yields u32 copper and at most one ordinary item stack.
@@ -39,4 +39,17 @@ zone gameplay yet: #89 owns death generation, tapper/range/claim fencing,
 remaining corpse rewards, money/bag transactions, canonical state, wire and
 scenario acceptance. #90 owns the browser window. Activation must bind the
 catalog to revisioned content identity and decide the authoritative roll source;
-this pure-rule slice leaves content identity, combat RNG and existing bytes intact.
+these standalone rules leave content identity, combat RNG and existing bytes intact.
+
+`settle_loot` (#102) credits one validated `LootRewards` value into an inventory
+and u32 copper balance. It checks copper overflow first, then uses the existing
+allocation-free, ordered, atomic bag insertion. Either both credits succeed or
+both inputs remain unchanged. Money-only rewards work with a full bag; an empty
+reward is a successful no-op; item-only rewards work at the maximum copper
+balance. Overflow refuses rather than saturating. Typed errors retain bag refusal
+details, and overflow wins when both limits would be exceeded.
+
+The caller retains the supplied reward and consumes its authoritative claim
+only after success. Settlement itself owns no player identity, eligibility,
+range or duplicate-claim fencing. #103 integrates those preconditions with
+corpse generation, revisions, canonical state and wire recovery under #89.

@@ -45,3 +45,15 @@ seed identity. The new APIs and stored records explain expected feature growth;
 this archive includes Rust metadata and is not a linked-code cost estimate.
 The absolute 2 MiB and per-baseline 64 KiB budgets remain unchanged. The explicit
 capture passed the absolute budget, and the ordinary gate never updated evidence.
+
+The #102 atomic loot settlement change advances the reviewed baseline to
+**1,893,188 bytes**, SHA-256
+`1111e9b8119b7f18b6f2895326e74d420ff2a454b062a58888d05eba75b1b0c5`.
+Its complete build identity matches the inventory baseline. The cumulative
+74,880-byte increase exceeded the unchanged 65,536-byte growth gate; the
+[failed observation](../.performance/observations/loot-settlement-growth.json)
+retains the exact comparison. The preceding #88 loot catalog measured
+1,880,316 bytes, so this public settlement function and typed error add 12,872
+archive bytes. These are raw archive/metadata bytes, not a linked-code or runtime
+cost estimate. Explicit capture passed the unchanged 2 MiB absolute limit;
+the ordinary gate and its adversarial acceptance checks do not update baselines.
