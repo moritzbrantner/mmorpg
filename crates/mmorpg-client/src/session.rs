@@ -16,8 +16,9 @@ const FACING_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / TICK_HZ a
 
 /// Latest local input published by the window: held movement plus counted
 /// discrete presses. Each counter (`jumps`, `selections`, `attack_requests`,
-/// `releases`) makes the session send one command when it advances, so
-/// coalesced watch updates can merge presses but never replay them.
+/// `releases`, `ability_uses`, `cancels`) makes the session send one command
+/// when it advances, so coalesced watch updates can merge presses but never
+/// replay them.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PlayerInput {
     pub forward: i8,
@@ -31,6 +32,10 @@ pub struct PlayerInput {
     pub attack: bool,
     pub attack_requests: u32,
     pub releases: u32,
+    /// The latest requested ability ID.
+    pub ability: u8,
+    pub ability_uses: u32,
+    pub cancels: u32,
 }
 
 #[derive(Clone)]
@@ -47,12 +52,15 @@ pub enum NetworkUpdate {
 }
 
 /// Commands to send for one input observation, in order: a selection, an
-/// attack start or stop, a spirit release, a jump, then a move.
+/// attack start or stop, a spirit release, a cast cancellation, an ability,
+/// a jump, then a move.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Outgoing {
     select: Option<Option<EntityRef>>,
     attack: Option<bool>,
     release: bool,
+    cancel: bool,
+    ability: Option<u8>,
     jump: bool,
     movement: Option<(i8, i8, u16)>,
 }
@@ -67,6 +75,12 @@ impl Outgoing {
         }
         if self.release {
             session.send_release_spirit()?;
+        }
+        if self.cancel {
+            session.send_cancel_cast()?;
+        }
+        if let Some(ability) = self.ability {
+            session.send_use_ability(ability)?;
         }
         if self.jump {
             session.send_jump()?;
@@ -86,6 +100,8 @@ struct Presses {
     selections: u32,
     attack_requests: u32,
     releases: u32,
+    ability_uses: u32,
+    cancels: u32,
 }
 
 impl Presses {
@@ -95,6 +111,8 @@ impl Presses {
             selections: input.selections,
             attack_requests: input.attack_requests,
             releases: input.releases,
+            ability_uses: input.ability_uses,
+            cancels: input.cancels,
         }
     }
 }
@@ -144,6 +162,8 @@ impl Outbox {
             select: (pressed.selections != handled.selections).then_some(input.target),
             attack: (pressed.attack_requests != handled.attack_requests).then_some(input.attack),
             release: pressed.releases != handled.releases,
+            cancel: pressed.cancels != handled.cancels,
+            ability: (pressed.ability_uses != handled.ability_uses).then_some(input.ability),
             jump: pressed.jumps != handled.jumps,
             movement,
         }
@@ -426,6 +446,29 @@ mod tests {
             outbox.changes(held(1, 0, 600, 0), start + 5 * TICK),
             only_move(1, 0, 600)
         );
+    }
+
+    #[test]
+    fn ability_uses_and_cast_cancels_are_sent_once_per_press() {
+        let now = Instant::now();
+        let mut outbox = sent(PlayerInput::default(), now);
+        let input = PlayerInput {
+            ability: 9,
+            ability_uses: 3,
+            cancels: 1,
+            ..PlayerInput::default()
+        };
+        assert_eq!(
+            outbox.changes(input, now),
+            Outgoing {
+                cancel: true,
+                ability: Some(9),
+                ..Outgoing::default()
+            },
+            "merged presses send the latest ability once"
+        );
+        assert_eq!(outbox.changes(input, now), Outgoing::default());
+        assert_eq!(outbox.heartbeat(input, now + TICK), only_move(0, 0, 0));
     }
 
     #[test]

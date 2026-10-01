@@ -276,6 +276,24 @@ fn creatures_and_npcs_render_by_size_disposition_and_state() {
         presentation.status().unwrap(),
         "HP 38/50 · in combat · target Timber Wolf (L2, 43%) · attacking"
     );
+    let mut caster = presentation.latest().unwrap().clone();
+    caster.tick += 1;
+    caster.viewer.resource = Some(mmorpg_core::ResourceView {
+        kind: mmorpg_core::ResourceKind::Mana,
+        value: 85,
+        max: 110,
+    });
+    caster.viewer.cast = Some(mmorpg_core::CastView {
+        ability: mmorpg_core::AbilityId::new(9),
+        elapsed: 20,
+        total: 60,
+        channel: false,
+    });
+    presentation.push(caster, now).unwrap();
+    assert_eq!(
+        presentation.status().unwrap(),
+        "HP 38/50 · mana 85/110 · casting Firebolt 20/60 · in combat · target Timber Wolf (L2, 43%) · attacking"
+    );
     assert_eq!(
         presentation.unit_name(EntityRef::Npc(NpcId::new(6))),
         "Greyhaven Guard"

@@ -301,6 +301,24 @@ impl ClientSession {
         self.send_command(ZoneCommand::ReleaseSpirit)
     }
 
+    /// Chooses the class and sex once; the zone refuses a repeat with an event.
+    pub fn send_choose_class(&mut self, class: u8, sex: u8) -> Result<(), SessionError> {
+        self.send_command(ZoneCommand::ChooseClass { class, sex })
+    }
+
+    /// Uses a class ability at the current selection; the zone validates it.
+    pub fn send_use_ability(&mut self, ability: u8) -> Result<(), SessionError> {
+        self.send_command(ZoneCommand::UseAbility {
+            ability,
+            target: None,
+        })
+    }
+
+    /// Stops the character's own cast or channel.
+    pub fn send_cancel_cast(&mut self) -> Result<(), SessionError> {
+        self.send_command(ZoneCommand::CancelCast)
+    }
+
     /// Claims all remaining rewards from the projected corpse death.
     pub fn send_loot(&mut self, claim: mmorpg_core::LootClaim) -> Result<(), SessionError> {
         self.send_command(ZoneCommand::Loot(claim))

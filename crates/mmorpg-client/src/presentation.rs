@@ -364,6 +364,18 @@ impl Presentation {
             return Some("dead — R releases your spirit".into());
         }
         let mut parts = vec![format!("HP {}/{}", viewer.health, viewer.max_health)];
+        if let Some(resource) = viewer.resource {
+            parts.push(format!(
+                "{} {}/{}",
+                resource.kind.name(),
+                resource.value,
+                resource.max
+            ));
+        }
+        if let Some(cast) = viewer.cast {
+            let name = mmorpg_core::ability_by_id(cast.ability).map_or("ability", |a| a.name);
+            parts.push(format!("casting {name} {}/{}", cast.elapsed, cast.total));
+        }
         if viewer.in_combat {
             parts.push("in combat".into());
         }
