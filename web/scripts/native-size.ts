@@ -51,11 +51,10 @@ function measure(): SizeEvidenceResult {
   if (process.platform !== "linux" || process.arch !== "x64") {
     return failure("unavailable", "The maintained native pilot supports Linux x64 only.");
   }
-  const override = Object.keys(process.env).find(
-    (name) =>
-      /^(RUSTFLAGS|RUSTC|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_RUSTFLAGS|CARGO_BUILD_RUSTC.*|CARGO_INCREMENTAL|CARGO_BUILD_INCREMENTAL|CARGO_TARGET_.+_RUSTFLAGS|CARGO_PROFILE_RELEASE_.+|RUSTUP_TOOLCHAIN)$/.test(
-        name,
-      ) && process.env[name],
+  const override = Object.keys(process.env).find((name) =>
+    /^(RUSTFLAGS|RUSTC|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_RUSTFLAGS|CARGO_BUILD_RUSTC.*|CARGO_INCREMENTAL|CARGO_BUILD_INCREMENTAL|CARGO_TARGET_.+_RUSTFLAGS|CARGO_PROFILE_RELEASE_.+|RUSTUP_TOOLCHAIN)$/.test(
+      name,
+    ),
   );
   if (override) {
     return failure("unavailable", `Ambient ${override} would change the declared native build.`);

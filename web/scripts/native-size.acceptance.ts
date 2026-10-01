@@ -37,6 +37,9 @@ assert.equal(JSON.parse(overridden.stdout).status, "unavailable");
 const compilerOverride = run([], { ...process.env, RUSTC: "/mmorpg-size-missing-rustc" });
 assert.equal(compilerOverride.status, 2, compilerOverride.stderr);
 assert.equal(JSON.parse(compilerOverride.stdout).status, "unavailable");
+const emptyEncodedFlags = run([], { ...process.env, CARGO_ENCODED_RUSTFLAGS: "" });
+assert.equal(emptyEncodedFlags.status, 2, emptyEncodedFlags.stderr);
+assert.equal(JSON.parse(emptyEncodedFlags.stdout).status, "unavailable");
 
 const fixture = mkdtempSync(join(tmpdir(), "mmorpg-native-size-"));
 try {

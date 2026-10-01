@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "operation": "size-evidence",
   "status": "passed",
-  "durationMs": 63,
+  "durationMs": 59,
   "data": {
     "schemaVersion": "coding-tooling/size-evidence/v1",
     "metric": "raw-artifact-bytes",
@@ -10,7 +10,7 @@
       {
         "id": "mmorpg-core-release-rlib",
         "kind": "native",
-        "identity": "5b271aa9452e6e88d60f4033e1c9a3f6711d0134bc5b79c160535ee17134dace",
+        "identity": "818ef906f0b2883d5e6cf0d381bcb7a2c19a1d65185d4738f69541b381860b2e",
         "inputs": {
           "id": "mmorpg-core-release-rlib",
           "kind": "native",
@@ -75,7 +75,7 @@
             },
             {
               "path": "web/scripts/native-size.ts",
-              "sha256": "0785a7d70bcdb6c05a9fe366ec814521acc7a20ecb931ce0b3705bda68652b45"
+              "sha256": "b45259c7e4680f6b683d76fe65d89ba1c7795c30271fee4aee6ec38726c28643"
             }
           ]
         },
