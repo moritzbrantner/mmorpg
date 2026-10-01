@@ -139,7 +139,7 @@ Use lightweight CQRS/CQS at service boundaries: commands mutate authoritative du
 
 ## Pinned foundations
 
-- `physics-engine`: `1d62f70e3588b80e51746ed7d05bb8bbd0bfbfdb`
+- `physics-engine`: `16833b766629c354a6a5925b991eeb74208a242d`
 - `game-server`: `a3851dab9c1fb25dd31b465fb554ca475769caab`
 - `3d-lab` (`three-d-core`, `three-d-camera` and the browser `@moritzbrantner/three-d-renderer`, kept on one commit): `f484db8a3d2a7a555fa463eddf9c28790b240ce0`
 - reusable validation workflow: `45042e56be120b438096e774027637cac0280075`
