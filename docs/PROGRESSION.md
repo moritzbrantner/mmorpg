@@ -58,7 +58,9 @@ No command grants XP, and duplicate/stale attack sequences fail before rewards.
 
 Level-ups subtract thresholds in order, carry remainder and discard XP at
 level 10. Health increases by the maximum-health growth, preserving missing
-health; existing level-based melee damage applies automatically. XP and level
+health; an Arcanist's mana grows the same way by the mana-maximum growth (22
+per level), while rage and focus keep their fixed maximum. Existing level-based
+melee damage applies automatically. XP and level
 are character-durable facts copied into canonical recovery state. Session
 identity remains separate; no persistence I/O occurs during awards.
 

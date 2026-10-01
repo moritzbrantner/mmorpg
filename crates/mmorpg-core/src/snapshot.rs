@@ -399,6 +399,11 @@ impl ZoneSimulation {
         if combat.health == 0 && combat.auto_attack {
             return Err(ZoneError::new("a dead player cannot auto-attack"));
         }
+        if combat.abilities.class.is_some() && self.content.ability_revision() == 0 {
+            return Err(ZoneError::new(
+                "a class player needs content that binds the ability catalog",
+            ));
+        }
         validate_player_abilities(&combat.abilities, combat.level, combat.health > 0)?;
         self.world
             .add_body(RigidBody::dynamic(
@@ -599,10 +604,21 @@ impl ZoneSimulation {
             .into_iter()
             .any(|target| !matches!(target, EntityRef::Creature(_)))
             || creature_targets
-                .into_iter()
+                .clone()
                 .any(|target| !matches!(target, EntityRef::Player(_)))
         {
             return Err(ZoneError::new("a cast names a target of the wrong kind"));
+        }
+        // A player's death removes every creature cast aimed at them.
+        if creature_targets.into_iter().any(|target| {
+            let EntityRef::Player(player_id) = target else {
+                return false;
+            };
+            self.players
+                .get(&player_id)
+                .is_some_and(|player| !player.is_alive())
+        }) {
+            return Err(ZoneError::new("a creature casts at a dead player"));
         }
         for player in self.players.values() {
             if player.target.is_some_and(|target| !exists(target)) {

@@ -40,8 +40,14 @@ pub(crate) type Refusal = Option<(ErrorCode, Option<EntityRef>)>;
 
 impl ZoneSimulation {
     /// A one-time class choice; the resource starts at the class's start value.
+    /// Content that never bound the ability catalog keeps it out of its
+    /// fingerprint, so its zones refuse classes (and with them abilities).
     pub(crate) fn choose_class(&mut self, player_id: PlayerId, class: u8, sex: u8) -> Refusal {
+        let catalog_bound = self.content.ability_revision() != 0;
         let player = self.players.get_mut(&player_id)?;
+        if !catalog_bound {
+            return Some((ErrorCode::InvalidClass, None));
+        }
         match (
             player.class,
             PlayerClass::from_code(class),
