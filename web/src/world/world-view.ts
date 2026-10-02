@@ -501,6 +501,13 @@ export class WorldView {
       follow: () => {
         this.#flyTo = null;
       },
+      /** Turns the view (and so forward movement) toward a point in metres. */
+      faceToward: (x: number, z: number) => {
+        const from = this.#lastSelf;
+        if (from) {
+          this.#orbit.lookAlong(Math.atan2(x - from.x, z - from.z));
+        }
+      },
       reliefAt: (x: number, z: number) => {
         if (!this.#reliefAt) {
           throw new Error("Scenery is not loaded");

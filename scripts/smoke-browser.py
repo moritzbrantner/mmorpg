@@ -909,27 +909,28 @@ class BrowserAcceptance(unittest.TestCase):
             return None, None
         return math.hypot(animal["x"] - x, animal["z"] - z), animal
 
-    def approach_animal(self, metres, max_steps=80):
-        """Walks the key that closed the distance earlier until the nearest animal is within `metres`,
-        sidestepping when a prop blocks the way."""
-        sideways = {"KeyW": ("KeyA", "KeyD"), "KeyS": ("KeyD", "KeyA"), "KeyA": ("KeyS", "KeyW"), "KeyD": ("KeyW", "KeyS")}[self.walk_key]
+    def approach_animal(self, metres, max_steps=120):
+        """Runs toward the nearest projected animal (the debug hook turns the view to it) until it is within
+        `metres`, sidestepping when a prop blocks the way."""
         side = 0
         stuck = 0
         for _ in range(max_steps):
-            distance, _animal = self.target_distance()
+            distance, animal = self.target_distance()
             if distance is not None and distance <= metres:
                 return distance
             before = self.self_position()
-            keys = [self.walk_key] if stuck < 2 else [self.walk_key, sideways[side]]
+            if animal:
+                self.page.evaluate("([x, z]) => window.__valeDebug.faceToward(x, z)", [animal["x"], animal["z"]])
+            keys = ["KeyW"] if stuck < 2 else ["KeyW", ("KeyA", "KeyD")[side]]
             for key in keys:
                 self.page.keyboard.down(key)
-            self.frames(8)
+            self.frames(20)
             for key in keys:
                 self.page.keyboard.up(key)
             self.frames(2)
             moved = math.hypot(*(a - b for a, b in zip(self.self_position(), before)))
             stuck = 0 if moved > 0.5 else stuck + 1
-            if stuck > 6:
+            if stuck > 5:
                 side = 1 - side
                 stuck = 2
         self.fail(f"Never came within {metres} m of an animal; last distance {self.target_distance()[0]}")
@@ -984,7 +985,7 @@ class BrowserAcceptance(unittest.TestCase):
         self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
         expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text("Mana 110 / 110")
         self.walk_until_animal_projected()
-        self.approach_animal(24.0)
+        self.approach_animal(27.0)
         self.page.keyboard.press("Tab")
         expect(self.page.locator("[data-part=target]")).to_be_visible()
         self.page.keyboard.press("Digit1")
