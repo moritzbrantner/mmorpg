@@ -271,7 +271,7 @@
 @media (max-width: 640px) and (min-height: 480px) {
   .unit-frames { top: 11.9rem; }
   /* The controls panel fills the bottom of a phone, so the dock follows the frames instead. */
-  .action-dock { top: 18.9rem; bottom: auto; }
+  .action-dock { top: 20.4rem; bottom: auto; }
 }
 
 /* Short landscape screens: the raised dock would meet the frames, so it moves to the bottom-right
