@@ -921,6 +921,14 @@ class BrowserAcceptance(unittest.TestCase):
             if (tick === 380) source.sendCommand({kind:'select-target',target:{kind:'creature',id:108}});
             window.__classAdvance.call(source, 1 / 30);
           }
+          // Combat text fades after 1.4 s of wall-clock time, which a slow headless frame can outlast,
+          // so count the entries as they are added.
+          window.__combatTexts = [];
+          new MutationObserver(records => {
+            for (const record of records) for (const node of record.addedNodes) {
+              if (node.classList?.contains('combat-text-entry')) window.__combatTexts.push(node.textContent);
+            }
+          }).observe(document.body, {childList: true, subtree: true});
           window.__classQueue = [];
           source.advance = () => window.__classQueue.splice(0);
           window.__classStep = ticks => {
@@ -965,7 +973,7 @@ class BrowserAcceptance(unittest.TestCase):
         # text floats up for each damage event.
         self.step(120)
         self.assertGreaterEqual(self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)"), 15)
-        expect(self.page.locator(".combat-text-entry").first).to_be_visible()
+        self.assertTrue(self.page.evaluate("window.__combatTexts.length"), "Combat text floated up")
         before = self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)")
         self.page.keyboard.press("Digit1")
         self.step(1)
@@ -995,7 +1003,7 @@ class BrowserAcceptance(unittest.TestCase):
         # The two-second cast completes: mana is spent, the bolt lands and the cast bar clears.
         self.step(60)
         self.assertLess(self.hud_number("[data-part=player-resource-text]", r"Mana (\d+)"), 110)
-        expect(self.page.locator(".combat-text-entry").first).to_be_visible()
+        self.assertTrue(self.page.evaluate("window.__combatTexts.length"), "Combat text floated up")
         self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-hit.png"))
         expect(cast).to_be_hidden()
 
