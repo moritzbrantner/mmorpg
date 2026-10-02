@@ -271,3 +271,10 @@
 @media (max-width: 640px) and (min-height: 480px) {
   .unit-frames { top: 11.9rem; }
 }
+
+/* Short landscape screens: the raised dock would meet the frames, so it moves to the bottom-right
+   corner beside the controls panel, which gives it room. */
+@media (max-height: 480px) {
+  .action-dock { bottom: .65rem; right: .65rem; left: auto; align-items: flex-end; transform: none; }
+  .hud { max-width: min(34rem, calc(100vw - 17rem)); }
+}

@@ -86,7 +86,6 @@ export class ClassHud {
   readonly #auraSignatures = new Map<HTMLElement, string>();
   #slots: SlotElements[] = [];
   #slotKey = "";
-  #tooltipSlot = -1;
   #longPress: { slot: number; timer: ReturnType<typeof setTimeout> } | null = null;
   #suppressClick = false;
   #lastPointerType = "";
@@ -230,7 +229,8 @@ export class ClassHud {
           this.#showTooltip(index);
           return;
         }
-        this.#toggleTooltip(index);
+        // A mouse hover has usually opened it already; right-click keeps it open.
+        this.#showTooltip(index);
       });
       button.addEventListener("pointerenter", (event) => {
         if (event.pointerType === "mouse") {
@@ -321,24 +321,14 @@ export class ClassHud {
     const viewport = tooltip.ownerDocument.documentElement.clientWidth;
     const centre = Math.min(Math.max(box.left + box.width / 2, half + TOOLTIP_MARGIN_PX), viewport - half - TOOLTIP_MARGIN_PX);
     tooltip.style.left = `${centre - barBox.left}px`;
-    this.#tooltipSlot = index;
   }
 
   #showTooltip(index: number): void {
     this.#tooltipFor(index);
   }
 
-  #toggleTooltip(index: number): void {
-    if (this.#tooltipSlot === index && !this.#tooltip.hidden) {
-      this.#hideTooltip();
-    } else {
-      this.#tooltipFor(index);
-    }
-  }
-
   #hideTooltip(): void {
     this.#tooltip.hidden = true;
-    this.#tooltipSlot = -1;
   }
 
   #cancelLongPress(): void {

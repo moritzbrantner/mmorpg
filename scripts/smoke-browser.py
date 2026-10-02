@@ -983,6 +983,11 @@ class BrowserAcceptance(unittest.TestCase):
         expect(self.page.locator("[data-part=tooltip]")).to_contain_text("Heroic Strike")
         expect(self.page.locator("[data-part=tooltip]")).to_contain_text("Melee range")
         self.page.screenshot(path=str(ARTIFACTS / "class-kit-warden-tooltip.png"))
+        # Frames, dock and the corner HUD on a portrait phone and a short landscape screen.
+        for width, height in [(390, 844), (844, 390)]:
+            self.page.set_viewport_size({"width": width, "height": height})
+            self.frames(3)
+            self.page.screenshot(path=str(ARTIFACTS / f"class-kit-warden-{width}x{height}.png"))
 
     def test_arcanist_action_bar_cast_bar_and_combat_text(self):
         """A level-1 Arcanist targets a wolf and casts Firebolt with key 1: mana is spent, the cast bar
