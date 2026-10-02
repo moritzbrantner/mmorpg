@@ -270,11 +270,14 @@
    sit below them (the minimap ends about 11.5rem down). */
 @media (max-width: 640px) and (min-height: 480px) {
   .unit-frames { top: 11.9rem; }
+  /* The controls panel fills the bottom of a phone, so the dock follows the frames instead. */
+  .action-dock { top: 18.9rem; bottom: auto; }
 }
 
 /* Short landscape screens: the raised dock would meet the frames, so it moves to the bottom-right
    corner beside the controls panel, which gives it room. */
 @media (max-height: 480px) {
   .action-dock { bottom: .65rem; right: .65rem; left: auto; align-items: flex-end; transform: none; }
-  .hud { max-width: min(34rem, calc(100vw - 17rem)); }
+  /* The controls panel scrolls rather than rising over the frames. */
+  .hud { max-width: min(34rem, calc(100vw - 17rem)); max-height: calc(100vh - 11rem); overflow-y: auto; }
 }
