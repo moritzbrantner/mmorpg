@@ -901,9 +901,10 @@ class BrowserAcceptance(unittest.TestCase):
         return int(match.group(1))
 
     def enter_beside_wolf(self):
-        """Enters the world with the source paused, walks the deterministic route of the corpse-loot
-        acceptance to Timber Wolf 108 (beside it by tick 400), selects it and resumes real-time ticking,
-        so the rest of the test drives the page through its keyboard and HUD."""
+        """Enters the world with the source paused and walks the deterministic route of the corpse-loot
+        acceptance toward Timber Wolf 108 (selected at tick 380). The source then stays paused: the
+        page's own frames publish only the ticks the test runs with `step`, so the keyboard and HUD
+        are exercised at a known tick count however slowly headless Chromium renders."""
         self.page.evaluate("""() => {
           const source = window.__valeDebug.worldSource();
           window.__classAdvance = source.advance;
@@ -920,11 +921,22 @@ class BrowserAcceptance(unittest.TestCase):
             if (tick === 380) source.sendCommand({kind:'select-target',target:{kind:'creature',id:108}});
             window.__classAdvance.call(source, 1 / 30);
           }
-          source.advance = window.__classAdvance;
+          window.__classQueue = [];
+          source.advance = () => window.__classQueue.splice(0);
+          window.__classStep = ticks => {
+            for (let tick = 0; tick < ticks; tick++) window.__classQueue.push(...window.__classAdvance.call(source, 1 / 30));
+          };
         }""")
+        self.frames(2)
         self.expect_class_resource()
         expect(self.page.locator("[data-part=target]")).to_be_visible()
         expect(self.page.locator("[data-part=target-name]")).to_contain_text("Timber Wolf")
+
+    def step(self, ticks):
+        """Lets the page send its pending intents, runs `ticks` zone ticks and lets the page present them."""
+        self.frames(2)
+        self.page.evaluate("ticks => window.__classStep(ticks)", ticks)
+        self.frames(3)
 
     def create_and_select(self, name, class_label):
         self.page.get_by_role("button", name="Create character", exact=True).click()
@@ -949,14 +961,16 @@ class BrowserAcceptance(unittest.TestCase):
         self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
         expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text(re.compile(r"Rage \d+ / 100"))
         self.page.keyboard.press("KeyF")
-        # Hits build rage; combat text floats up for each damage event.
-        self.page.wait_for_function("document.querySelector('[data-part=player-resource-text]').textContent.match(/Rage (\\d+)/) && Number(RegExp.$1) >= 15", timeout=30_000)
+        # The wolf closes in and two swings land within four seconds: hits build rage and combat
+        # text floats up for each damage event.
+        self.step(120)
+        self.assertGreaterEqual(self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)"), 15)
         expect(self.page.locator(".combat-text-entry").first).to_be_visible()
         before = self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)")
         self.page.keyboard.press("Digit1")
-        self.frames(3)
+        self.step(1)
         self.page.screenshot(path=str(ARTIFACTS / "class-kit-warden.png"))
-        self.page.wait_for_function("([before]) => { const m = document.querySelector('[data-part=player-resource-text]').textContent.match(/Rage (\\d+)/); return m && Number(m[1]) < before; }", arg=[before], timeout=10_000)
+        self.assertLess(self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)"), before)
         self.page.locator("#class-hud .action-slot").first.hover()
         expect(self.page.locator("[data-part=tooltip]")).to_contain_text("Heroic Strike")
         expect(self.page.locator("[data-part=tooltip]")).to_contain_text("Melee range")
@@ -971,17 +985,19 @@ class BrowserAcceptance(unittest.TestCase):
         self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
         expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text("Mana 110 / 110")
         self.page.keyboard.press("Digit1")
+        self.step(3)
         cast = self.page.locator("[data-part=cast]")
         expect(cast).to_be_visible()
         expect(self.page.locator("[data-part=cast-name]")).to_have_text("Firebolt")
         self.assertEqual(self.page.locator("#class-hud .action-slot").first.get_attribute("data-state"), "casting")
-        self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-cast.png"))
-        self.page.wait_for_function("document.querySelector('[data-part=player-resource-text]').textContent.match(/Mana (\\d+)/) && Number(RegExp.$1) < 110", timeout=10_000)
-        expect(self.page.locator(".combat-text-entry").first).to_be_visible(timeout=10_000)
-        self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-hit.png"))
-        # The cast bar clears once the bolt lands.
-        expect(cast).to_be_hidden(timeout=10_000)
         expect(self.page.locator("#class-hud .action-slot").first).to_have_attribute("data-gcd", "true")
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-cast.png"))
+        # The two-second cast completes: mana is spent, the bolt lands and the cast bar clears.
+        self.step(60)
+        self.assertLess(self.hud_number("[data-part=player-resource-text]", r"Mana (\d+)"), 110)
+        expect(self.page.locator(".combat-text-entry").first).to_be_visible()
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-hit.png"))
+        expect(cast).to_be_hidden()
 
 
 if __name__ == "__main__":
