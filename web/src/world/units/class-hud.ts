@@ -18,6 +18,7 @@ export type ClassHudCallbacks = { onUse: (slot: number) => void };
 
 const SVG = "http://www.w3.org/2000/svg";
 const LONG_PRESS_MS = 450;
+const TOOLTIP_MARGIN_PX = 8;
 const MAX_FLOATING_TEXTS = 12;
 const KEYBIND_LABELS = ["1", "2", "3", "4"] as const;
 
@@ -110,11 +111,13 @@ export class ClassHud {
       cast: part(root, "target-cast"), castFill: part(root, "target-cast-fill"), castName: part(root, "target-cast-name"),
     };
     this.#text = part(root, "combat-text");
-    root.addEventListener("pointerdown", (event) => {
-      if (!(event.target instanceof Element) || !event.target.closest("[data-part='action-bar']")) {
+    // The HUD itself ignores pointers, so a tap anywhere outside the action bar (the world canvas,
+    // other controls) dismisses a touch tooltip through the document.
+    root.ownerDocument.addEventListener("pointerdown", (event) => {
+      if (!(event.target instanceof Element) || !this.#bar.contains(event.target)) {
         this.#hideTooltip();
       }
-    });
+    }, true);
   }
 
   /** Clears everything for a new session. */
@@ -313,7 +316,11 @@ export class ClassHud {
     tooltip.hidden = false;
     const barBox = this.#bar.getBoundingClientRect();
     const box = button.getBoundingClientRect();
-    tooltip.style.left = `${box.left + box.width / 2 - barBox.left}px`;
+    // Centred over the slot, but kept inside the viewport on narrow screens.
+    const half = tooltip.offsetWidth / 2;
+    const viewport = tooltip.ownerDocument.documentElement.clientWidth;
+    const centre = Math.min(Math.max(box.left + box.width / 2, half + TOOLTIP_MARGIN_PX), viewport - half - TOOLTIP_MARGIN_PX);
+    tooltip.style.left = `${centre - barBox.left}px`;
     this.#tooltipSlot = index;
   }
 

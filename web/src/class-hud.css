@@ -202,7 +202,7 @@
 .ability-tooltip {
   position: absolute;
   bottom: calc(100% + .5rem);
-  width: 15rem;
+  width: min(15rem, calc(100vw - 1rem));
   padding: .55rem .65rem;
   border: 1px solid var(--panel-border);
   border-radius: .55rem;
