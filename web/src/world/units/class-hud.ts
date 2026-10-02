@@ -88,6 +88,7 @@ export class ClassHud {
   #tooltipSlot = -1;
   #longPress: { slot: number; timer: ReturnType<typeof setTimeout> } | null = null;
   #suppressClick = false;
+  #lastPointerType = "";
   #interruptUntil = 0;
   #tick = -1n;
   #catalog: ContentCatalog | null = null;
@@ -218,6 +219,14 @@ export class ClassHud {
       });
       button.addEventListener("contextmenu", (event) => {
         event.preventDefault();
+        if (this.#lastPointerType === "touch") {
+          // A touch long press: keep (or open) the tooltip the long-press timer shows, and swallow
+          // this gesture's click.
+          this.#cancelLongPress();
+          this.#suppressClick = true;
+          this.#showTooltip(index);
+          return;
+        }
         this.#toggleTooltip(index);
       });
       button.addEventListener("pointerenter", (event) => {
@@ -231,6 +240,9 @@ export class ClassHud {
         }
       });
       button.addEventListener("pointerdown", (event) => {
+        // A new gesture: a click swallowed for an earlier long press (or never delivered) is over.
+        this.#lastPointerType = event.pointerType;
+        this.#suppressClick = false;
         if (event.pointerType === "touch") {
           this.#cancelLongPress();
           this.#longPress = {
