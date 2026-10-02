@@ -265,3 +265,9 @@
   .unit-frame { flex: 0 1 10.5rem; width: auto; min-width: 0; }
   .frame-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
+
+/* Phones in portrait: the stacked toolbar and the minimap fill the top corners, so the frames
+   sit below them (the minimap ends about 11.5rem down). */
+@media (max-width: 640px) and (min-height: 480px) {
+  .unit-frames { top: 11.9rem; }
+}
