@@ -1,4 +1,4 @@
-import type { EntityRef } from "../../entity-ref";
+import { sameEntity, type EntityRef } from "../../entity-ref";
 import type { ZoneEvent, ZoneSnapshot } from "../../replication";
 
 /**
@@ -44,7 +44,9 @@ function textFor(event: ZoneEvent, snapshot: ZoneSnapshot, periodic: boolean): C
     case "evade":
       return { kind: "miss", text: "Evade" };
     case "healed":
+      // The viewer's own heals, heals on it, and heals on its target (a creature bandaging itself).
       return isViewer(event.target, snapshot) || isViewer(event.source, snapshot)
+        || (snapshot.viewer.target !== null && sameEntity(event.target, snapshot.viewer.target))
         ? { kind: "heal", text: `+${event.amount}` }
         : null;
     case "absorbed":

@@ -198,6 +198,10 @@ describe("combat text", () => {
       { kind: "interrupt", text: "Interrupted" }, { kind: "interrupt", text: "Interrupt" },
     ]);
     expect(viewerInterrupted(snapshot({ events }))).toBe(true);
+    // A target bandaging itself shows its heal; a creature that is not the target does not.
+    const bandage: ZoneEvent = { kind: "healed", source: wolf, target: wolf, ability: 14, amount: 6 };
+    expect(combatTexts(snapshot({ events: [bandage] }))).toEqual([{ kind: "heal", text: "+6" }]);
+    expect(combatTexts(snapshot({ events: [bandage] }, { target: null }))).toEqual([]);
     expect(viewerInterrupted(snapshot({ events: events.slice(0, 2) }))).toBe(false);
   });
 
