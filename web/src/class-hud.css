@@ -253,14 +253,9 @@
   to { opacity: 0; margin-top: -4.2rem; }
 }
 
-@keyframes combat-text-fade {
-  from { opacity: 1; }
-  70% { opacity: 1; }
-  to { opacity: 0; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .combat-text-entry { animation-name: combat-text-fade; }
+  /* Static text; the class HUD removes each entry after its lifetime. */
+  .combat-text-entry { animation: none; }
 }
 
 @media (max-width: 880px) {
