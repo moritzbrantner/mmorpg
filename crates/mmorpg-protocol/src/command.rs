@@ -1,12 +1,13 @@
-//! Command wire version 4 adds ability use (tag 9), cast cancellation
-//! (tag 10) and the class choice (tag 11).
+//! Command wire version 4 added ability use (tag 9), cast cancellation
+//! (tag 10) and the class choice (tag 11); version 5 adds equipping
+//! (tag 12) and unequipping (tag 13).
 
 use mmorpg_core::ZoneCommand;
 
 use crate::ProtocolError;
 use crate::wire::{decode_entity_ref, encode_entity_ref};
 
-pub const COMMAND_WIRE_VERSION: u8 = 4;
+pub const COMMAND_WIRE_VERSION: u8 = 5;
 
 const MOVE_TAG: u8 = 1;
 const JUMP_TAG: u8 = 2;
@@ -19,6 +20,8 @@ const LOOT_TAG: u8 = 8;
 const USE_ABILITY_TAG: u8 = 9;
 const CANCEL_CAST_TAG: u8 = 10;
 const CHOOSE_CLASS_TAG: u8 = 11;
+const EQUIP_ITEM_TAG: u8 = 12;
+const UNEQUIP_ITEM_TAG: u8 = 13;
 const USE_ABILITY_COMMAND_BYTES: usize = 8;
 const CHOOSE_CLASS_COMMAND_BYTES: usize = 4;
 const MOVE_COMMAND_BYTES: usize = 6;
@@ -55,6 +58,12 @@ pub fn encode_command(command: ZoneCommand) -> Vec<u8> {
         ZoneCommand::CancelCast => vec![COMMAND_WIRE_VERSION, CANCEL_CAST_TAG],
         ZoneCommand::ChooseClass { class, sex } => {
             vec![COMMAND_WIRE_VERSION, CHOOSE_CLASS_TAG, class, sex]
+        }
+        ZoneCommand::EquipItem { bag_slot } => {
+            vec![COMMAND_WIRE_VERSION, EQUIP_ITEM_TAG, bag_slot]
+        }
+        ZoneCommand::UnequipItem { equipment_slot } => {
+            vec![COMMAND_WIRE_VERSION, UNEQUIP_ITEM_TAG, equipment_slot]
         }
         ZoneCommand::SelectTarget(target) => {
             let mut payload = Vec::with_capacity(SELECT_TARGET_COMMAND_BYTES);
@@ -179,6 +188,26 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
                 sex: *sex,
             })
         }
+        EQUIP_ITEM_TAG => {
+            let [_, _, bag_slot] = payload else {
+                return Err(ProtocolError::new(
+                    "equip item command payload must be exactly 3 bytes",
+                ));
+            };
+            Ok(ZoneCommand::EquipItem {
+                bag_slot: *bag_slot,
+            })
+        }
+        UNEQUIP_ITEM_TAG => {
+            let [_, _, equipment_slot] = payload else {
+                return Err(ProtocolError::new(
+                    "unequip item command payload must be exactly 3 bytes",
+                ));
+            };
+            Ok(ZoneCommand::UnequipItem {
+                equipment_slot: *equipment_slot,
+            })
+        }
         CANCEL_CAST_TAG => bare(ZoneCommand::CancelCast),
         JUMP_TAG => bare(ZoneCommand::Jump),
         START_ATTACK_TAG => bare(ZoneCommand::StartAttack),
@@ -200,39 +229,47 @@ mod tests {
             strafe: 1,
             facing: 0xabcd,
         };
-        assert_eq!(encode_command(movement), [4, 1, 0xff, 1, 0xab, 0xcd]);
-        assert_eq!(encode_command(ZoneCommand::Jump), [4, 2]);
+        assert_eq!(encode_command(movement), [5, 1, 0xff, 1, 0xab, 0xcd]);
+        assert_eq!(encode_command(ZoneCommand::Jump), [5, 2]);
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(Some(EntityRef::Creature(
                 CreatureId::new(0x0102_0304)
             )))),
-            [4, 3, 2, 1, 2, 3, 4]
+            [5, 3, 2, 1, 2, 3, 4]
         );
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(None)),
-            [4, 3, 0, 0, 0, 0, 0]
+            [5, 3, 0, 0, 0, 0, 0]
         );
-        assert_eq!(encode_command(ZoneCommand::StartAttack), [4, 4]);
-        assert_eq!(encode_command(ZoneCommand::StopAttack), [4, 5]);
-        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [4, 6]);
+        assert_eq!(encode_command(ZoneCommand::StartAttack), [5, 4]);
+        assert_eq!(encode_command(ZoneCommand::StopAttack), [5, 5]);
+        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [5, 6]);
         assert_eq!(
             encode_command(ZoneCommand::UseAbility {
                 ability: 9,
                 target: Some(EntityRef::Creature(CreatureId::new(0x0102_0304))),
             }),
-            [4, 9, 9, 2, 1, 2, 3, 4]
+            [5, 9, 9, 2, 1, 2, 3, 4]
         );
         assert_eq!(
             encode_command(ZoneCommand::UseAbility {
                 ability: 3,
                 target: None,
             }),
-            [4, 9, 3, 0, 0, 0, 0, 0]
+            [5, 9, 3, 0, 0, 0, 0, 0]
         );
-        assert_eq!(encode_command(ZoneCommand::CancelCast), [4, 10]);
+        assert_eq!(encode_command(ZoneCommand::CancelCast), [5, 10]);
         assert_eq!(
             encode_command(ZoneCommand::ChooseClass { class: 2, sex: 1 }),
-            [4, 11, 2, 1]
+            [5, 11, 2, 1]
+        );
+        assert_eq!(
+            encode_command(ZoneCommand::EquipItem { bag_slot: 3 }),
+            [5, 12, 3]
+        );
+        assert_eq!(
+            encode_command(ZoneCommand::UnequipItem { equipment_slot: 5 }),
+            [5, 13, 5]
         );
         for command in [
             movement,
@@ -257,6 +294,11 @@ mod tests {
             ZoneCommand::ChooseClass {
                 class: u8::MAX,
                 sex: u8::MAX,
+            },
+            // Out-of-range slots are tick-time refusals, not wire errors.
+            ZoneCommand::EquipItem { bag_slot: u8::MAX },
+            ZoneCommand::UnequipItem {
+                equipment_slot: u8::MAX,
             },
         ] {
             assert_eq!(decode_command(&encode_command(command)).unwrap(), command);
@@ -342,9 +384,17 @@ mod tests {
                 class: u8::MAX,
                 sex: 7,
             },
+            ZoneCommand::EquipItem { bag_slot: 0 },
+            ZoneCommand::EquipItem { bag_slot: 15 },
+            ZoneCommand::EquipItem { bag_slot: u8::MAX },
+            ZoneCommand::UnequipItem { equipment_slot: 0 },
+            ZoneCommand::UnequipItem { equipment_slot: 5 },
+            ZoneCommand::UnequipItem {
+                equipment_slot: u8::MAX,
+            },
         ];
         let mut fixture = String::from(
-            "# Command wire v4 golden fixture, verified by mmorpg-protocol and web tests.\n",
+            "# Command wire v5 golden fixture, verified by mmorpg-protocol and web tests.\n",
         );
         for command in commands {
             let hex = encode_command(command)
@@ -371,6 +421,10 @@ mod tests {
                 }
                 ZoneCommand::CancelCast => "cancel_cast".to_owned(),
                 ZoneCommand::ChooseClass { class, sex } => format!("choose_class {class} {sex}"),
+                ZoneCommand::EquipItem { bag_slot } => format!("equip_item {bag_slot}"),
+                ZoneCommand::UnequipItem { equipment_slot } => {
+                    format!("unequip_item {equipment_slot}")
+                }
                 ZoneCommand::StartAttack => "start_attack".to_owned(),
                 ZoneCommand::StopAttack => "stop_attack".to_owned(),
                 ZoneCommand::ReleaseSpirit => "release_spirit".to_owned(),
@@ -398,7 +452,7 @@ mod tests {
 
     #[test]
     fn commands_match_the_shared_golden_fixture() {
-        let checked_in = include_str!("../../../fixtures/protocol/commands-v4.hex");
+        let checked_in = include_str!("../../../fixtures/protocol/commands-v5.hex");
         if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
             print!("{}", command_fixture());
         }
@@ -414,10 +468,11 @@ mod tests {
     }
 
     #[test]
-    fn actual_legacy_v2_and_v3_command_fixtures_are_rejected() {
+    fn actual_legacy_v2_to_v4_command_fixtures_are_rejected() {
         for line in include_str!("../../../fixtures/protocol/commands-v2.hex")
             .lines()
             .chain(include_str!("../../../fixtures/protocol/commands-v3.hex").lines())
+            .chain(include_str!("../../../fixtures/protocol/commands-v4.hex").lines())
             .filter(|line| !line.starts_with('#') && !line.is_empty())
         {
             let hex = line.split_whitespace().next().unwrap();
@@ -448,7 +503,11 @@ mod tests {
             target: Some(EntityRef::Creature(CreatureId::new(7))),
         });
         let class = encode_command(ZoneCommand::ChooseClass { class: 1, sex: 0 });
-        for encoded in [&movement, &select, &loot, &ability, &class] {
+        let equip = encode_command(ZoneCommand::EquipItem { bag_slot: 1 });
+        let unequip = encode_command(ZoneCommand::UnequipItem { equipment_slot: 1 });
+        for encoded in [
+            &movement, &select, &loot, &ability, &class, &equip, &unequip,
+        ] {
             for length in 0..encoded.len() {
                 assert!(decode_command(&encoded[..length]).is_err(), "{length}");
             }
@@ -458,18 +517,18 @@ mod tests {
         }
         for tag in [2, 4, 5, 6, 10] {
             assert_eq!(
-                decode_command(&[4, tag, 0]).unwrap_err().to_string(),
+                decode_command(&[5, tag, 0]).unwrap_err().to_string(),
                 "command payload must be exactly 2 bytes",
                 "tag {tag} has no body"
             );
         }
-        for unknown in [0, 12, u8::MAX] {
+        for unknown in [0, 14, u8::MAX] {
             assert_eq!(
-                decode_command(&[4, unknown]).unwrap_err().to_string(),
+                decode_command(&[5, unknown]).unwrap_err().to_string(),
                 "unknown command tag"
             );
         }
-        for version in [1, 2, 3, 5] {
+        for version in [1, 2, 3, 4, 6] {
             let mut other = movement.clone();
             other[0] = version;
             assert_eq!(
@@ -491,19 +550,19 @@ mod tests {
             );
         }
         assert_eq!(
-            decode_command(&[4, 3, 4, 0, 0, 0, 1])
+            decode_command(&[5, 3, 4, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "unknown entity kind"
         );
         assert_eq!(
-            decode_command(&[4, 9, 1, 4, 0, 0, 0, 1])
+            decode_command(&[5, 9, 1, 4, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "unknown entity kind"
         );
         assert_eq!(
-            decode_command(&[4, 3, 0, 0, 0, 0, 1])
+            decode_command(&[5, 3, 0, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "an absent entity must have ID 0"
