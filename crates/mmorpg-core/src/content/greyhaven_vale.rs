@@ -20,8 +20,9 @@ pub mod units;
 
 /// Content revision of this zone. Revision 1 was the former test outpost;
 /// revision 2 had no creatures or NPCs; revision 6 binds the ability catalog
-/// (Mirefin Lurkers cast Muck Bolt, Redbrand Bandits use Crude Bandage).
-pub const REVISION: u64 = 6;
+/// (Mirefin Lurkers cast Muck Bolt, Redbrand Bandits use Crude Bandage);
+/// revision 7 binds item catalog 2 (equipment) and loot catalog 2.
+pub const REVISION: u64 = 7;
 /// Revision 3's simulation seed, retained when revision 4 adds bag content.
 /// Economy changes must not reroll Greyhaven's existing creature/combat scripts.
 pub const RNG_SEED: u64 = 0x3cbc_808b_be89_b29c;

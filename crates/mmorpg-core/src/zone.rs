@@ -82,6 +82,8 @@ pub(crate) struct PlayerState {
     pub(crate) inventory: crate::Inventory,
     pub(crate) inventory_revision: u64,
     pub(crate) inventory_changed_at: u64,
+    /// Equipped items; they share the bag's revision and sheet.
+    pub(crate) equipment: crate::Equipment,
     /// Zero means dead.
     pub(crate) health: u32,
     pub(crate) target: Option<EntityRef>,
@@ -127,6 +129,7 @@ impl PlayerState {
             inventory: crate::Inventory::starter(),
             inventory_revision: 1,
             inventory_changed_at: tick,
+            equipment: crate::Equipment::default(),
             health: player_max_health(PLAYER_START_LEVEL),
             target: None,
             auto_attack: false,
@@ -148,6 +151,25 @@ impl PlayerState {
 
     pub(crate) const fn is_alive(&self) -> bool {
         self.health > 0
+    }
+
+    /// Level health plus the equipped stamina's bonus.
+    pub(crate) fn max_health(&self) -> u32 {
+        player_max_health(self.level) + self.equipment.totals().bonus_health()
+    }
+
+    /// The class damage bonus of the equipped primary stat.
+    pub(crate) fn damage_bonus(&self) -> u16 {
+        self.equipment
+            .totals()
+            .damage_bonus(self.class.map(|choice| choice.class))
+    }
+
+    /// The melee range with the equipment bonus on both ends.
+    pub(crate) fn melee_damage(&self) -> [u16; 2] {
+        let [low, high] = crate::unit::player_damage(self.level);
+        let bonus = self.damage_bonus();
+        [low + bonus, high + bonus]
     }
 }
 
@@ -420,6 +442,10 @@ impl ZoneSimulation {
             ZoneCommand::CancelCast => Some(PlayerIntent::CancelCast),
             ZoneCommand::ChooseClass { class, sex } => {
                 Some(PlayerIntent::ChooseClass { class, sex })
+            }
+            ZoneCommand::EquipItem { bag_slot } => Some(PlayerIntent::EquipItem { bag_slot }),
+            ZoneCommand::UnequipItem { equipment_slot } => {
+                Some(PlayerIntent::UnequipItem { equipment_slot })
             }
         };
         if let Some(intent) = intent {

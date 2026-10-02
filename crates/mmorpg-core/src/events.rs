@@ -60,6 +60,8 @@ pub enum ErrorCode {
     AlreadyCasting,
     /// The class choice is unknown or the class was already chosen.
     InvalidClass,
+    /// The bag item has no equipment slot.
+    NotEquippable,
 }
 
 /// One feedback event addressed to a player.
