@@ -279,5 +279,6 @@
 @media (max-height: 480px) {
   .action-dock { bottom: .65rem; right: .65rem; left: auto; align-items: flex-end; transform: none; }
   /* The controls panel scrolls rather than rising over the frames. */
-  .hud { max-width: min(34rem, calc(100vw - 17rem)); max-height: calc(100vh - 11rem); overflow-y: auto; }
+  .unit-frames { top: 5rem; }
+  .hud { max-width: min(34rem, calc(100vw - 17rem)); max-height: calc(100vh - 13rem); overflow-y: auto; }
 }
