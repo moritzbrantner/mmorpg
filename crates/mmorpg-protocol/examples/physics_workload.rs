@@ -89,6 +89,7 @@ fn initial_zone(name: &str, count: usize) -> Result<ZoneSimulation, Box<dyn Erro
             inventory: mmorpg_core::Inventory::default(),
             inventory_revision: 1,
             inventory_changed_at: 0,
+            equipment: mmorpg_core::Equipment::default(),
             combat: CanonicalPlayerCombat::default(),
         });
     }

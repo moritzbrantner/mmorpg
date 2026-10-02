@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { decodeSnapshot } from "../src/replication";
 
-const bytes = Uint8Array.from(Buffer.from(readFileSync(new URL("../../fixtures/protocol/player-loot-v9.hex", import.meta.url), "utf8").trim(), "hex"));
+const bytes = Uint8Array.from(Buffer.from(readFileSync(new URL("../../fixtures/protocol/player-loot-v10.hex", import.meta.url), "utf8").trim(), "hex"));
 
 describe("Rust/browser corpse loot contract", () => {
   test("reads the complete fenced sheet and repeated balance from Rust's golden bytes", () => {
@@ -19,9 +19,9 @@ describe("Rust/browser corpse loot contract", () => {
     for (let length = 0; length < bytes.length; length += 1) {
       expect(() => decodeSnapshot(bytes.subarray(0, length))).toThrow();
     }
-    // Header and self (59), self abilities with two cooldowns and one aura (28), target section
-    // without detail auras (12), inventory revision, presence and bag (73).
-    const presence = 59 + 28 + 12 + 73;
+    // Header and self (59), self abilities with the damage range, two cooldowns and one aura (32),
+    // target section without detail auras (12), sheet revision, presence and sheet (93).
+    const presence = 59 + 32 + 12 + 93;
     for (const [offset, value] of [[presence, 2], [presence + 4, 109], [presence + 12, 100], [presence + 17, 2], [presence + 19, 9], [presence + 21, 0]]) {
       if (offset === undefined || value === undefined) {
         throw new Error("Missing malformed fixture field");
@@ -40,5 +40,7 @@ describe("Rust/browser corpse loot contract", () => {
     expect(() => decodeSnapshot(legacy)).toThrow("version");
     const v8 = Uint8Array.from(Buffer.from(readFileSync(new URL("../../fixtures/protocol/player-loot-v8.hex", import.meta.url), "utf8").trim(), "hex"));
     expect(() => decodeSnapshot(v8)).toThrow("version");
+    const v9 = Uint8Array.from(Buffer.from(readFileSync(new URL("../../fixtures/protocol/player-loot-v9.hex", import.meta.url), "utf8").trim(), "hex"));
+    expect(() => decodeSnapshot(v9)).toThrow("version");
   });
 });

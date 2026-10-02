@@ -1,4 +1,4 @@
-/** Player-visible protocol v9 only. Canonical recovery state never enters rendering. */
+/** Player-visible protocol v10 only. Canonical recovery state never enters rendering. */
 import { entityKindFromCode, sameEntity, type EntityKind, type EntityRef } from "./entity-ref";
 
 export type { EntityKind, EntityRef } from "./entity-ref";
@@ -64,7 +64,12 @@ export type ViewerState = {
   resource: ResourceState | null;
   cast: CastState | null;
   globalCooldown: number;
+  /** Inclusive melee damage range, the equipment bonus included. */
+  damage: { min: number; max: number };
 };
+
+/** The sums of the equipped items' attributes. */
+export type StatTotals = { stamina: number; strength: number; agility: number; intellect: number };
 
 export type ErrorCode =
   | "no-target"
@@ -87,7 +92,8 @@ export type ErrorCode =
   | "not-enough-resource"
   | "stunned"
   | "already-casting"
-  | "invalid-class";
+  | "invalid-class"
+  | "not-equippable";
 
 /** Feedback the viewer received in the projection's tick; cosmetic and lossy. */
 export type ZoneEvent =
@@ -103,7 +109,7 @@ export type ZoneEvent =
   | { kind: "interrupted"; source: EntityRef | null; target: EntityRef; ability: number }
   | { kind: "absorbed"; source: EntityRef; target: EntityRef; amount: number };
 
-/** Wire catalog revision 1, validated against the core's immutable stack limits. */
+/** Item catalog revision 2, validated against the core's immutable stack limits. */
 export type InventorySlot = { itemId: number; quantity: number } | null;
 
 export type LootView = {
@@ -132,6 +138,13 @@ export type ZoneSnapshot = {
   inventoryRevision: bigint;
   /** Complete self bag when present; null means retain prior state, never empty. */
   inventory: readonly InventorySlot[] | null;
+  /**
+   * Item IDs by equipment slot (0 main hand … 5 feet), null when empty; present exactly with the bag
+   * under the same revision.
+   */
+  equipment: readonly (number | null)[] | null;
+  /** The equipment's stat totals, present exactly with the equipment. */
+  stats: StatTotals | null;
   /** Complete eligible selected corpse sheet; null means no current sheet. */
   loot: LootView | null;
   events: readonly ZoneEvent[];
@@ -142,20 +155,20 @@ export type ZoneSnapshot = {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 9;
-const SCHEMA_VERSION = 9;
+const WIRE_VERSION = 10;
+const SCHEMA_VERSION = 10;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
 /**
- * Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 27, self abilities 16 (class,
- * resource, global cooldown, cast, two list counts), target 12 (target-of-target, its cast, aura count),
- * inventory revision 8/presence 1, loot presence 1, two counts.
+ * Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 27, self abilities 20 (class,
+ * resource, global cooldown, cast, melee damage range, two list counts), target 12 (target-of-target,
+ * its cast, aura count), sheet revision 8/presence 1, loot presence 1, two counts.
  */
-const FIXED_BYTES = 100;
+const FIXED_BYTES = 104;
 const ENTITY_BYTES = 21;
 const MAX_EVENTS = 16;
-/** (1 077 − 100) / 21: records that fit without events, sheets, cooldowns or auras. */
+/** (1 077 − 104) / 21: records that fit without events, sheets, cooldowns or auras. */
 const MAX_ENTITIES = 46;
 const MAX_COOLDOWNS = 4;
 const MAX_AURAS = 8;
@@ -167,7 +180,28 @@ const ERROR_CODES: readonly ErrorCode[] = [
   "too-many-intents", "invalid-inventory-move", "inventory-full",
   "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
   "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
+  "not-equippable",
 ];
+const EQUIPMENT_SLOTS = 6;
+
+type ItemShape = { maxStack: number; slot: number | null; stats: readonly [number, number, number, number] };
+const bagItem = (maxStack: number): ItemShape => ({ maxStack, slot: null, stats: [0, 0, 0, 0] });
+const gear = (slot: number, ...stats: [number, number, number, number]): ItemShape => ({ maxStack: 1, slot, stats });
+/**
+ * Item catalog revision 2 by ID: stack limit, equipment slot index and stamina/strength/agility/intellect;
+ * `local-zone-wasm.test.ts` holds it to the WASM catalog export.
+ */
+export const ITEM_SHAPES: ReadonlyMap<number, ItemShape> = new Map([
+  [1, bagItem(20)],
+  [2, gear(0, 0, 2, 2, 0)],
+  [3, gear(0, 1, 3, 0, 0)],
+  [4, gear(0, 0, 0, 0, 4)],
+  [5, gear(1, 2, 0, 0, 0)],
+  [6, gear(2, 1, 0, 0, 2)],
+  [7, gear(3, 2, 0, 0, 0)],
+  [8, gear(4, 1, 0, 0, 0)],
+  [9, gear(5, 1, 0, 2, 0)],
+]);
 const CLASSES: readonly ClassId[] = ["warden", "ranger", "arcanist"];
 const RESOURCES: readonly ResourceKind[] = ["rage", "focus", "mana"];
 const AURA_KINDS: readonly AuraKind[] = ["damage-over-time", "heal-over-time", "absorb", "root", "snare", "stun", "haste"];
@@ -436,15 +470,34 @@ function decodeEntity(reader: Reader): EntityState {
 }
 
 function validateStack(itemId: number, quantity: number): void {
-  let limit = 0;
-  if (itemId === 1) {
-    limit = 20;
-  } else if (itemId === 2) {
-    limit = 1;
-  }
+  const limit = ITEM_SHAPES.get(itemId)?.maxStack ?? 0;
   if (quantity === 0 || quantity > limit) {
     throw new Error("Invalid inventory stack");
   }
+}
+
+/** Six slots of catalog items made for them, then stat totals that match them. */
+function decodeEquipment(reader: Reader): { equipment: (number | null)[]; stats: StatTotals } {
+  const equipment: (number | null)[] = [];
+  const totals = [0, 0, 0, 0];
+  for (let slot = 0; slot < EQUIPMENT_SLOTS; slot += 1) {
+    const itemId = reader.u16();
+    if (itemId === 0) {
+      equipment.push(null);
+      continue;
+    }
+    const shape = ITEM_SHAPES.get(itemId);
+    if (shape?.slot !== slot) {
+      throw new Error("Invalid equipment slot");
+    }
+    shape.stats.forEach((value, stat) => { totals[stat] = (totals[stat] ?? 0) + value; });
+    equipment.push(itemId);
+  }
+  const [stamina, strength, agility, intellect] = [reader.u16(), reader.u16(), reader.u16(), reader.u16()];
+  if ([stamina, strength, agility, intellect].some((value, stat) => value !== totals[stat])) {
+    throw new Error("Stat totals do not match the equipment");
+  }
+  return { equipment, stats: { stamina, strength, agility, intellect } };
 }
 
 export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
@@ -494,6 +547,10 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   const resourceMaximum = reader.u16();
   const globalCooldown = reader.u16();
   const cast = decodeCast(reader);
+  const damage = { min: reader.u16(), max: reader.u16() };
+  if (damage.min > damage.max) {
+    throw new Error("Inverted viewer damage range");
+  }
   const cooldownCount = reader.u8();
   if (cooldownCount > MAX_COOLDOWNS) {
     throw new Error("Snapshot has too many cooldowns");
@@ -539,6 +596,8 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   }
   const [hasInventory = false] = reader.flags(1);
   let inventory: InventorySlot[] | null = null;
+  let equipment: (number | null)[] | null = null;
+  let stats: StatTotals | null = null;
   if (hasInventory) {
     inventory = [];
     for (let slot = 0; slot < 16; slot += 1) {
@@ -551,6 +610,7 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
         inventory.push({ itemId, quantity });
       }
     }
+    ({ equipment, stats } = decodeEquipment(reader));
   }
   const [hasLoot = false] = reader.flags(1);
   let loot: LootView | null = null;
@@ -610,9 +670,10 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
     zoneId, tick, contentRevision, acknowledgedSequence, viewerId,
     viewer: {
       copper, experience, experienceToNextLevel, health, maxHealth, level, dead, inCombat, autoAttacking, target,
-      classChoice, resource, cast, globalCooldown,
+      classChoice, resource, cast, globalCooldown, damage,
     },
-    cooldowns, auras, targetOfTarget, targetDetail, inventoryRevision, inventory, loot, events, entities,
+    cooldowns, auras, targetOfTarget, targetDetail, inventoryRevision, inventory, equipment, stats, loot, events,
+    entities,
   };
 }
 

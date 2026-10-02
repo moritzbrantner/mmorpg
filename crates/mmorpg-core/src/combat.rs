@@ -17,7 +17,7 @@ use crate::snapshot::{CreatureAi, PlayerIntent};
 use crate::unit::{
     COMBAT_LINGER_TICKS, CORPSE_TICKS, OUT_OF_RANGE_ERROR_INTERVAL_TICKS, PLAYER_REACH_UNITS,
     PLAYER_SWING_TICKS, REGEN_DELAY_TICKS, REGEN_INTERVAL_TICKS, REGEN_PERCENT,
-    RELEASE_HEALTH_PERCENT, Swing, percent_of, player_damage, player_max_health, roll_swing,
+    RELEASE_HEALTH_PERCENT, Swing, percent_of, roll_swing,
 };
 use crate::zone::physics_error;
 use crate::{
@@ -87,6 +87,8 @@ impl ZoneSimulation {
             PlayerIntent::SelectTarget(_)
             | PlayerIntent::StartAttack
             | PlayerIntent::MoveItem { .. }
+            | PlayerIntent::EquipItem { .. }
+            | PlayerIntent::UnequipItem { .. }
             | PlayerIntent::Loot(_)
                 if !alive =>
             {
@@ -121,6 +123,14 @@ impl ZoneSimulation {
                     }
                 }
             }
+            PlayerIntent::EquipItem { bag_slot } => self
+                .change_equipment(player_id, |equipment, bag| {
+                    equipment.equip(bag, usize::from(bag_slot))
+                })?,
+            PlayerIntent::UnequipItem { equipment_slot } => self
+                .change_equipment(player_id, |equipment, bag| {
+                    equipment.unequip(bag, equipment_slot)
+                })?,
             PlayerIntent::Loot(claim) => self.claim_loot(player_id, claim)?,
             PlayerIntent::SelectTarget(None) => {
                 self.update_player(player_id, |player| {
@@ -233,7 +243,7 @@ impl ZoneSimulation {
             .set_velocity(body, Vec3i::ZERO)
             .map_err(physics_error)?;
         self.update_player(player_id, |player| {
-            player.health = percent_of(player_max_health(player.level), RELEASE_HEALTH_PERCENT);
+            player.health = percent_of(player.max_health(), RELEASE_HEALTH_PERCENT);
             player.auto_attack = false;
             player.swing_timer = 0;
             player.combat_timer = 0;
@@ -291,7 +301,7 @@ impl ZoneSimulation {
         if player.swing_timer > 0 || crate::aura::has_kind(&player.auras, crate::AuraKind::Stun) {
             return Ok(());
         }
-        let (level, error_ready) = (player.level, player.error_cooldown == 0);
+        let (damage, error_ready) = (player.melee_damage(), player.error_cooldown == 0);
         let swing_ticks = crate::aura::hasted_swing(PLAYER_SWING_TICKS, &player.auras);
         let from = self.player_position(player_id)?;
         let to = self
@@ -319,7 +329,7 @@ impl ZoneSimulation {
             player.swing_timer = swing_ticks;
             player.combat_timer = COMBAT_LINGER_TICKS;
         });
-        self.attack_creature(player_id, creature_id, player_damage(level), now)
+        self.attack_creature(player_id, creature_id, damage, now)
     }
 
     /// Resolves one player swing against a creature: evading creatures
@@ -680,7 +690,7 @@ impl ZoneSimulation {
                     .resource
                     .advance(choice.class.resource(), player.level, in_combat);
             }
-            let max_health = player_max_health(player.level);
+            let max_health = player.max_health();
             // Calm time only counts while there is health to regain, so a
             // resting, healthy player's state does not change.
             if player.combat_timer > 0

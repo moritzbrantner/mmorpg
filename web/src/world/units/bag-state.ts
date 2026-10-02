@@ -1,5 +1,5 @@
 import type { WorldCommand } from "../../command-wire";
-import type { InventorySlot, ZoneSnapshot } from "../../replication";
+import type { InventorySlot, StatTotals, ZoneSnapshot } from "../../replication";
 
 /** Retains received sheets; intents never modify this presentation cache. */
 export class BagState {
@@ -8,11 +8,16 @@ export class BagState {
   #revision = 0n;
   #sheetRevision = 0n;
   #slots: readonly InventorySlot[] | null = null;
+  #equipment: readonly (number | null)[] | null = null;
+  #stats: StatTotals | null = null;
   #dead = false;
   #feedback = "";
   #sentRevision: bigint | null = null;
 
   get slots(): readonly InventorySlot[] | null { return this.#slots; }
+  /** Item IDs by equipment slot, received with the bag under the same revision. */
+  get equipment(): readonly (number | null)[] | null { return this.#equipment; }
+  get stats(): StatTotals | null { return this.#stats; }
   get ready(): boolean { return this.#slots !== null && this.#sheetRevision === this.#revision; }
   get canMove(): boolean { return this.ready && !this.#dead; }
   get feedback(): string { return this.#feedback; }
@@ -33,6 +38,8 @@ export class BagState {
     this.#revision = 0n;
     this.#sheetRevision = 0n;
     this.#slots = null;
+    this.#equipment = null;
+    this.#stats = null;
     this.#dead = false;
     this.#feedback = "";
     this.#sentRevision = null;
@@ -50,6 +57,8 @@ export class BagState {
     this.#dead = snapshot.viewer.dead;
     if (snapshot.inventory !== null) {
       this.#slots = snapshot.inventory.map((stack) => stack ? { ...stack } : null);
+      this.#equipment = snapshot.equipment ? [...snapshot.equipment] : null;
+      this.#stats = snapshot.stats ? { ...snapshot.stats } : null;
       this.#sheetRevision = snapshot.inventoryRevision;
       if (this.#sentRevision !== null && this.#sheetRevision > this.#sentRevision) {
         this.#feedback = "Bag updated.";

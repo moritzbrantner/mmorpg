@@ -83,3 +83,15 @@ records add 574,732 archive bytes (metadata 1.03 â†’ 1.43 MB, object code 0.84 â
 retains the observation against the #103 baseline. Its complete build identity
 matches that baseline. The 64 KiB per-baseline growth gate is unchanged and applies
 to later changes; the explicit capture passed the new absolute limit.
+
+The #66 equipment/schema-v10 change advances the reviewed baseline to
+**2,650,028 bytes**, SHA-256
+`9140b9ba2aa02530572917c4bf029611152650d7ef42dc704a9cb9d21d38f4a6`. Its complete
+build identity matches the #112 baseline. Equipment slots and stats, the equip
+and unequip intents, gear-aware health and damage, the larger item and loot
+catalogs and their canonical and projection records add 103,742 archive bytes,
+above the unchanged 65,536-byte growth gate;
+[the failed comparison](../.performance/observations/equipment-v10-growth.json)
+retains the observation. These are raw archive/metadata bytes, not a linked-code
+or runtime cost estimate. The explicit capture passed the unchanged 3 MiB
+absolute limit, and the ordinary gate never updated evidence.

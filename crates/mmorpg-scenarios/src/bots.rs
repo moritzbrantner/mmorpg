@@ -74,6 +74,8 @@ pub enum Action {
     StopAttack,
     ReleaseSpirit,
     MoveItem,
+    EquipItem,
+    UnequipItem,
     Loot,
     ChooseClass,
     UseAbility,
@@ -93,6 +95,8 @@ impl Action {
             Self::StopAttack => "stop_attack",
             Self::ReleaseSpirit => "release_spirit",
             Self::MoveItem => "move_item",
+            Self::EquipItem => "equip_item",
+            Self::UnequipItem => "unequip_item",
             Self::Loot => "loot",
             Self::ChooseClass => "choose_class",
             Self::UseAbility => "use_ability",
@@ -112,6 +116,8 @@ impl Action {
             | Self::StopAttack
             | Self::ReleaseSpirit
             | Self::MoveItem
+            | Self::EquipItem
+            | Self::UnequipItem
             | Self::Loot
             | Self::ChooseClass
             | Self::UseAbility
@@ -131,6 +137,8 @@ impl Action {
             | Self::StopAttack
             | Self::ReleaseSpirit
             | Self::MoveItem
+            | Self::EquipItem
+            | Self::UnequipItem
             | Self::Loot
             | Self::ChooseClass
             | Self::UseAbility
@@ -168,6 +176,11 @@ pub struct Step {
     pub source_slot: Option<u8>,
     pub destination_slot: Option<u8>,
     pub quantity: Option<u16>,
+    /// `equip_item`: the bag slot, passed through unchanged.
+    pub bag_slot: Option<u8>,
+    /// `unequip_item`: the equipment slot (0 main hand … 5 feet), passed
+    /// through unchanged.
+    pub equipment_slot: Option<u8>,
     /// Command sequence override (commands only); defaults to the bot's next sequence.
     pub seq: Option<u32>,
     /// Connection epoch override; defaults to the bot's current epoch.
@@ -189,6 +202,7 @@ pub enum ExpectKind {
     Health,
     Progression,
     Inventory,
+    Equipment,
     Copper,
     Loot,
     Target,
@@ -210,6 +224,7 @@ impl ExpectKind {
             Self::Health => "health",
             Self::Progression => "progression",
             Self::Inventory => "inventory",
+            Self::Equipment => "equipment",
             Self::Copper => "copper",
             Self::Loot => "loot",
             Self::Target => "target",
@@ -232,6 +247,7 @@ impl ExpectKind {
             | Self::Health
             | Self::Progression
             | Self::Inventory
+            | Self::Equipment
             | Self::Copper
             | Self::Loot
             | Self::Target => false,
@@ -267,6 +283,8 @@ pub struct Expectation {
     pub slot: Option<u8>,
     pub item: Option<u16>,
     pub quantity: Option<u16>,
+    /// The equipment slot an `equipment` expectation checks in the sheet.
+    pub equipment_slot: Option<u8>,
     /// The unit a `target`, `event` or `unit` expectation is about.
     pub entity: Option<UnitSpec>,
     /// The feedback event kind of an `event` expectation.
@@ -373,6 +391,14 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                 "{at}: class and sex are required only for choose_class"
             ));
         }
+        if step.bag_slot.is_some() != (step.action == Action::EquipItem) {
+            return Err(format!("{at}: bag_slot is required only for equip_item"));
+        }
+        if step.equipment_slot.is_some() != (step.action == Action::UnequipItem) {
+            return Err(format!(
+                "{at}: equipment_slot is required only for unequip_item"
+            ));
+        }
         if step.ability.is_some() != (step.action == Action::UseAbility) {
             return Err(format!("{at}: ability is required only for use_ability"));
         }
@@ -439,6 +465,10 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                     ));
                 }
                 expectation.inventory_revision.is_some() && expectation.sheet.is_some()
+            }
+            ExpectKind::Equipment => {
+                expectation.equipment_slot.is_some_and(|slot| slot < 6)
+                    && expectation.item.is_some()
             }
             ExpectKind::Copper => expectation.copper.is_some(),
             ExpectKind::Loot => {
@@ -638,6 +668,8 @@ impl Runner<'_> {
             | Action::StopAttack
             | Action::ReleaseSpirit
             | Action::MoveItem
+            | Action::EquipItem
+            | Action::UnequipItem
             | Action::Loot
             | Action::ChooseClass
             | Action::UseAbility
@@ -763,6 +795,22 @@ impl Runner<'_> {
                     format!(
                         " source_slot={source} destination_slot={destination} quantity={quantity}"
                     ),
+                )
+            }
+            Action::EquipItem => {
+                let bag_slot = step.bag_slot.ok_or("equip_item bag_slot is required")?;
+                (
+                    ZoneCommand::EquipItem { bag_slot },
+                    format!(" bag_slot={bag_slot}"),
+                )
+            }
+            Action::UnequipItem => {
+                let equipment_slot = step
+                    .equipment_slot
+                    .ok_or("unequip_item equipment_slot is required")?;
+                (
+                    ZoneCommand::UnequipItem { equipment_slot },
+                    format!(" equipment_slot={equipment_slot}"),
                 )
             }
             Action::ChooseClass => {
@@ -1272,6 +1320,27 @@ impl Runner<'_> {
                     Ok(shown)
                 }
             }
+            ExpectKind::Equipment => {
+                let slot = expectation
+                    .equipment_slot
+                    .ok_or("equipment expectation needs a slot")?;
+                let equipment = view.equipment.ok_or("equipment sheet is absent")?;
+                let item = equipment.slots()[usize::from(slot)].map_or(0, mmorpg_core::ItemId::get);
+                let totals = equipment.totals();
+                let shown = format!(
+                    "revision={} slot={slot} item={item} stats={}/{}/{}/{}",
+                    view.inventory_revision,
+                    totals.stamina,
+                    totals.strength,
+                    totals.agility,
+                    totals.intellect
+                );
+                if Some(item) == expectation.item {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
             ExpectKind::Target => {
                 let expected = self.resolve_unit(expectation.entity.as_ref())?;
                 let actual = view.viewer.target;
@@ -1400,6 +1469,7 @@ fn describe(expectation: &Expectation) -> String {
         ExpectKind::Health => format!("{bot} health"),
         ExpectKind::Progression => format!("{bot} progression"),
         ExpectKind::Inventory => format!("{bot} inventory"),
+        ExpectKind::Equipment => format!("{bot} equipment"),
         ExpectKind::Copper => format!("{bot} copper"),
         ExpectKind::Loot => format!("{bot} loot"),
         ExpectKind::Target => format!("{bot} target {}", unit_text(expectation)),

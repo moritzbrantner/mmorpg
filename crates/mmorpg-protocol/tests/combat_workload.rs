@@ -52,12 +52,13 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             // and at most 21 bytes per measured complete corpse sheet. v9
             // adds 23 fixed class/resource/cast/list-count bytes per
             // projection; these fixtures never choose a class, so no
-            // cooldown or aura records follow. Physics/work fences remain
-            // unchanged.
+            // cooldown or aura records follow. v10 adds the four-byte melee
+            // damage range per projection and 20 equipment and stat bytes per
+            // self sheet. Physics/work fences remain unchanged.
             let ceiling = if index == 6 {
                 ceiling
-                    + (22 + 23) * fixture.players * TICKS
-                    + 64 * fixture.players * (TICKS / 10)
+                    + (22 + 23 + 4) * fixture.players * TICKS
+                    + (64 + 20) * fixture.players * (TICKS / 10)
                     + 21 * report.loot_sheets
             } else {
                 ceiling
@@ -77,7 +78,7 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             assert_eq!(report.ai_evaluations, 59 * TICKS);
         }
         if fixture.crowded {
-            assert_eq!(report.max_projection_bytes, 1_073);
+            assert_eq!(report.max_projection_bytes, 1_077);
             assert!(report.candidates_tested > 1_000_000);
         }
     }

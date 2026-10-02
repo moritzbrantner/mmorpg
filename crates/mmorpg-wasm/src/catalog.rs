@@ -5,7 +5,8 @@
 //! [`CATALOG_FORMAT`], version [`CATALOG_FORMAT_VERSION`]) exports those
 //! tables of the hosted [`ZoneContent`] as compact JSON: creature templates
 //! (name, family, behaviour, levels, elite, body size), NPCs (name, role,
-//! level), areas (name), items (name, stack limit), classes (name, resource)
+//! level), areas (name), items (name, stack limit, equipment slot, stats),
+//! classes (name, resource)
 //! and abilities (name, user, unlock level, cost, cast time, cooldown, aura). It carries the content
 //! revision and fingerprint,
 //! so a client can refuse a catalog of other content. Combat numbers,
@@ -19,7 +20,7 @@ use serde::Serialize;
 use crate::host::hosted_content;
 
 pub const CATALOG_FORMAT: &str = "mmorpg.catalog";
-pub const CATALOG_FORMAT_VERSION: u32 = 3;
+pub const CATALOG_FORMAT_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +105,18 @@ pub struct ItemExport {
     pub id: u16,
     pub name: &'static str,
     pub max_stack: u16,
+    /// The camel-case equipment slot name, or `null` for plain bag items.
+    pub slot: Option<&'static str>,
+    pub stats: StatsExport,
+}
+
+/// The attributes an item adds while equipped.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct StatsExport {
+    pub stamina: u8,
+    pub strength: u8,
+    pub agility: u8,
+    pub intellect: u8,
 }
 
 /// The catalog of `content`, every table ordered by ID.
@@ -120,6 +133,13 @@ pub fn catalog(content: &ZoneContent) -> CatalogExport {
                 id: item.id.get(),
                 name: item.name,
                 max_stack: item.max_stack,
+                slot: item.slot.map(mmorpg_core::EquipmentSlot::name),
+                stats: StatsExport {
+                    stamina: item.stats.stamina,
+                    strength: item.stats.strength,
+                    agility: item.stats.agility,
+                    intellect: item.stats.intellect,
+                },
             })
             .collect(),
         content_fingerprint: format!("{:016x}", content.fingerprint()),
@@ -208,12 +228,29 @@ mod tests {
         let content = hosted_content();
         assert_eq!(value["format"], CATALOG_FORMAT);
         assert_eq!(value["version"], CATALOG_FORMAT_VERSION);
-        assert_eq!(value["itemCatalogRevision"], "1");
+        assert_eq!(value["itemCatalogRevision"], "2");
+        let stats = |stamina, strength, agility, intellect| json!({"stamina": stamina, "strength": strength, "agility": agility, "intellect": intellect});
+        let item = |id, name, slot, stats| {
+            let max_stack = if id == 1 { 20 } else { 1 };
+            json!({"id": id, "name": name, "maxStack": max_stack, "slot": slot, "stats": stats})
+        };
         assert_eq!(
             value["items"],
             json!([
-                {"id": 1, "name": "Torn Fur", "maxStack": 20},
-                {"id": 2, "name": "Worn Dagger", "maxStack": 1}
+                item(1, "Torn Fur", Value::Null, stats(0, 0, 0, 0)),
+                item(2, "Worn Dagger", json!("mainHand"), stats(0, 2, 2, 0)),
+                item(
+                    3,
+                    "Militia Shortsword",
+                    json!("mainHand"),
+                    stats(1, 3, 0, 0)
+                ),
+                item(4, "Apprentice Wand", json!("mainHand"), stats(0, 0, 0, 4)),
+                item(5, "Pine Buckler", json!("offHand"), stats(2, 0, 0, 0)),
+                item(6, "Cloth Hood", json!("head"), stats(1, 0, 0, 2)),
+                item(7, "Padded Tunic", json!("chest"), stats(2, 0, 0, 0)),
+                item(8, "Padded Trousers", json!("legs"), stats(1, 0, 0, 0)),
+                item(9, "Worn Boots", json!("feet"), stats(1, 0, 2, 0)),
             ])
         );
         assert_eq!(value["contentRevision"], content.revision().to_string());

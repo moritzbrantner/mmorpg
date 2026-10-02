@@ -11,7 +11,10 @@ use mmorpg_core::{
     ability_by_id,
 };
 
-use crate::inventory::{INVENTORY_RECORD_BYTES, decode_inventory, encode_inventory};
+use crate::inventory::{
+    EQUIPMENT_RECORD_BYTES, INVENTORY_RECORD_BYTES, decode_equipment, decode_inventory,
+    encode_equipment, encode_inventory,
+};
 use crate::wire::{
     COMMON_HEADER_BYTES, ENTITY_REF_BYTES, PLAYER_SNAPSHOT_SCOPE, decode_common_header,
     decode_entity_kind, decode_entity_ref, decode_event, decode_u8_count, decode_u16_count,
@@ -27,9 +30,14 @@ const SELF_BYTES: usize = 4 + 4 + 1 + 8 + 4 + 1 + ENTITY_REF_BYTES;
 /// Ability ID, flags (bit 0 channel), elapsed and total ticks; ability 0
 /// means no cast.
 pub const CAST_RECORD_BYTES: usize = 1 + 1 + 2 + 2;
-/// Class code, resource kind/value/max, global cooldown, cast, then the
-/// cooldown and aura counts.
-const SELF_ABILITY_BYTES: usize = 1 + 1 + 2 + 2 + 2 + CAST_RECORD_BYTES + 1 + 1;
+/// Class code, resource kind/value/max, global cooldown, cast, melee damage
+/// range, then the cooldown and aura counts.
+const SELF_ABILITY_BYTES: usize = 1 + 1 + 2 + 2 + 2 + CAST_RECORD_BYTES + 2 + 2 + 1 + 1;
+/// Four `u16` stat totals: stamina, strength, agility and intellect.
+const STAT_TOTALS_BYTES: usize = 4 * 2;
+/// The self sheet: bag, equipment and stat totals.
+pub const SELF_SHEET_BYTES: usize =
+    INVENTORY_RECORD_BYTES + EQUIPMENT_RECORD_BYTES + STAT_TOTALS_BYTES;
 /// The target's own target, the target's cast and its aura count.
 const TARGET_BYTES: usize = ENTITY_REF_BYTES + CAST_RECORD_BYTES + 1;
 /// Every section's fixed part: header, self, target, inventory revision
@@ -49,19 +57,19 @@ pub const EVENT_RECORD_BYTES: usize = 2 + 2 * ENTITY_REF_BYTES + 2;
 /// facing, level, health percent and flags.
 pub const ENTITY_RECORD_BYTES: usize = 1 + 4 + 2 + 6 + 3 + 2 + 1 + 1 + 1;
 /// Records that fit the budget without events, sheets, cooldowns or auras:
-/// (1,077 − 100) / 21 = 46.
+/// (1,077 − 104) / 21 = 46.
 pub const MAX_WIRE_ENTITIES: usize =
     (MAX_PLAYER_PROJECTION_BYTES - PLAYER_SNAPSHOT_FIXED_BYTES) / ENTITY_RECORD_BYTES;
 const MAX_EVENT_SECTION_BYTES: usize = MAX_EVENTS_PER_PLAYER * EVENT_RECORD_BYTES;
 
 // With every list full, both sheets and a full event section, the viewer
-// and its target always fit: 100 + 108 + 21 + 64 + 16 × 14 + 2 × 21 = 559
+// and its target always fit: 104 + 108 + 21 + 84 + 16 × 14 + 2 × 21 = 583
 // ≤ 1,077 bytes.
 const _: () = assert!(
     PLAYER_SNAPSHOT_FIXED_BYTES
         + MAX_ABILITY_LIST_BYTES
         + crate::loot::MAX_LOOT_SHEET_BYTES
-        + INVENTORY_RECORD_BYTES
+        + SELF_SHEET_BYTES
         + MAX_EVENT_SECTION_BYTES
         + 2 * ENTITY_RECORD_BYTES
         <= MAX_PLAYER_PROJECTION_BYTES
@@ -138,6 +146,9 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
     }
     payload.extend_from_slice(&viewer.global_cooldown.to_be_bytes());
     encode_cast(&mut payload, viewer.cast);
+    for value in viewer.damage {
+        payload.extend_from_slice(&value.to_be_bytes());
+    }
     payload.push(encode_u8_count(
         snapshot.cooldowns.len(),
         MAX_COOLDOWNS,
@@ -153,9 +164,27 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
     encode_auras(&mut payload, &snapshot.target_detail.auras)?;
 
     payload.extend_from_slice(&snapshot.inventory_revision.to_be_bytes());
-    payload.push(u8::from(snapshot.inventory.is_some()));
-    if let Some(inventory) = &snapshot.inventory {
-        encode_inventory(&mut payload, inventory);
+    match (&snapshot.inventory, &snapshot.equipment) {
+        (Some(inventory), Some(equipment)) => {
+            payload.push(1);
+            encode_inventory(&mut payload, inventory);
+            encode_equipment(&mut payload, equipment);
+            let totals = equipment.totals();
+            for total in [
+                totals.stamina,
+                totals.strength,
+                totals.agility,
+                totals.intellect,
+            ] {
+                payload.extend_from_slice(&total.to_be_bytes());
+            }
+        }
+        (None, None) => payload.push(0),
+        _ => {
+            return Err(ProtocolError::new(
+                "the self sheet needs both the bag and the equipment",
+            ));
+        }
     }
     payload.push(u8::from(snapshot.loot.is_some()));
     if let Some(view) = snapshot.loot {
@@ -356,6 +385,13 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     let resource_max = u16::from_be_bytes(take(payload, &mut offset)?);
     let global_cooldown = u16::from_be_bytes(take(payload, &mut offset)?);
     let cast = decode_cast(payload, &mut offset)?;
+    let damage = [
+        u16::from_be_bytes(take(payload, &mut offset)?),
+        u16::from_be_bytes(take(payload, &mut offset)?),
+    ];
+    if damage[0] > damage[1] {
+        return Err(ProtocolError::new("viewer damage range is inverted"));
+    }
     let cooldown_count = decode_u8_count(
         payload,
         &mut offset,
@@ -415,10 +451,27 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     if inventory_revision == 0 {
         return Err(ProtocolError::new("inventory revision must be nonzero"));
     }
-    let inventory = if read_bool(payload, &mut offset)? {
-        Some(decode_inventory(payload, &mut offset)?)
+    let (inventory, equipment) = if read_bool(payload, &mut offset)? {
+        let inventory = decode_inventory(payload, &mut offset)?;
+        let equipment = decode_equipment(payload, &mut offset)?;
+        let totals = equipment.totals();
+        let mut wire = [0_u16; 4];
+        for total in &mut wire {
+            *total = u16::from_be_bytes(take(payload, &mut offset)?);
+        }
+        if wire
+            != [
+                totals.stamina,
+                totals.strength,
+                totals.agility,
+                totals.intellect,
+            ]
+        {
+            return Err(ProtocolError::new("stat totals do not match the equipment"));
+        }
+        (Some(inventory), Some(equipment))
     } else {
-        None
+        (None, None)
     };
     let loot = if read_bool(payload, &mut offset)? {
         Some(mmorpg_core::LootView {
@@ -499,6 +552,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
             resource,
             cast,
             global_cooldown,
+            damage,
         },
         cooldowns,
         auras,
@@ -506,6 +560,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         target_detail,
         inventory_revision,
         inventory,
+        equipment,
         loot,
         events,
         entities,
@@ -608,7 +663,8 @@ mod tests {
     /// The shared Rust/browser golden projection: a level-4 Arcanist casting
     /// Firebolt behind an Arcane Barrier at a rooted Mirefin Lurker that
     /// casts Muck Bolt, next to an NPC and a corpse tapped by another player,
-    /// with one event of every kind.
+    /// wearing a wand, hood and tunic (3 stamina, 6 intellect), with one event
+    /// of every kind.
     fn fixture_snapshot() -> ZoneSnapshot {
         let mut slots = [None; mmorpg_core::INVENTORY_SLOTS];
         slots[0] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 3).unwrap());
@@ -621,6 +677,7 @@ mod tests {
             viewer_id: 7,
             inventory_revision: 9,
             inventory: Some(mmorpg_core::Inventory::from_slots(slots)),
+            equipment: Some(equipment(&[4, 6, 7])),
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(42),
             tick: 99,
@@ -629,7 +686,8 @@ mod tests {
                 experience: 37,
                 experience_to_next_level: 400,
                 health: 38,
-                max_health: 95,
+                // 95 at level 4 plus 5 per stamina.
+                max_health: 110,
                 level: 4,
                 dead: false,
                 in_combat: true,
@@ -651,6 +709,8 @@ mod tests {
                     channel: false,
                 }),
                 global_cooldown: 25,
+                // Level 4's 6–9 plus half of 6 intellect.
+                damage: [9, 12],
             },
             cooldowns: vec![
                 Cooldown {
@@ -816,6 +876,17 @@ mod tests {
         }
     }
 
+    /// Equipment holding each catalog item in its own slot.
+    fn equipment(items: &[u16]) -> mmorpg_core::Equipment {
+        let mut slots = [None; mmorpg_core::EQUIPMENT_SLOTS];
+        for &item in items {
+            let id = mmorpg_core::ItemId::new(item);
+            let slot = mmorpg_core::item_template(id).unwrap().slot.unwrap();
+            slots[usize::from(slot.index())] = Some(id);
+        }
+        mmorpg_core::Equipment::from_slots(slots).unwrap()
+    }
+
     fn hex(fixture: &str) -> Vec<u8> {
         let fixture = fixture.trim();
         (0..fixture.len())
@@ -826,21 +897,24 @@ mod tests {
 
     fn fixture_bytes() -> Vec<u8> {
         hex(include_str!(
-            "../../../fixtures/protocol/player-snapshot-v9.hex"
+            "../../../fixtures/protocol/player-snapshot-v10.hex"
         ))
     }
 
     /// Byte offsets of the fixture's sections.
     const CLASS: usize = 59;
     const CAST: usize = CLASS + 8;
-    const COOLDOWNS: usize = CAST + CAST_RECORD_BYTES;
+    const DAMAGE: usize = CAST + CAST_RECORD_BYTES;
+    const COOLDOWNS: usize = DAMAGE + 4;
     const AURAS: usize = COOLDOWNS + 1 + 2 * COOLDOWN_RECORD_BYTES;
     const TARGET_OF_TARGET: usize = AURAS + 1 + AURA_RECORD_BYTES;
     const TARGET_CAST: usize = TARGET_OF_TARGET + ENTITY_REF_BYTES;
     const TARGET_AURAS: usize = TARGET_CAST + CAST_RECORD_BYTES;
     const INVENTORY: usize = TARGET_AURAS + 1 + AURA_RECORD_BYTES;
     const EVENT_COUNT: usize = 14;
-    const EVENTS: usize = INVENTORY + 8 + 1 + INVENTORY_RECORD_BYTES + 1;
+    const EQUIPMENT: usize = INVENTORY + 9 + INVENTORY_RECORD_BYTES;
+    const STATS: usize = EQUIPMENT + EQUIPMENT_RECORD_BYTES;
+    const EVENTS: usize = INVENTORY + 8 + 1 + SELF_SHEET_BYTES + 1;
     const ENTITY_COUNT: usize = EVENTS + 1 + EVENT_COUNT * EVENT_RECORD_BYTES;
     const FIRST_ENTITY: usize = ENTITY_COUNT + 2;
     /// Cooldown and aura records of the fixture.
@@ -863,7 +937,7 @@ mod tests {
             encoded.len(),
             PLAYER_SNAPSHOT_FIXED_BYTES
                 + LIST_BYTES
-                + INVENTORY_RECORD_BYTES
+                + SELF_SHEET_BYTES
                 + EVENT_COUNT * EVENT_RECORD_BYTES
                 + 4 * ENTITY_RECORD_BYTES
         );
@@ -874,7 +948,7 @@ mod tests {
         assert_eq!(encoded[FIRST_ENTITY], 1, "the viewer's record leads");
         // The previous version's fixture is rejected, never reinterpreted.
         let legacy = hex(include_str!(
-            "../../../fixtures/protocol/player-snapshot-v8.hex"
+            "../../../fixtures/protocol/player-snapshot-v9.hex"
         ));
         assert_eq!(
             decode_snapshot(&legacy).unwrap_err().to_string(),
@@ -910,7 +984,7 @@ mod tests {
         // A dead target has no target detail.
         snapshot.target_detail = TargetDetail::default();
         let expected = hex(include_str!(
-            "../../../fixtures/protocol/player-loot-v9.hex"
+            "../../../fixtures/protocol/player-loot-v10.hex"
         ));
         if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
             let bytes = encode_snapshot(&snapshot).unwrap();
@@ -961,6 +1035,7 @@ mod tests {
         for legacy in [
             include_str!("../../../fixtures/protocol/player-snapshot-v7.hex"),
             include_str!("../../../fixtures/protocol/player-loot-v8.hex"),
+            include_str!("../../../fixtures/protocol/player-loot-v9.hex"),
         ] {
             assert!(decode_snapshot(&hex(legacy)).is_err());
         }
@@ -995,6 +1070,7 @@ mod tests {
             (CAST + 1, 1, "cast state is inconsistent"),
             (CAST + 1, 2, "reserved flag bits are set"),
             (CAST + 3, 60, "cast state is inconsistent"),
+            (DAMAGE + 1, 13, "viewer damage range is inverted"),
             (COOLDOWNS, 5, "snapshot has too many cooldowns"),
             (COOLDOWNS + 1, 11, "cooldown record is inconsistent"),
             (COOLDOWNS + 2, 9, "cooldown record is inconsistent"),
@@ -1123,7 +1199,7 @@ mod tests {
         assert!(decode_snapshot(&invalid_flag).is_err());
         for (slot, item, quantity) in [
             (0, 0_u16, 3_u16),
-            (0, 3, 1),
+            (0, 10, 1),
             (0, 1, 0),
             (0, 1, 21),
             (1, 2, 2),
@@ -1137,9 +1213,51 @@ mod tests {
         let mut omitted = fixture_snapshot();
         omitted.inventory = None;
         assert_eq!(
+            encode_snapshot(&omitted).unwrap_err().to_string(),
+            "the self sheet needs both the bag and the equipment"
+        );
+        omitted.equipment = None;
+        assert_eq!(
             decode_snapshot(&encode_snapshot(&omitted).unwrap()).unwrap(),
             omitted
         );
+    }
+
+    #[test]
+    fn equipment_decoder_rejects_unknown_misplaced_items_and_wrong_totals() {
+        let encoded = fixture_bytes();
+        assert_eq!(encoded[EQUIPMENT..EQUIPMENT + 2], [0, 4], "the wand");
+        // Slot 0 holds the wand; slot 1 (off hand) is empty.
+        for (offset, item, message) in [
+            (EQUIPMENT, 10_u16, "unknown item"),
+            (EQUIPMENT, 1, "item cannot be equipped there"),
+            (EQUIPMENT + 2, 6, "item cannot be equipped there"),
+        ] {
+            let mut invalid = encoded.clone();
+            invalid[offset..offset + 2].copy_from_slice(&item.to_be_bytes());
+            assert_eq!(
+                decode_snapshot(&invalid).unwrap_err().to_string(),
+                message,
+                "offset {offset} = item {item}"
+            );
+        }
+        // Removing the wand leaves the intellect total stale.
+        let mut stale = encoded.clone();
+        stale[EQUIPMENT..EQUIPMENT + 2].fill(0);
+        assert_eq!(
+            decode_snapshot(&stale).unwrap_err().to_string(),
+            "stat totals do not match the equipment"
+        );
+        assert_eq!(encoded[STATS..STATS + 8], [0, 3, 0, 0, 0, 0, 0, 6]);
+        for stat in 0..4 {
+            let mut invalid = encoded.clone();
+            invalid[STATS + 2 * stat + 1] ^= 1;
+            assert_eq!(
+                decode_snapshot(&invalid).unwrap_err().to_string(),
+                "stat totals do not match the equipment",
+                "stat {stat}"
+            );
+        }
     }
 
     #[test]
@@ -1175,7 +1293,7 @@ mod tests {
                 EVENT_RECORD_BYTES,
                 ENTITY_RECORD_BYTES
             ),
-            (100, 14, 21)
+            (104, 14, 21)
         );
         assert_eq!(MAX_WIRE_ENTITIES, 46);
         let viewer_id = u32::MAX;
@@ -1227,6 +1345,7 @@ mod tests {
             viewer_id,
             inventory_revision: 1,
             inventory: None,
+            equipment: None,
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             zone_id: ZoneId::new(u32::MAX),
             tick: u64::MAX,
@@ -1245,6 +1364,7 @@ mod tests {
                 resource: None,
                 cast: None,
                 global_cooldown: 0,
+                damage: [u16::MAX; 2],
             },
             cooldowns: Vec::new(),
             auras: Vec::new(),
@@ -1254,7 +1374,7 @@ mod tests {
             entities,
         };
         let packed = pack_snapshot(&snapshot).unwrap();
-        // (1,077 − 100 − 16 × 14) / 21 = 35 records fit beside a full event section.
+        // (1,077 − 104 − 16 × 14) / 21 = 35 records fit beside a full event section.
         assert_eq!(packed.packed_entities, 35);
         assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
         assert!(
@@ -1287,28 +1407,32 @@ mod tests {
         let full_bag = mmorpg_core::Inventory::from_slots(
             [Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap()); 16],
         );
+        let full_kit = equipment(&[3, 5, 6, 7, 8, 9]);
         let mut maximum_bytes = 0;
         for events in 0..=MAX_EVENTS_PER_PLAYER {
             let mut with_sheet = quiet.clone();
             with_sheet.inventory_revision = u64::MAX;
             with_sheet.inventory = Some(full_bag.clone());
+            with_sheet.equipment = Some(full_kit);
             with_sheet.events = vec![event; events];
             let packed = pack_snapshot(&with_sheet).unwrap();
             maximum_bytes = maximum_bytes.max(packed.payload.len());
             let decoded = decode_snapshot(&packed.payload).unwrap();
             assert_eq!(decoded.inventory, with_sheet.inventory);
+            assert_eq!(decoded.equipment, with_sheet.equipment);
             assert_eq!(decoded.inventory_revision, u64::MAX);
             assert_eq!(decoded.events, with_sheet.events);
             assert_eq!(decoded.entities[1].entity(), target);
             assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
+            // (1,077 − 104 − 84) / 21 = 42 and (1,077 − 104 − 84 − 224) / 21 = 31.
             if events == 0 {
-                assert_eq!(packed.packed_entities, 43);
+                assert_eq!(packed.packed_entities, 42);
             }
             if events == 16 {
-                assert_eq!(packed.packed_entities, 32);
+                assert_eq!(packed.packed_entities, 31);
             }
         }
-        assert_eq!(maximum_bytes, 1_074);
+        assert_eq!(maximum_bytes, 1_077);
         for item in [
             None,
             Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap()),
@@ -1316,6 +1440,7 @@ mod tests {
             for events in 0..=MAX_EVENTS_PER_PLAYER {
                 let mut with_loot = quiet.clone();
                 with_loot.inventory = Some(full_bag.clone());
+                with_loot.equipment = Some(full_kit);
                 with_loot.viewer.copper = u32::MAX;
                 with_loot.loot = Some(mmorpg_core::LootView {
                     claim: mmorpg_core::LootClaim {
@@ -1344,7 +1469,7 @@ mod tests {
                 assert_eq!(decoded.inventory, with_loot.inventory);
                 assert_eq!(decoded.entities[1].entity(), target);
                 if events == 16 && item.is_some() {
-                    assert_eq!(packed.packed_entities, 31);
+                    assert_eq!(packed.packed_entities, 30);
                 }
             }
         }
@@ -1364,6 +1489,7 @@ mod tests {
         let full_auras: Vec<_> = [2, 3, 6, 7, 8, 10, 11, 3].into_iter().map(aura).collect();
         let mut loaded = quiet.clone();
         loaded.inventory = Some(full_bag);
+        loaded.equipment = Some(full_kit);
         loaded.events = vec![event; MAX_EVENTS_PER_PLAYER];
         loaded.viewer.class = Some(ClassChoice {
             class: mmorpg_core::PlayerClass::Warden,
@@ -1399,8 +1525,8 @@ mod tests {
             auras: full_auras,
         };
         let packed = pack_snapshot(&loaded).unwrap();
-        // (1,077 − 100 − 108 − 64 − 16 × 14) / 21 = 27 records.
-        assert_eq!(packed.packed_entities, 27);
+        // (1,077 − 104 − 108 − 84 − 16 × 14) / 21 = 26 records.
+        assert_eq!(packed.packed_entities, 26);
         assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
         let decoded = decode_snapshot(&packed.payload).unwrap();
         assert_eq!(decoded.entities[1].entity(), target);

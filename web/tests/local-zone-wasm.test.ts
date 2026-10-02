@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { GRASS_PACKAGE_DIRECTORY, record } from "../scripts/grass-package";
 import { RELIEF_GRID, RELIEF_PACKAGE_DIRECTORY } from "../scripts/relief-package";
 import { encodeCommand } from "../src/command-wire";
-import { ABILITY_SHAPES, decodeSnapshot, type EntityState } from "../src/replication";
+import { ABILITY_SHAPES, ITEM_SHAPES, decodeSnapshot, type EntityState } from "../src/replication";
 import { abilitySlots, useAbilitySlot } from "../src/world/units/abilities";
 import { undescribedAbilities } from "../src/world/units/ability-presentation";
 import { combatStatus } from "../src/world/units/combat-hud";
@@ -147,7 +147,7 @@ describe("WASM local zone host", () => {
         }
       }
     }
-    expect(provider.scenery.contentRevision).toBe(6n);
+    expect(provider.scenery.contentRevision).toBe(7n);
   });
   test("multi-tick frames retain intermediate bag sheets and refusal feedback", () => {
     const { source } = createLocalWorld(wasm);
@@ -200,17 +200,38 @@ describe("WASM local zone host", () => {
     expect(source.latestProjection()?.inventoryRevision).toBe(1n);
     expect(source.latestProjection()?.inventory?.[0]).toEqual({ itemId: 1, quantity: 3 });
   });
+  test("equipping the starter dagger reaches the sheet and the melee range", () => {
+    const { source } = createLocalWorld(wasm);
+    source.join();
+    expect(source.latestProjection()?.equipment).toEqual(Array(6).fill(null));
+    expect(source.latestProjection()?.viewer.damage).toEqual({ min: 3, max: 6 });
+    source.sendCommand({ kind: "equip-item", bagSlot: 1 });
+    run(source, 1);
+    const equipped = source.latestProjection();
+    expect(equipped?.inventoryRevision).toBe(2n);
+    expect(equipped?.inventory?.[1]).toBeNull();
+    expect(equipped?.equipment).toEqual([2, null, null, null, null, null]);
+    expect(equipped?.stats).toEqual({ stamina: 0, strength: 2, agility: 2, intellect: 0 });
+    expect(equipped?.viewer.damage).toEqual({ min: 4, max: 7 });
+    source.sendCommand({ kind: "equip-item", bagSlot: 0 });
+    run(source, 1);
+    expect(source.latestProjection()?.events).toContainEqual({ kind: "error", code: "not-equippable", target: null });
+    source.sendCommand({ kind: "unequip-item", equipmentSlot: 0 });
+    run(source, 1);
+    expect(source.latestProjection()?.equipment).toEqual(Array(6).fill(null));
+    expect(source.latestProjection()?.inventory?.[1]).toEqual({ itemId: 2, quantity: 1 });
+  });
   test("loads under Bun and hosts zone 1 with the shared content revision", () => {
     const zone = new wasm.LocalZone() as InstanceType<typeof wasm.LocalZone> & { zoneId(): number };
     expect(zone.zoneId()).toBe(1);
-    expect(zone.contentRevision()).toBe(6n);
+    expect(zone.contentRevision()).toBe(7n);
     const player = zone.join(2, 0);
     const projection = decodeSnapshot(zone.projection(player));
-    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 6n, viewerId: player, acknowledgedSequence: 1 });
+    expect(projection).toMatchObject({ zoneId: 1, tick: 0n, contentRevision: 7n, viewerId: player, acknowledgedSequence: 1 });
     // The class choice resolves in the first tick.
     expect(projection.viewer).toEqual({
       copper: 0, health: 50, maxHealth: 50, experience: 0, experienceToNextLevel: 100, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
-      classChoice: null, resource: null, cast: null, globalCooldown: 0,
+      classChoice: null, resource: null, cast: null, globalCooldown: 0, damage: { min: 3, max: 6 },
     });
     zone.tick();
     expect(decodeSnapshot(zone.projection(player)).viewer).toMatchObject({
@@ -278,7 +299,7 @@ describe("WASM local zone host", () => {
 
   test("scenery and areas come from the same content as the zone", () => {
     const { source, scenery } = createLocalWorld(wasm);
-    expect(scenery.scenery.contentRevision).toBe(6n);
+    expect(scenery.scenery.contentRevision).toBe(7n);
     expect(scenery.scenery.source).toBe("mmorpg-scenery");
     expect(scenery.scenery.playerHalfExtents).toEqual([30, 90, 30]);
     source.join();
@@ -320,8 +341,8 @@ describe("WASM local zone host", () => {
     const actual = provider.scenery.props.filter((prop) => prop.kind === "grass-tuft" && prop.position[0] >= -3500 && prop.position[0] <= 3500 && prop.position[2] >= -1300 && prop.position[2] <= 5300);
     expect(actual).toEqual(expected);
     expect(actual.length).toBe(55);
-    expect(provider.scenery.presentationFingerprint).toBe("87adad4a68aec175");
-    expect(provider.scenery.contentRevision).toBe(6n);
+    expect(provider.scenery.presentationFingerprint).toBe("f0fb12bc8aa317f8");
+    expect(provider.scenery.contentRevision).toBe(7n);
   });
 
   test("the vale's static scene models every prop within a bounded node and vertex budget", () => {
@@ -365,10 +386,21 @@ describe("WASM local zone host", () => {
 describe("WASM local zone combat intents", () => {
   test("the catalog names the hosted units and matches the zone's content", () => {
     const { catalog } = createLocalWorld(wasm);
-    expect(catalog.contentRevision).toBe(6n);
-    expect([...catalog.items.values()]).toEqual([
-      { id: 1, name: "Torn Fur", maxStack: 20 }, { id: 2, name: "Worn Dagger", maxStack: 1 },
+    expect(catalog.contentRevision).toBe(7n);
+    expect([...catalog.items.values()].map((item) => item.name)).toEqual([
+      "Torn Fur", "Worn Dagger", "Militia Shortsword", "Apprentice Wand", "Pine Buckler", "Cloth Hood", "Padded Tunic",
+      "Padded Trousers", "Worn Boots",
     ]);
+    // The decoder's item table matches the catalog the zone binds.
+    const slots = ["mainHand", "offHand", "head", "chest", "legs", "feet"];
+    expect(catalog.items.size).toBe(ITEM_SHAPES.size);
+    for (const item of catalog.items.values()) {
+      const shape = ITEM_SHAPES.get(item.id);
+      const { stamina, strength, agility, intellect } = item.stats;
+      expect([shape?.maxStack, shape?.slot, shape?.stats]).toEqual([
+        item.maxStack, item.slot === null ? null : slots.indexOf(item.slot), [stamina, strength, agility, intellect],
+      ]);
+    }
     expect([...catalog.creatureTemplates.values()].map((template) => template.name)).toEqual([
       "Timber Wolf", "Young Boar", "Grain Rat", "Field Marauder", "Mirefin Lurker", "Redbrand Bandit", "Garrick Redbrand",
     ]);

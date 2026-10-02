@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use crate::creature::Life;
 use crate::entity::body_id;
 use crate::snapshot::CreatureAi;
-use crate::unit::{health_percent, player_max_health};
+use crate::unit::health_percent;
 use crate::zone::saturate_i8;
 use crate::{
     CreatureBehaviour, EntityKind, EntityRef, INTEREST_RADIUS_UNITS, MAX_VISIBLE_ENTITIES,
@@ -117,6 +117,8 @@ pub struct ViewerState {
     pub resource: Option<ResourceView>,
     pub cast: Option<CastView>,
     pub global_cooldown: u16,
+    /// Inclusive melee damage range, the equipment bonus included.
+    pub damage: [u16; 2],
 }
 
 /// A projection addressed to `viewer_id`. Entities are in priority order: the
@@ -143,6 +145,9 @@ pub struct ZoneSnapshot {
     pub inventory_revision: u64,
     /// Complete self bag on admission/change ticks and every ten ticks.
     pub inventory: Option<crate::Inventory>,
+    /// Equipment, sent exactly with the bag under the same revision; its
+    /// stat totals are [`crate::Equipment::totals`].
+    pub equipment: Option<crate::Equipment>,
     /// Complete eligible selected corpse sheet, repeated every projection.
     pub loot: Option<crate::LootView>,
     /// Feedback the viewer received this tick.
@@ -200,7 +205,9 @@ impl ZoneSimulation {
             .map(|(_, _, _, entity)| entity)
             .collect();
 
-        let max_health = player_max_health(viewer.level);
+        let max_health = viewer.max_health();
+        let sheet = self.tick == viewer.inventory_changed_at
+            || self.tick.is_multiple_of(crate::INVENTORY_RESEND_TICKS);
         Ok(PlayerProjection {
             snapshot: ZoneSnapshot {
                 content_revision: self.content.revision(),
@@ -232,6 +239,7 @@ impl ZoneSimulation {
                     }),
                     cast: viewer.cast.and_then(cast_view),
                     global_cooldown: viewer.global_cooldown,
+                    damage: viewer.melee_damage(),
                 },
                 cooldowns: viewer.cooldowns.clone(),
                 auras: aura_views(&viewer.auras),
@@ -243,9 +251,8 @@ impl ZoneSimulation {
                     _ => TargetDetail::default(),
                 },
                 inventory_revision: viewer.inventory_revision,
-                inventory: (self.tick == viewer.inventory_changed_at
-                    || self.tick.is_multiple_of(crate::INVENTORY_RESEND_TICKS))
-                .then(|| viewer.inventory.clone()),
+                inventory: sheet.then(|| viewer.inventory.clone()),
+                equipment: sheet.then_some(viewer.equipment),
                 loot: match viewer.target {
                     Some(EntityRef::Creature(id)) => self.loot_view_for(player_id, id)?,
                     _ => None,
@@ -319,7 +326,7 @@ impl ZoneSimulation {
                     velocity: [velocity.x, velocity.y, velocity.z].map(saturate_i8),
                     facing: player.facing,
                     level: player.level,
-                    health_percent: health_percent(player.health, player_max_health(player.level)),
+                    health_percent: health_percent(player.health, player.max_health()),
                     flags: EntityFlags {
                         dead: !player.is_alive(),
                         in_combat: player.combat_timer > 0 || threatened.contains(&player_id),

@@ -20,6 +20,10 @@ fn recovered(zone: &ZoneSimulation) -> ZoneSimulation {
 }
 
 fn corpse() -> ZoneSimulation {
+    corpse_dropping(ItemId::new(1), 2)
+}
+
+fn corpse_dropping(item: ItemId, quantity: u16) -> ZoneSimulation {
     let original = arena::arena(
         vec![arena::wolf(1, [1, 1])],
         vec![arena::spawn(1, arena::WOLF, [-180, 0])],
@@ -29,8 +33,8 @@ fn corpse() -> ZoneSimulation {
         [2, 2],
         &[LootOutcome::Item {
             weight: 1,
-            item: ItemId::new(1),
-            quantity: [2, 2],
+            item,
+            quantity: [quantity, quantity],
         }],
     )
     .unwrap();
@@ -114,4 +118,52 @@ fn refusal_checkpoints_retain_the_exact_reward_and_dedicated_rng_state() {
     assert_eq!(state.players[0].copper, 0);
     assert_eq!(state.creatures[0].loot, rewards);
     assert_eq!(state.loot_rng_state, rng);
+}
+
+#[test]
+fn a_looted_weapon_is_equipped_and_both_continue_identically_from_canonical_bytes() {
+    let shortsword = ItemId::new(3);
+    let mut zone = corpse_dropping(shortsword, 1);
+    let claim = zone.snapshot_for_player(1).unwrap().loot.unwrap().claim;
+    zone.apply_command(1, 3, ZoneCommand::Loot(claim)).unwrap();
+    zone.advance_tick().unwrap();
+    let state = zone.snapshot().unwrap();
+    let bag_slot = state.players[0]
+        .inventory
+        .slots()
+        .iter()
+        .position(|slot| slot.is_some_and(|stack| stack.item() == shortsword))
+        .unwrap();
+    // The equip is still pending when the checkpoint is taken.
+    zone.apply_command(
+        1,
+        4,
+        ZoneCommand::EquipItem {
+            bag_slot: u8::try_from(bag_slot).unwrap(),
+        },
+    )
+    .unwrap();
+    let mut copy = recovered(&zone);
+    continue_equally(&mut zone, &mut copy, 1);
+    let player = zone.snapshot().unwrap().players.remove(0);
+    assert_eq!(player.equipment.slots()[0], Some(shortsword));
+    assert_eq!(player.inventory.slots()[bag_slot], None);
+    let view = zone.snapshot_for_player(1).unwrap();
+    assert_eq!(view.equipment, Some(player.equipment));
+    // A level-1 Warden-less player with 3 strength hits for 4–7.
+    assert_eq!(view.viewer.damage, [4, 7]);
+    // Equipped gear and a pending unequip survive another round trip.
+    for simulation in [&mut zone, &mut copy] {
+        simulation
+            .apply_command(1, 5, ZoneCommand::UnequipItem { equipment_slot: 0 })
+            .unwrap();
+    }
+    let mut copy = recovered(&zone);
+    continue_equally(&mut zone, &mut copy, 10);
+    let player = zone.snapshot().unwrap().players.remove(0);
+    assert_eq!(player.equipment, mmorpg_core::Equipment::default());
+    assert_eq!(
+        player.inventory.slots()[bag_slot],
+        Some(ItemStack::new(shortsword, 1).unwrap())
+    );
 }

@@ -27,6 +27,7 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
         viewer_id: 1,
         inventory_revision: 1,
         inventory: None,
+        equipment: None,
         viewer: ViewerState {
             experience: 0,
             experience_to_next_level: 100,

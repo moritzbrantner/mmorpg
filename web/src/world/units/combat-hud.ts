@@ -28,6 +28,7 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "stunned": "You are stunned and cannot act.",
   "already-casting": "You are already casting. Press Esc to cancel.",
   "invalid-class": "That class choice is not available.",
+  "not-equippable": "That item cannot be equipped.",
 };
 
 const RESOURCE_NAMES = { rage: "Rage", focus: "Focus", mana: "Mana" } as const;

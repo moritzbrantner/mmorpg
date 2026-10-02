@@ -50,6 +50,12 @@ pub enum PlayerIntent {
         class: u8,
         sex: u8,
     },
+    EquipItem {
+        bag_slot: u8,
+    },
+    UnequipItem {
+        equipment_slot: u8,
+    },
 }
 
 /// A creature's decision state.
@@ -169,6 +175,8 @@ pub struct CanonicalPlayerSnapshot {
     pub inventory: crate::Inventory,
     pub inventory_revision: u64,
     pub inventory_changed_at: u64,
+    /// Equipped items; validated against the catalog by construction.
+    pub equipment: crate::Equipment,
     pub combat: CanonicalPlayerCombat,
 }
 
@@ -235,6 +243,7 @@ impl ZoneSimulation {
                     inventory: state.inventory.clone(),
                     inventory_revision: state.inventory_revision,
                     inventory_changed_at: state.inventory_changed_at,
+                    equipment: state.equipment,
                     combat: CanonicalPlayerCombat {
                         level: state.level,
                         experience: state.experience,
@@ -384,8 +393,9 @@ impl ZoneSimulation {
                 "player inventory revision or change tick is invalid",
             ));
         }
+        let max_health = player_max_health(combat.level) + player.equipment.totals().bonus_health();
         if !crate::progression::valid_progression(combat.level, combat.experience)
-            || combat.health > player_max_health(combat.level)
+            || combat.health > max_health
         {
             return Err(ZoneError::new("player unit state is out of range"));
         }
@@ -426,6 +436,7 @@ impl ZoneSimulation {
                 inventory: player.inventory,
                 inventory_revision: player.inventory_revision,
                 inventory_changed_at: player.inventory_changed_at,
+                equipment: player.equipment,
                 level: combat.level,
                 experience: combat.experience,
                 health: combat.health,
@@ -725,7 +736,9 @@ fn validate_auras(auras: &[Aura]) -> Result<(), ZoneError> {
                 },
             ) => (1..=crate::ability::scaled(base, per_level, top)).contains(&aura.amount),
             Some(crate::AbilityEffect::HealOverTime { percent, .. }) => {
-                let most = crate::unit::percent_of(player_max_health(top), u32::from(percent));
+                let most_health = player_max_health(top)
+                    + u32::from(crate::MAX_EQUIPPED_STAMINA) * crate::HEALTH_PER_STAMINA;
+                let most = crate::unit::percent_of(most_health, u32::from(percent));
                 aura.amount > 0 && u32::from(aura.amount) <= most
             }
             _ => matches!(spec.kind, AuraKind::Root | AuraKind::Stun) && aura.amount == 0,

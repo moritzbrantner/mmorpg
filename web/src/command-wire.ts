@@ -1,6 +1,6 @@
 /**
- * Command wire version 4, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
- * `fixtures/protocol/commands-v4.hex` holds both encoders to the same bytes.
+ * Command wire version 5, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
+ * `fixtures/protocol/commands-v5.hex` holds both encoders to the same bytes.
  * The session supplies player identity and sequence separately.
  */
 import { entityKindCode, isU32, type EntityRef } from "./entity-ref";
@@ -21,9 +21,13 @@ export type WorldCommand =
   | { kind: "use-ability"; ability: number; target: EntityRef | null }
   | { kind: "cancel-cast" }
   /** Class 0 Warden, 1 Ranger, 2 Arcanist; sex 0 female, 1 male. The zone refuses invalid values. */
-  | { kind: "choose-class"; classId: number; sex: number };
+  | { kind: "choose-class"; classId: number; sex: number }
+  /** Equips the item in a bag slot, swapping any item already in its equipment slot. */
+  | { kind: "equip-item"; bagSlot: number }
+  /** Equipment slot 0 main hand, 1 off hand, 2 head, 3 chest, 4 legs, 5 feet. */
+  | { kind: "unequip-item"; equipmentSlot: number };
 
-const COMMAND_WIRE_VERSION = 4;
+const COMMAND_WIRE_VERSION = 5;
 const MOVE_TAG = 1;
 const JUMP_TAG = 2;
 const SELECT_TARGET_TAG = 3;
@@ -35,6 +39,8 @@ const LOOT_TAG = 8;
 const USE_ABILITY_TAG = 9;
 const CANCEL_CAST_TAG = 10;
 const CHOOSE_CLASS_TAG = 11;
+const EQUIP_ITEM_TAG = 12;
+const UNEQUIP_ITEM_TAG = 13;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
@@ -131,6 +137,16 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       }
       return Uint8Array.of(COMMAND_WIRE_VERSION, CHOOSE_CLASS_TAG, command.classId, command.sex);
     }
+    case "equip-item":
+      if (!isU8(command.bagSlot)) {
+        throw new Error("Bag slots must be u8.");
+      }
+      return Uint8Array.of(COMMAND_WIRE_VERSION, EQUIP_ITEM_TAG, command.bagSlot);
+    case "unequip-item":
+      if (!isU8(command.equipmentSlot)) {
+        throw new Error("Equipment slots must be u8.");
+      }
+      return Uint8Array.of(COMMAND_WIRE_VERSION, UNEQUIP_ITEM_TAG, command.equipmentSlot);
     case "start-attack":
       return Uint8Array.of(COMMAND_WIRE_VERSION, START_ATTACK_TAG);
     case "stop-attack":

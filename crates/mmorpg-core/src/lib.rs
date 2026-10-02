@@ -18,6 +18,7 @@ mod content;
 mod corpse_loot;
 mod creature;
 mod entity;
+mod equipment;
 mod events;
 mod interest;
 mod inventory;
@@ -54,6 +55,10 @@ pub use creature::{
     LEASH_RADIUS_UNITS, MAX_THREAT_ENTRIES, WANDER_WAIT_TICKS, WANDER_WALK_TIMEOUT_TICKS,
 };
 pub use entity::{CreatureId, CreatureTemplateId, EntityKind, EntityRef, NpcId};
+pub use equipment::{
+    EQUIPMENT_SLOTS, Equipment, EquipmentSlot, HEALTH_PER_STAMINA, ItemStats, MAX_EQUIPPED_STAMINA,
+    PRIMARY_STAT_PER_DAMAGE, StatTotals,
+};
 pub use events::{ErrorCode, MAX_EVENTS_PER_PLAYER, ZoneEvent};
 pub use interest::{InterestMaintenanceStats, InterestQueryStats, PlayerProjection};
 pub use inventory::{
@@ -84,7 +89,7 @@ pub type PlayerId = u32;
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
 /// Core schema of canonical and player-visible snapshots.
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 9;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 10;
 /// Inclusive XZ radius of player-scoped relevance (45 m).
 pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
 /// Deterministic relevance cap of one player projection: the viewer, its
@@ -157,6 +162,16 @@ pub enum ZoneCommand {
     ChooseClass {
         class: u8,
         sex: u8,
+    },
+    /// Equips the item in one of the player's own bag slots into its
+    /// catalog equipment slot, swapping any item already there.
+    EquipItem {
+        bag_slot: u8,
+    },
+    /// Moves the item in an equipment slot (0 main hand … 5 feet) to the
+    /// lowest empty bag slot.
+    UnequipItem {
+        equipment_slot: u8,
     },
 }
 

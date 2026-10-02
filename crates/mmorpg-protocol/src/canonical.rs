@@ -12,7 +12,7 @@ use mmorpg_core::{
 };
 
 use crate::ProtocolError;
-use crate::inventory::{decode_inventory, encode_inventory};
+use crate::inventory::{decode_equipment, decode_inventory, encode_equipment, encode_inventory};
 use crate::wire::{
     CANONICAL_SNAPSHOT_SCOPE, decode_common_header, decode_entity_ref, decode_event,
     decode_u8_count, decode_u16_count, encode_common_header, encode_entity_ref, encode_event,
@@ -29,6 +29,8 @@ const LOOT_INTENT: u8 = 6;
 const USE_ABILITY_INTENT: u8 = 7;
 const CANCEL_CAST_INTENT: u8 = 8;
 const CHOOSE_CLASS_INTENT: u8 = 9;
+const EQUIP_ITEM_INTENT: u8 = 10;
+const UNEQUIP_ITEM_INTENT: u8 = 11;
 const ALIVE: u8 = 1;
 const CORPSE: u8 = 2;
 const DESPAWNED: u8 = 3;
@@ -89,6 +91,7 @@ fn encode_player(
     payload.extend_from_slice(&player.inventory_revision.to_be_bytes());
     payload.extend_from_slice(&player.inventory_changed_at.to_be_bytes());
     encode_inventory(payload, &player.inventory);
+    encode_equipment(payload, &player.equipment);
     payload.extend_from_slice(&player.copper.to_be_bytes());
     let combat = &player.combat;
     payload.push(combat.level);
@@ -138,6 +141,14 @@ fn encode_player(
             PlayerIntent::CancelCast => (CANCEL_CAST_INTENT, None),
             PlayerIntent::ChooseClass { class, sex } => {
                 payload.extend_from_slice(&[CHOOSE_CLASS_INTENT, class, sex]);
+                continue;
+            }
+            PlayerIntent::EquipItem { bag_slot } => {
+                payload.extend_from_slice(&[EQUIP_ITEM_INTENT, bag_slot]);
+                continue;
+            }
+            PlayerIntent::UnequipItem { equipment_slot } => {
+                payload.extend_from_slice(&[UNEQUIP_ITEM_INTENT, equipment_slot]);
                 continue;
             }
         };
@@ -372,6 +383,7 @@ fn decode_player(
     let inventory_revision = u64::from_be_bytes(take(payload, offset)?);
     let inventory_changed_at = u64::from_be_bytes(take(payload, offset)?);
     let inventory = decode_inventory(payload, offset)?;
+    let equipment = decode_equipment(payload, offset)?;
     let copper = u32::from_be_bytes(take(payload, offset)?);
     let level = read_u8(payload, offset)?;
     let experience = u32::from_be_bytes(take(payload, offset)?);
@@ -408,6 +420,16 @@ fn decode_player(
         if code == CHOOSE_CLASS_INTENT {
             let [class, sex] = take(payload, offset)?;
             intents.push(PlayerIntent::ChooseClass { class, sex });
+            continue;
+        }
+        if code == EQUIP_ITEM_INTENT {
+            let [bag_slot] = take(payload, offset)?;
+            intents.push(PlayerIntent::EquipItem { bag_slot });
+            continue;
+        }
+        if code == UNEQUIP_ITEM_INTENT {
+            let [equipment_slot] = take(payload, offset)?;
+            intents.push(PlayerIntent::UnequipItem { equipment_slot });
             continue;
         }
         if code == MOVE_ITEM_INTENT {
@@ -490,6 +512,7 @@ fn decode_player(
         copper,
         inventory_revision,
         inventory_changed_at,
+        equipment,
         combat: CanonicalPlayerCombat {
             level,
             experience,
@@ -635,6 +658,15 @@ mod tests {
                     },
                     inventory_revision: 4,
                     inventory_changed_at: 88,
+                    equipment: mmorpg_core::Equipment::from_slots([
+                        Some(mmorpg_core::ItemId::new(3)),
+                        None,
+                        None,
+                        Some(mmorpg_core::ItemId::new(7)),
+                        None,
+                        Some(mmorpg_core::ItemId::new(9)),
+                    ])
+                    .unwrap(),
                     combat: CanonicalPlayerCombat {
                         experience: 63,
                         level: 2,
@@ -688,6 +720,7 @@ mod tests {
                     inventory: mmorpg_core::Inventory::default(),
                     inventory_revision: 1,
                     inventory_changed_at: 0,
+                    equipment: mmorpg_core::Equipment::default(),
                     combat: CanonicalPlayerCombat::default(),
                 },
             ],
@@ -816,6 +849,8 @@ mod tests {
                 class: u8::MAX,
                 sex: 1,
             },
+            PlayerIntent::EquipItem { bag_slot: u8::MAX },
+            PlayerIntent::UnequipItem { equipment_slot: 5 },
         ];
         state.players[0].combat.abilities = CanonicalPlayerAbilities {
             class: Some(ClassChoice {
@@ -886,10 +921,10 @@ mod tests {
         );
         // Structural checks: a class code beyond the six choices, a point
         // flag without a point and an aura without a caster.
-        // The intent count follows the player's timers; the four intents
-        // occupy 7 + 7 + 6 + 3 bytes, then the dropped flag and two events.
-        let intents = 16 + 32 + 2 + 146;
-        let player_abilities = intents + 1 + (7 + 7 + 6 + 3) + 1 + 1 + 2 * EVENT_BYTES;
+        // The intent count follows the player's timers; the six intents
+        // occupy 7 + 7 + 6 + 3 + 2 + 2 bytes, then the dropped flag and two events.
+        let intents = 16 + 32 + 2 + 158;
+        let player_abilities = intents + 1 + (7 + 7 + 6 + 3 + 2 + 2) + 1 + 1 + 2 * EVENT_BYTES;
         assert_eq!(encoded[player_abilities], 6, "Arcanist, male");
         let cast = player_abilities + 1 + 8 + 1 + 2 * 3;
         let aura = cast + 17 + 1;
@@ -958,12 +993,12 @@ mod tests {
         let encoded = encode_canonical_snapshot(&snapshot()).unwrap();
         // Player 7's auto-attack flag follows its target reference.
         let player = 16 + 32 + 2;
-        let auto_attack = player + 39 + 84 + 1 + 4 + 4 + 5;
+        let auto_attack = player + 39 + 96 + 1 + 4 + 4 + 5;
         let intents = auto_attack + 1 + 8;
         let mut cases = vec![
             (auto_attack, 2, "boolean field must be 0 or 1"),
             (intents, 17, "player has too many pending intents"),
-            (intents + 1, 10, "malformed pending intent"),
+            (intents + 1, 12, "malformed pending intent"),
         ];
         // The third intent (StartAttack) carries no target.
         cases.push((intents + 1 + 2 * 6 + 1, 2, "malformed pending intent"));
@@ -1009,6 +1044,27 @@ mod tests {
                 decode_canonical_snapshot(&invalid).unwrap_err().to_string(),
                 message,
                 "byte {offset} = {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_equipment_rejects_unknown_and_misplaced_items() {
+        let encoded = encode_canonical_snapshot(&snapshot()).unwrap();
+        // Player 7's equipment follows its 80-byte inventory block.
+        let equipment = 16 + 32 + 2 + 39 + 80;
+        assert_eq!(encoded[equipment..equipment + 2], [0, 3]);
+        for (slot, item, message) in [
+            (0, 10, "unknown item"),
+            (1, 2, "item cannot be equipped there"),
+            (2, 1, "item cannot be equipped there"),
+        ] {
+            let mut invalid = encoded.clone();
+            invalid[equipment + 2 * slot + 1] = item;
+            assert_eq!(
+                decode_canonical_snapshot(&invalid).unwrap_err().to_string(),
+                message,
+                "slot {slot} = item {item}"
             );
         }
     }
