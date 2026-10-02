@@ -5,7 +5,7 @@ use std::{error::Error, fmt, sync::LazyLock};
 
 use crate::{CreatureTemplateId, Inventory, InventoryError, ItemId, ItemStack, item_template};
 
-pub const LOOT_CATALOG_REVISION: u64 = 1;
+pub const LOOT_CATALOG_REVISION: u64 = 2;
 pub const MAX_LOOT_OUTCOMES: usize = 4;
 
 /// One weighted outcome: no ordinary item, or one bounded stack.
@@ -201,7 +201,7 @@ impl fmt::Display for LootTableError {
 }
 impl Error for LootTableError {}
 
-/// Minimal authored rewards, kept separate from active zone content until #89.
+/// Authored starter rewards; revision 2 adds the equipment drops of humanoids.
 static CATALOG: LazyLock<[(CreatureTemplateId, LootTable); 7]> = LazyLock::new(|| {
     use crate::greyhaven_vale::units::templates::*;
     let fur = |weight, quantity| LootOutcome::Item {
@@ -209,11 +209,14 @@ static CATALOG: LazyLock<[(CreatureTemplateId, LootTable); 7]> = LazyLock::new(|
         item: ItemId::new(1),
         quantity,
     };
-    let dagger = |weight| LootOutcome::Item {
+    // Equippable items stack to one.
+    let gear = |id, weight| LootOutcome::Item {
         weight,
-        item: ItemId::new(2),
+        item: ItemId::new(id),
         quantity: [1, 1],
     };
+    let (dagger, shortsword, wand, buckler) = (2, 3, 4, 5);
+    let (hood, tunic, trousers, boots) = (6, 7, 8, 9);
     let nothing = |weight| LootOutcome::Nothing { weight };
     let table =
         |money, outcomes| LootTable::new(money, outcomes).expect("starter loot content is valid");
@@ -221,10 +224,43 @@ static CATALOG: LazyLock<[(CreatureTemplateId, LootTable); 7]> = LazyLock::new(|
         (TIMBER_WOLF, table([0, 2], &[fur(3, [1, 2]), nothing(1)])),
         (YOUNG_BOAR, table([0, 3], &[fur(1, [1, 1]), nothing(1)])),
         (GRAIN_RAT, table([0, 1], &[fur(1, [1, 1]), nothing(3)])),
-        (FIELD_MARAUDER, table([2, 6], &[dagger(1), nothing(3)])),
+        (
+            FIELD_MARAUDER,
+            table(
+                [2, 6],
+                &[
+                    gear(dagger, 1),
+                    gear(trousers, 1),
+                    gear(boots, 1),
+                    nothing(6),
+                ],
+            ),
+        ),
         (MIREFIN_LURKER, table([1, 4], &[nothing(1)])),
-        (REDBRAND_BANDIT, table([4, 9], &[dagger(1), nothing(1)])),
-        (GARRICK_REDBRAND, table([25, 35], &[dagger(1)])),
+        (
+            REDBRAND_BANDIT,
+            table(
+                [4, 9],
+                &[
+                    gear(dagger, 1),
+                    gear(shortsword, 1),
+                    gear(tunic, 1),
+                    nothing(3),
+                ],
+            ),
+        ),
+        (
+            GARRICK_REDBRAND,
+            table(
+                [25, 35],
+                &[
+                    gear(wand, 1),
+                    gear(buckler, 1),
+                    gear(hood, 1),
+                    gear(shortsword, 1),
+                ],
+            ),
+        ),
     ]
 });
 

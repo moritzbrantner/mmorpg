@@ -508,6 +508,7 @@ mod tests {
             target_detail: mmorpg_core::TargetDetail::default(),
             inventory_revision: 1,
             inventory: None,
+            equipment: None,
             loot: None,
             events: Vec::new(),
             entities: Vec::new(),

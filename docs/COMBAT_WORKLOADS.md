@@ -172,6 +172,23 @@ reviewed ceilings rise for broad-phase pairs (vale-fights-8 255,546; vale-fights
 | vale-fights-32 | 5,977,342 | 773 | 0 | `96887014c967c0c5` |
 | vale-crowded-fights-64 | 24,558,670 | 1,073 | 240 | `aebe72b8335c68ff` |
 
+## Equipment v10 evidence
+
+Greyhaven revision 7 (`5a8f35c63f4c8849`) binds item and loot catalog revision 2
+and keeps the AI/combat seed. Snapshot v10 adds the four-byte melee damage range
+to every projection and 20 equipment and stat bytes to every self sheet, so the
+byte ceiling adds `4 × players × ticks + 20 × players × ticks / 10`. These
+fixtures never equip anything; gear changes only humanoid item drops, which draw
+from the separate loot stream, so AI, physics, pair, contact and candidate
+counters are unchanged. The crowded fixture now fills the 1,077-byte budget.
+
+| Workload | v10 projection bytes | Largest bytes | Loot sheets | Trace checksum |
+| --- | ---: | ---: | ---: | --- |
+| vale-idle-16 | 3,535,344 | 692 | 0 | `af6007e80e52364f` |
+| vale-fights-8 | 1,139,604 | 587 | 0 | `fe0ce4c90e6b0c3e` |
+| vale-fights-32 | 6,046,462 | 797 | 0 | `a116019184e7b509` |
+| vale-crowded-fights-64 | 24,648,526 | 1,077 | 240 | `d59b3e8e96cc73e2` |
+
 Validation uses locked dependencies, Rust 1.98.1 and the unchanged pinned physics
 engine. Shared convention sourceRevision is
 `46d8793bb3034326561f876dcc67dbaa5aa1e432`.

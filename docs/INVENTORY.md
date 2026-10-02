@@ -7,16 +7,24 @@ or below that item's stack limit. `ItemStack::new` validates imported stacks;
 private fields and a fixed-length slot array prevent unchecked or truncated
 imports. Queries expose immutable slots.
 
-The minimal immutable catalog revision is 1:
+The immutable catalog revision is 2 (revision 1 held only items 1 and 2, with
+the same names and limits):
 
-| Stable item ID | Name | Stack limit |
-| --- | --- | --- |
-| 1 | Torn Fur | 20 |
-| 2 | Worn Dagger | 1 |
+| Stable item ID | Name | Stack limit | Equipment slot | Sta | Str | Agi | Int |
+| ---: | --- | ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | Torn Fur | 20 | — | | | | |
+| 2 | Worn Dagger | 1 | main hand | 0 | 2 | 2 | 0 |
+| 3 | Militia Shortsword | 1 | main hand | 1 | 3 | 0 | 0 |
+| 4 | Apprentice Wand | 1 | main hand | 0 | 0 | 0 | 4 |
+| 5 | Pine Buckler | 1 | off hand | 2 | 0 | 0 | 0 |
+| 6 | Cloth Hood | 1 | head | 1 | 0 | 0 | 2 |
+| 7 | Padded Tunic | 1 | chest | 2 | 0 | 0 | 0 |
+| 8 | Padded Trousers | 1 | legs | 1 | 0 | 0 | 0 |
+| 9 | Worn Boots | 1 | feet | 1 | 0 | 2 | 0 |
 
-Zero and unknown IDs fail closed. IDs are never reassigned. Names and limits
-are content, not client preferences. The dagger is currently an ordinary bag
-item; equipment effects, prices and loot tables belong to their later slices.
+Zero and unknown IDs fail closed. IDs are never reassigned. Names, limits,
+slots and stats are content, not client preferences. Equippable items stack to
+one; prices belong to the vendor slice.
 
 Insertion fills matching stacks in ascending slot order, then empty slots in
 ascending order. The entire requested quantity must fit. Moves to an empty
@@ -63,7 +71,54 @@ budget and packs fewer low-priority entities when a sheet is present; see
 
 Core recovery/loss fixtures, the `inventory-resume` real-session scenario, a real
 native WebTransport move/resume/merge test, and the browser WASM adapter prove
-ownership, sequenced moves and periodic recovery. Browser bags presentation (#84) reads these sheets; loot, money, equipment effects and vendors remain their own slices.
+ownership, sequenced moves and periodic recovery. Browser bags presentation (#84) reads these sheets; loot and money are in [LOOT.md](LOOT.md), equipment below, and vendors remain their own slice.
+
+## Equipment
+
+A player has six equipment slots, each empty or holding one catalog item made
+for it: 0 main hand, 1 off hand, 2 head, 3 chest, 4 legs, 5 feet (wire and
+canonical index). There are no two-handed weapons, rings, armor, or class or
+level requirements. `Equipment` validates imported slots, so an unknown item or
+an item in the wrong slot cannot be restored.
+
+Each item adds `u8` stamina, strength, agility and intellect; a player's totals
+are the sums over its equipped items, with no base attributes.
+
+- Maximum health is `player_max_health(level) + 5 × stamina`. Every rule that
+  reads a player's maximum (regeneration, release, heal over time, level-up
+  growth, projection, entity health percent and recovery bounds) uses it.
+- The class damage bonus is half the primary stat, rounded down: strength for
+  Wardens and players without a class, agility for Rangers, intellect for
+  Arcanists. It is added to both ends of the player melee range (auto-attack
+  and the weapon roll of weapon strikes and Cleave) and to each direct Firebolt
+  and Frost Nova hit. Damage and healing over time, Blizzard pulses, shields,
+  mana and other resources ignore gear.
+
+`EquipItem { bag_slot }` and `UnequipItem { equipment_slot }` are sequenced
+intents resolved in tick step 1 like `MoveItem`:
+
+- Equipping needs an existing, occupied bag slot (else `InvalidInventoryMove`)
+  whose item has an equipment slot (else `NotEquippable`). The item leaves the
+  bag, and an item already in that equipment slot takes its place in the same
+  bag slot, so a full bag never blocks equipping.
+- Unequipping needs an existing, occupied equipment slot (else
+  `InvalidInventoryMove`) and moves the item to the lowest empty bag slot
+  (none: `InventoryFull`).
+- Dead players are refused with `YouAreDead`; equipping in combat or while
+  casting is allowed.
+- Every refusal and revision exhaustion leaves bag, equipment, health and
+  revision unchanged. A success increments the bag's revision and sets its
+  change tick: bag and equipment share one revision and one sheet.
+- Current health follows the maximum: a gain raises it by the same amount, a
+  loss lowers it by the same amount but never below 1.
+
+Canonical player records hold the six item IDs after the bag; the self sheet
+carries the bag, the equipment and the four stat totals (84 bytes), and every
+projection carries the viewer's melee damage range (see
+[PROTOCOL.md](PROTOCOL.md)). Starter admission equips nothing; the gear drops
+from humanoids ([LOOT.md](LOOT.md)). The browser decodes the equipment and its
+stats with the bag and keeps them under the same revision rules; the character
+pane is #129.
 
 
 ## Browser Bags panel (#84)
@@ -84,7 +139,8 @@ slots, selection and feedback. A fresh entry still gets a fresh starter bag;
 character/world persistence belongs to #30/#40.
 
 Catalog JSON format v2 includes `itemCatalogRevision` (decimal string) and an
-ordered `items` array of `{id, name, maxStack}` from core. The browser decodes it
+ordered `items` array of `{id, name, maxStack}` from core; format v4 adds each
+item's `slot` (`null` or the camel-case slot name) and `stats`. The browser decodes it
 strictly and uses its names, without reproducing grant or bag-mutation rules.
 Focused state tests and real Chromium cover commands, refusal, fresh-session
 reset, keyboard close and narrow/short viewport layouts.

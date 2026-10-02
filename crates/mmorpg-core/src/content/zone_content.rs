@@ -374,6 +374,14 @@ impl ZoneContent {
             hash.u16(item.id.get());
             hash.text(item.name);
             hash.u16(item.max_stack);
+            let stats = item.stats;
+            hash.bytes(&[
+                item.slot.map_or(0, |slot| 1 + slot.index()),
+                stats.stamina,
+                stats.strength,
+                stats.agility,
+                stats.intellect,
+            ]);
         }
         for slot in crate::Inventory::starter().slots() {
             hash.u16(slot.map_or(0, |stack| stack.item().get()));

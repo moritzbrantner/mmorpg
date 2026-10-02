@@ -1,7 +1,7 @@
 //! Exhaustive XZ semantics. This development-only reference never uses index
 //! buckets. It covers zones whose units are all players (no creatures or
 //! NPCs), which the interest workloads and sequences use.
-use mmorpg_core::unit::{health_percent, player_max_health};
+use mmorpg_core::unit::{health_percent, player_damage, player_max_health};
 use mmorpg_core::{
     CanonicalPlayerSnapshot, CanonicalZoneSnapshot, EntityFlags, EntityKind, EntityRef,
     EntitySnapshot, INTEREST_RADIUS_UNITS, MAX_VISIBLE_ENTITIES, ViewerState, ZoneSnapshot,
@@ -58,6 +58,9 @@ pub fn exhaustive_projection(
         inventory: (canonical.tick == observer.inventory_changed_at
             || canonical.tick.is_multiple_of(10))
         .then(|| observer.inventory.clone()),
+        equipment: (canonical.tick == observer.inventory_changed_at
+            || canonical.tick.is_multiple_of(10))
+        .then_some(observer.equipment),
         schema_version: canonical.schema_version,
         zone_id: canonical.zone_id,
         tick: canonical.tick,
@@ -66,7 +69,7 @@ pub fn exhaustive_projection(
             experience: combat.experience,
             experience_to_next_level: mmorpg_core::experience_to_next_level(combat.level).unwrap(),
             health: combat.health,
-            max_health: player_max_health(combat.level),
+            max_health: max_health(observer),
             level: combat.level,
             dead: combat.health == 0,
             in_combat: combat.combat_timer > 0,
@@ -77,6 +80,10 @@ pub fn exhaustive_projection(
             resource: None,
             cast: None,
             global_cooldown: 0,
+            damage: {
+                let bonus = observer.equipment.totals().damage_bonus(None);
+                player_damage(combat.level).map(|end| end + bonus)
+            },
         },
         cooldowns: Vec::new(),
         auras: Vec::new(),
@@ -96,10 +103,7 @@ pub fn exhaustive_projection(
                     .map(|component| component.clamp(-128, 127) as i8),
                 facing: candidate.facing,
                 level: candidate.combat.level,
-                health_percent: health_percent(
-                    candidate.combat.health,
-                    player_max_health(candidate.combat.level),
-                ),
+                health_percent: health_percent(candidate.combat.health, max_health(candidate)),
                 flags: EntityFlags {
                     dead: candidate.combat.health == 0,
                     in_combat: candidate.combat.combat_timer > 0,
@@ -110,4 +114,9 @@ pub fn exhaustive_projection(
             })
             .collect(),
     }
+}
+
+/// Level health plus the equipped stamina's bonus.
+fn max_health(player: &CanonicalPlayerSnapshot) -> u32 {
+    player_max_health(player.combat.level) + player.equipment.totals().bonus_health()
 }

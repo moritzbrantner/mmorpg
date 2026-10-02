@@ -1,19 +1,23 @@
 # Starter loot rules
 
-The immutable rule catalog has revision 1 and one table per hosted creature
+The immutable rule catalog has revision 2 and one table per hosted creature
 template. Each roll yields u32 copper and at most one ordinary item stack.
-These minimal rewards use the existing item catalog; equipment effects, prices
-and quest-conditional drops are separate integrations.
+Revision 2 makes the starter gear of [item catalog revision 2](INVENTORY.md#equipment)
+obtainable from humanoids; wolves, boars, rats and lurkers keep revision 1's
+tables, and every money range is unchanged. Prices and quest-conditional drops
+are separate integrations.
 
 | Template ID | Creature | Inclusive copper range | Weighted ordinary item outcome |
 | --- | --- | --- | --- |
 | 1 | Timber Wolf | 0–2 | Torn Fur 1–2: weight 3; nothing: weight 1 |
 | 2 | Young Boar | 0–3 | Torn Fur 1: weight 1; nothing: weight 1 |
 | 3 | Grain Rat | 0–1 | Torn Fur 1: weight 1; nothing: weight 3 |
-| 4 | Field Marauder | 2–6 | Worn Dagger 1: weight 1; nothing: weight 3 |
+| 4 | Field Marauder | 2–6 | Worn Dagger, Padded Trousers, Worn Boots: weight 1 each; nothing: weight 6 |
 | 5 | Mirefin Lurker | 1–4 | Nothing: weight 1 |
-| 6 | Redbrand Bandit | 4–9 | Worn Dagger 1: weight 1; nothing: weight 1 |
-| 7 | Garrick Redbrand | 25–35 | Worn Dagger 1: weight 1 |
+| 6 | Redbrand Bandit | 4–9 | Worn Dagger, Militia Shortsword, Padded Tunic: weight 1 each; nothing: weight 3 |
+| 7 | Garrick Redbrand | 25–35 | Apprentice Wand, Pine Buckler, Cloth Hood, Militia Shortsword: weight 1 each |
+
+Every gear outcome is one item (equippable items stack to one).
 
 `LootTable::new` validates authored money bounds and one to four ordered
 outcomes. Every weight is positive; item IDs and inclusive quantity ranges must
@@ -62,7 +66,10 @@ Thus changing any money bound, outcome kind, item, quantity bound or weight
 refuses recovery against the old identity. Binding retains the declared RNG seed. Unbound content keeps
 its existing v2 fingerprint exactly. Greyhaven revision 5 binds catalog revision 1
 and has fingerprint `5dcb5d3b46dc5451`, while preserving its physical definition,
-units and revision-3 AI/combat seed `3cbc808bbe89b29c`.
+units and revision-3 AI/combat seed `3cbc808bbe89b29c`. Greyhaven revision 7 binds
+loot catalog revision 2 with item catalog revision 2 (fingerprint
+`5a8f35c63f4c8849`) and keeps the same seed; the separate loot stream draws the
+same values, so only the humanoids' item outcomes change.
 
 ## Corpse authority
 

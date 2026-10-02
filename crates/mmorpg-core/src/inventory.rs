@@ -3,8 +3,10 @@
 
 use std::{error::Error, fmt};
 
+use crate::equipment::{EquipmentSlot, ItemStats};
+
 pub const INVENTORY_SLOTS: usize = 16;
-pub const ITEM_CATALOG_REVISION: u64 = 1;
+pub const ITEM_CATALOG_REVISION: u64 = 2;
 /// Re-send unchanged bags every ten ticks so a lost change self-heals.
 pub const INVENTORY_RESEND_TICKS: u64 = 10;
 
@@ -29,20 +31,117 @@ pub struct ItemTemplate {
     pub id: ItemId,
     pub name: &'static str,
     pub max_stack: u16,
+    /// The equipment slot the item fits; `None` for plain bag items.
+    pub slot: Option<EquipmentSlot>,
+    /// Attributes added while equipped; zero for plain bag items.
+    pub stats: ItemStats,
 }
 
-/// Minimal starter catalog, in stable ID order. These are bag items only;
-/// equipment, consumable effects, prices and loot tables are separate rules.
-pub const ITEM_CATALOG: [ItemTemplate; 2] = [
+/// Starter catalog, in stable ID order. Equippable items stack to one;
+/// consumable effects, prices and loot tables are separate rules.
+pub const ITEM_CATALOG: [ItemTemplate; 9] = [
     ItemTemplate {
         id: ItemId::new(1),
         name: "Torn Fur",
         max_stack: 20,
+        slot: None,
+        stats: ItemStats::NONE,
     },
     ItemTemplate {
         id: ItemId::new(2),
         name: "Worn Dagger",
         max_stack: 1,
+        slot: Some(EquipmentSlot::MainHand),
+        stats: ItemStats {
+            stamina: 0,
+            strength: 2,
+            agility: 2,
+            intellect: 0,
+        },
+    },
+    ItemTemplate {
+        id: ItemId::new(3),
+        name: "Militia Shortsword",
+        max_stack: 1,
+        slot: Some(EquipmentSlot::MainHand),
+        stats: ItemStats {
+            stamina: 1,
+            strength: 3,
+            agility: 0,
+            intellect: 0,
+        },
+    },
+    ItemTemplate {
+        id: ItemId::new(4),
+        name: "Apprentice Wand",
+        max_stack: 1,
+        slot: Some(EquipmentSlot::MainHand),
+        stats: ItemStats {
+            stamina: 0,
+            strength: 0,
+            agility: 0,
+            intellect: 4,
+        },
+    },
+    ItemTemplate {
+        id: ItemId::new(5),
+        name: "Pine Buckler",
+        max_stack: 1,
+        slot: Some(EquipmentSlot::OffHand),
+        stats: ItemStats {
+            stamina: 2,
+            strength: 0,
+            agility: 0,
+            intellect: 0,
+        },
+    },
+    ItemTemplate {
+        id: ItemId::new(6),
+        name: "Cloth Hood",
+        max_stack: 1,
+        slot: Some(EquipmentSlot::Head),
+        stats: ItemStats {
+            stamina: 1,
+            strength: 0,
+            agility: 0,
+            intellect: 2,
+        },
+    },
+    ItemTemplate {
+        id: ItemId::new(7),
+        name: "Padded Tunic",
+        max_stack: 1,
+        slot: Some(EquipmentSlot::Chest),
+        stats: ItemStats {
+            stamina: 2,
+            strength: 0,
+            agility: 0,
+            intellect: 0,
+        },
+    },
+    ItemTemplate {
+        id: ItemId::new(8),
+        name: "Padded Trousers",
+        max_stack: 1,
+        slot: Some(EquipmentSlot::Legs),
+        stats: ItemStats {
+            stamina: 1,
+            strength: 0,
+            agility: 0,
+            intellect: 0,
+        },
+    },
+    ItemTemplate {
+        id: ItemId::new(9),
+        name: "Worn Boots",
+        max_stack: 1,
+        slot: Some(EquipmentSlot::Feet),
+        stats: ItemStats {
+            stamina: 1,
+            strength: 0,
+            agility: 2,
+            intellect: 0,
+        },
     },
 ];
 
@@ -88,6 +187,8 @@ pub enum InventoryError {
     InsufficientItems,
     NoCapacity,
     IncompatibleStacks,
+    /// The item has no equipment slot, or does not fit the slot it is in.
+    NotEquippable,
 }
 
 impl fmt::Display for InventoryError {
@@ -100,6 +201,7 @@ impl fmt::Display for InventoryError {
             Self::InsufficientItems => "insufficient items",
             Self::NoCapacity => "insufficient inventory capacity",
             Self::IncompatibleStacks => "cannot split into a different item stack",
+            Self::NotEquippable => "item cannot be equipped there",
         })
     }
 }

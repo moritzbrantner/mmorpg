@@ -26,7 +26,7 @@ use crate::ability::{
 use crate::ai::distance_squared;
 use crate::aura::{apply_aura, has_kind, pulse_amount};
 use crate::snapshot::CreatureAi;
-use crate::unit::{COMBAT_LINGER_TICKS, percent_of, player_damage, player_max_health};
+use crate::unit::{COMBAT_LINGER_TICKS, percent_of};
 use crate::{
     Aura, CastState, ClassChoice, Cooldown, CreatureId, EntityRef, ErrorCode, PlayerClass,
     PlayerId, Sex, ZoneError, ZoneEvent, ZoneSimulation,
@@ -239,7 +239,8 @@ impl ZoneSimulation {
         let Some(player) = self.players.get(&player_id) else {
             return Ok(());
         };
-        let (level, max_health) = (player.level, player_max_health(player.level));
+        let (level, max_health) = (player.level, player.max_health());
+        let (melee, bonus) = (player.melee_damage(), u32::from(player.damage_bonus()));
         let source = EntityRef::Player(player_id);
         self.notify_units(
             [Some(source), target],
@@ -268,7 +269,7 @@ impl ZoneSimulation {
                 bonus,
             } => {
                 if let Some(creature_id) = creature {
-                    let weapon = self.weapon_roll(level);
+                    let weapon = self.weapon_roll(melee);
                     let amount = weapon * u32::from(numerator) / u32::from(denominator.max(1))
                         + u32::from(bonus);
                     self.player_damages_creature(player_id, creature_id, amount, false, now)?;
@@ -303,7 +304,7 @@ impl ZoneSimulation {
                             .take(usize::from(extra)),
                     );
                     for victim in victims {
-                        let amount = self.weapon_roll(level);
+                        let amount = self.weapon_roll(melee);
                         self.player_damages_creature(player_id, victim, amount, false, now)?;
                     }
                 }
@@ -332,7 +333,8 @@ impl ZoneSimulation {
                     let amount = self
                         .rng
                         .inclusive(u32::from(damage[0]), u32::from(damage[1]))
-                        + u32::from(scaled(0, per_level, level));
+                        + u32::from(scaled(0, per_level, level))
+                        + bonus;
                     self.player_damages_creature(player_id, creature_id, amount, false, now)?;
                 }
             }
@@ -341,7 +343,8 @@ impl ZoneSimulation {
                 for victim in self.living_creatures_near([centre.x, centre.z], radius)? {
                     let amount = self
                         .rng
-                        .inclusive(u32::from(damage[0]), u32::from(damage[1]));
+                        .inclusive(u32::from(damage[0]), u32::from(damage[1]))
+                        + bonus;
                     self.player_damages_creature(player_id, victim, amount, false, now)?;
                     if let Some(root) = aura(0) {
                         self.hostile_aura(player_id, victim, root)?;
@@ -362,8 +365,7 @@ impl ZoneSimulation {
     }
 
     /// Weapon damage: one uniform draw in the player's melee range.
-    fn weapon_roll(&mut self, level: u8) -> u32 {
-        let [low, high] = player_damage(level);
+    fn weapon_roll(&mut self, [low, high]: [u16; 2]) -> u32 {
         self.rng.inclusive(u32::from(low), u32::from(high))
     }
 
@@ -940,7 +942,7 @@ impl ZoneSimulation {
         if !player.is_alive() {
             return;
         }
-        let healed = amount.min(player_max_health(player.level).saturating_sub(player.health));
+        let healed = amount.min(player.max_health().saturating_sub(player.health));
         if healed == 0 {
             return;
         }

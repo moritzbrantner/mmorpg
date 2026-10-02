@@ -257,6 +257,7 @@ pub const fn error_code_name(code: ErrorCode) -> &'static str {
         ErrorCode::Stunned => "stunned",
         ErrorCode::AlreadyCasting => "already_casting",
         ErrorCode::InvalidClass => "invalid_class",
+        ErrorCode::NotEquippable => "not_equippable",
     }
 }
 
@@ -283,6 +284,7 @@ fn parse_error_code(name: &str) -> Option<ErrorCode> {
         "stunned" => ErrorCode::Stunned,
         "already_casting" => ErrorCode::AlreadyCasting,
         "invalid_class" => ErrorCode::InvalidClass,
+        "not_equippable" => ErrorCode::NotEquippable,
         _ => return None,
     })
 }

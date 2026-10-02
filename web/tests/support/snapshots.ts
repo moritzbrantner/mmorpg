@@ -11,16 +11,20 @@ export function playerEntity(entityId: number, position: Vector3, velocity: Vect
 
 export const HEALTHY_VIEWER: ViewerState = {
   copper: 0, health: 50, maxHealth: 50, experience: 0, experienceToNextLevel: 100, level: 1, dead: false, inCombat: false, autoAttacking: false, target: null,
-  classChoice: null, resource: null, cast: null, globalCooldown: 0,
+  classChoice: null, resource: null, cast: null, globalCooldown: 0, damage: { min: 3, max: 6 },
 };
+
+/** Nothing equipped. */
+export const NO_EQUIPMENT: readonly null[] = Array<null>(6).fill(null);
+export const NO_STATS = { stamina: 0, strength: 0, agility: 0, intellect: 0 } as const;
 
 /** A projection with a healthy viewer, no target and no events. */
 export function testSnapshot(
   fields: Pick<ZoneSnapshot, "zoneId" | "tick" | "contentRevision" | "acknowledgedSequence" | "viewerId" | "entities"> &
-    Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events" | "inventoryRevision" | "inventory" | "loot" | "cooldowns" | "auras" | "targetDetail">>,
+    Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events" | "inventoryRevision" | "inventory" | "equipment" | "stats" | "loot" | "cooldowns" | "auras" | "targetDetail">>,
 ): ZoneSnapshot {
   return {
-    loot: null, inventoryRevision: 1n, inventory: null, viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [],
+    loot: null, inventoryRevision: 1n, inventory: null, equipment: null, stats: null, viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [],
     cooldowns: [], auras: [], targetDetail: { cast: null, auras: [] }, ...fields,
   };
 }

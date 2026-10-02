@@ -162,7 +162,9 @@ fn extreme_money_ranges_and_weights_never_overflow() {
 
 #[test]
 fn starter_tables_are_pinned_and_cover_every_hosted_template() {
-    assert_eq!(LOOT_CATALOG_REVISION, 1);
+    assert_eq!(LOOT_CATALOG_REVISION, 2);
+    let gear = |id| item(1, ItemId::new(id), [1, 1]);
+    let nothing = |weight| LootOutcome::Nothing { weight };
     let rows = [
         (
             [0, 2],
@@ -176,16 +178,10 @@ fn starter_tables_are_pinned_and_cover_every_hosted_template() {
             [0, 1],
             vec![item(1, FUR, [1, 1]), LootOutcome::Nothing { weight: 3 }],
         ),
-        (
-            [2, 6],
-            vec![item(1, DAGGER, [1, 1]), LootOutcome::Nothing { weight: 3 }],
-        ),
+        ([2, 6], vec![gear(2), gear(8), gear(9), nothing(6)]),
         ([1, 4], vec![LootOutcome::Nothing { weight: 1 }]),
-        (
-            [4, 9],
-            vec![item(1, DAGGER, [1, 1]), LootOutcome::Nothing { weight: 1 }],
-        ),
-        ([25, 35], vec![item(1, DAGGER, [1, 1])]),
+        ([4, 9], vec![gear(2), gear(3), gear(7), nothing(3)]),
+        ([25, 35], vec![gear(4), gear(5), gear(6), gear(3)]),
     ];
     let content = greyhaven_vale::content();
     assert_eq!(content.creature_templates().len(), rows.len());
