@@ -366,6 +366,17 @@ describe("caster poses", () => {
     expect(effects.viewerAction(snapshot(), 5.1)).toMatchObject({ pose: "swing", hold: false });
     expect(effects.viewerAction(snapshot(), 5.5)).toBeNull();
   });
+
+  test("a finished cast releases its held pose instead of replaying the swell", () => {
+    const effects = new SpellEffects();
+    const cast: CastState = { ability: 9, elapsed: 59, total: 60, channel: false };
+    effects.spawn(snapshot({}, { cast }), 0, () => null);
+    effects.spawn(snapshot({ events: [{ kind: "ability-used", source: me, target: wolf, ability: 9 }] }), 1, () => null);
+    const released = effects.viewerAction(snapshot(), 1)!;
+    expect(released).toMatchObject({ pose: "cast", progress: 0.5, hold: false });
+    expect(actionWeight(released)).toBeCloseTo(1);
+    expect(actionWeight(effects.viewerAction(snapshot(), 1.29)!)).toBeLessThan(0.1);
+  });
 });
 
 describe("error messages", () => {

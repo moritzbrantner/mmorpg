@@ -45,11 +45,14 @@ export type ViewerAction = { pose: CasterPose; progress: number; hold: boolean }
 export class SpellEffects {
   #effects: SpellEffect[] = [];
   #nextId = 1;
-  #action: { pose: CasterPose; startedAt: number } | null = null;
+  #action: { pose: CasterPose; startedAt: number; release: boolean } | null = null;
+  /** The ability the viewer was casting in the last received projection. */
+  #casting: number | null = null;
 
   clear(): void {
     this.#effects = [];
     this.#action = null;
+    this.#casting = null;
   }
 
   /** Starts the effects that one received projection's events call for. */
@@ -59,7 +62,8 @@ export class SpellEffects {
       if (event.kind === "ability-used") {
         const presentation = presentationOf(event.ability);
         if (sameEntity(event.source, viewer) && presentation?.pose) {
-          this.#action = { pose: presentation.pose, startedAt: now };
+          // A finished cast releases its held pose; an instant ability swells and releases.
+          this.#action = { pose: presentation.pose, startedAt: now, release: this.#casting === event.ability };
         }
         const visual = presentation?.visual;
         if (visual === "projectile" || visual === "arrow" || visual === "ring" || visual === "swing") {
@@ -69,6 +73,7 @@ export class SpellEffects {
         this.#startShards(event.source, event.target, event.ability, now, resolve);
       }
     }
+    this.#casting = snapshot.viewer.cast?.ability ?? null;
   }
 
   /** Starts and ends the effects bound to the viewer's channel and auras. */
@@ -106,7 +111,9 @@ export class SpellEffects {
     }
     const action = this.#action;
     if (action && now - action.startedAt < ACTION_SECONDS) {
-      return { pose: action.pose, progress: (now - action.startedAt) / ACTION_SECONDS, hold: false };
+      const elapsed = (now - action.startedAt) / ACTION_SECONDS;
+      // The release starts at the peak of the swell, where a held cast pose ends.
+      return { pose: action.pose, progress: action.release ? 0.5 + elapsed / 2 : elapsed, hold: false };
     }
     return null;
   }
