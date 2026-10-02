@@ -14,18 +14,20 @@ function isViewer(entity: EntityRef | null, snapshot: ZoneSnapshot): boolean {
 }
 
 /**
- * Whether the viewer's damage in this projection came from a damage-over-time tick or a channel
- * pulse rather than a swing or a spell: no ability resolved this tick, no auto-attack runs, and
- * either a channel is running or the target carries a damage-over-time aura.
+ * Whether the viewer's damage in this projection can only have come from a damage-over-time tick
+ * or a channel pulse. Damage events carry no provenance, so this is claimed only when no other
+ * source of the viewer's damage can be active this tick: no ability resolved, no auto-attack
+ * runs, and a channel is running or the target carries a damage-over-time aura. Anything
+ * ambiguous (a Serpent Sting tick beside auto-shots, a swing during Blizzard) shows as ordinary
+ * damage.
  */
 export function damageIsPeriodic(snapshot: ZoneSnapshot): boolean {
-  if (snapshot.viewer.cast?.channel) {
-    return true;
-  }
   const resolved = snapshot.events.some((event) => event.kind === "ability-used" && isViewer(event.source, snapshot));
-  return !resolved
-    && !snapshot.viewer.autoAttacking
-    && snapshot.targetDetail.auras.some((aura) => aura.kind === "damage-over-time");
+  if (resolved || snapshot.viewer.autoAttacking) {
+    return false;
+  }
+  return Boolean(snapshot.viewer.cast?.channel)
+    || snapshot.targetDetail.auras.some((aura) => aura.kind === "damage-over-time");
 }
 
 function textFor(event: ZoneEvent, snapshot: ZoneSnapshot, periodic: boolean): CombatText | null {

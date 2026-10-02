@@ -89,8 +89,10 @@ export const PLAYER_MODEL: UnitModel = {
     const look = entity.entityId === context.viewerId ? context.viewerLook : OTHER_PLAYER_LOOK;
     const action = entity.entityId === context.viewerId ? context.viewerAction ?? null : null;
     if (look.visuals.weapon === "bow") {
-      const pose = applyActionPose(poseFor(locomotion, "bow"), action);
-      return [...archerNodes(id, placement, look, pose.bob), ...humanoidHeadwearNodes(id, placement, look, pose)];
+      const base = poseFor(locomotion, "bow");
+      const pose = applyActionPose(base, action);
+      // The rigid archer mesh cannot bend its arms; the draw pose turns it side-on instead.
+      return [...archerNodes(id, placement, look, pose.bob, pose.twist - base.twist), ...humanoidHeadwearNodes(id, placement, look, pose)];
     }
     return humanoidNodes(id, placement, look, applyActionPose(poseFor(locomotion, humanoidStance(look)), action));
   },

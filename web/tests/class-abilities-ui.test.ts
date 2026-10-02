@@ -207,6 +207,8 @@ describe("combat text", () => {
     expect(combatTexts(snapshot({ events: [dealt(7)], targetDetail: { cast: null, auras: [dot] } }, { autoAttacking: true }))).toEqual([{ kind: "damage", text: "7" }]);
     const channel: CastState = { ability: 12, elapsed: 30, total: 180, channel: true };
     expect(damageIsPeriodic(snapshot({ events: [dealt(5)] }, { cast: channel }))).toBe(true);
+    // Events carry no provenance: a swing during a channel or a sting tick beside auto-shots is ambiguous.
+    expect(damageIsPeriodic(snapshot({ events: [dealt(5)] }, { cast: channel, autoAttacking: true }))).toBe(false);
     expect(combatTexts(snapshot({ events: [dealt(20, true)] }))).toEqual([{ kind: "critical", text: "20!" }]);
   });
 
