@@ -265,6 +265,8 @@
 
 @media (max-width: 880px) {
   .action-dock { bottom: 11.5rem; }
-  .unit-frames { top: 3.7rem; left: .65rem; gap: .4rem; }
-  .unit-frame { width: 10.5rem; }
+  .unit-frames { top: 3.7rem; left: .65rem; right: .65rem; gap: .4rem; }
+  /* Two frames share the row and shrink below 10.5rem on phones (two need ~22rem at 320 px). */
+  .unit-frame { flex: 0 1 10.5rem; width: auto; min-width: 0; }
+  .frame-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }

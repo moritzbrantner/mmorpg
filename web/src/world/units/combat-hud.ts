@@ -3,8 +3,8 @@ import { findEntity, type ErrorCode, type ZoneEvent, type ZoneSnapshot } from ".
 import type { ContentCatalog } from "../catalog";
 
 /**
- * Plain-text combat HUD lines for the minimal presentation; the target
- * frame, nameplates and combat text arrive with step 7b.
+ * Plain-text combat HUD lines beside the class HUD's frames, cast bars and
+ * combat text (`class-hud.ts`); nameplates arrive with step 7b.
  */
 const ERROR_TEXT: Record<ErrorCode, string> = {
   "no-target": "You have no target.",
