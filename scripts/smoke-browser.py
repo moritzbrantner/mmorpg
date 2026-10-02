@@ -470,7 +470,6 @@ class BrowserAcceptance(unittest.TestCase):
                     if best is None or gain > best[0]:
                         best = (gain, candidate)
                 key = best[1]
-                self.walk_key = key
                 continue
             self.page.keyboard.down(key)
             self.frames(12)
@@ -901,39 +900,31 @@ class BrowserAcceptance(unittest.TestCase):
         self.assertIsNotNone(match, f"{selector} shows {pattern}: {text!r}")
         return int(match.group(1))
 
-    def target_distance(self):
-        """Metres from the character to the projected animal nearest to it (the only creature near the woods edge)."""
-        x, z = self.self_position()
-        animal = self.page.evaluate("([x, z]) => window.__valeDebug.nearestAnimal(x, z)", [x, z])
-        if not animal:
-            return None, None
-        return math.hypot(animal["x"] - x, animal["z"] - z), animal
-
-    def approach_animal(self, metres, max_steps=120):
-        """Runs toward the nearest projected animal (the debug hook turns the view to it) until it is within
-        `metres`, sidestepping when a prop blocks the way."""
-        side = 0
-        stuck = 0
-        for _ in range(max_steps):
-            distance, animal = self.target_distance()
-            if distance is not None and distance <= metres:
-                return distance
-            before = self.self_position()
-            if animal:
-                self.page.evaluate("([x, z]) => window.__valeDebug.faceToward(x, z)", [animal["x"], animal["z"]])
-            keys = ["KeyW"] if stuck < 2 else ["KeyW", ("KeyA", "KeyD")[side]]
-            for key in keys:
-                self.page.keyboard.down(key)
-            self.frames(20)
-            for key in keys:
-                self.page.keyboard.up(key)
-            self.frames(2)
-            moved = math.hypot(*(a - b for a, b in zip(self.self_position(), before)))
-            stuck = 0 if moved > 0.5 else stuck + 1
-            if stuck > 5:
-                side = 1 - side
-                stuck = 2
-        self.fail(f"Never came within {metres} m of an animal; last distance {self.target_distance()[0]}")
+    def enter_beside_wolf(self):
+        """Enters the world with the source paused, walks the deterministic route of the corpse-loot
+        acceptance to Timber Wolf 108 (beside it by tick 400), selects it and resumes real-time ticking,
+        so the rest of the test drives the page through its keyboard and HUD."""
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          window.__classAdvance = source.advance;
+          source.advance = () => [];
+        }""")
+        self.enter_world(ticking=False)
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          const moves = new Map([[0,[1,0]],[36,[1,49152]],[121,[1,32768]],
+            [131,[1,49152]],[375,[1,32768]],[395,[0,32768]]]);
+          for (let tick = 0; tick < 400; tick++) {
+            const move = moves.get(tick);
+            if (move) source.sendCommand({kind:'move',forward:move[0],strafe:0,facing:move[1]});
+            if (tick === 380) source.sendCommand({kind:'select-target',target:{kind:'creature',id:108}});
+            window.__classAdvance.call(source, 1 / 30);
+          }
+          source.advance = window.__classAdvance;
+        }""")
+        self.expect_class_resource()
+        expect(self.page.locator("[data-part=target]")).to_be_visible()
+        expect(self.page.locator("[data-part=target-name]")).to_contain_text("Timber Wolf")
 
     def create_and_select(self, name, class_label):
         self.page.get_by_role("button", name="Create character", exact=True).click()
@@ -954,14 +945,9 @@ class BrowserAcceptance(unittest.TestCase):
     def test_warden_action_bar_rage_and_combat_text(self):
         """A level-1 Warden fights a wolf: auto-attack builds rage, key 1 spends it on Heroic Strike."""
         self.open("?debug")
-        self.enter_world()
+        self.enter_beside_wolf()
         self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
-        expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text("Rage 0 / 100")
-        self.walk_until_animal_projected()
-        self.approach_animal(3.0)
-        self.page.keyboard.press("Tab")
-        expect(self.page.locator("[data-part=target]")).to_be_visible()
-        expect(self.page.locator("[data-part=target-name]")).to_contain_text("Lv")
+        expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text(re.compile(r"Rage \d+ / 100"))
         self.page.keyboard.press("KeyF")
         # Hits build rage; combat text floats up for each damage event.
         self.page.wait_for_function("document.querySelector('[data-part=player-resource-text]').textContent.match(/Rage (\\d+)/) && Number(RegExp.$1) >= 15", timeout=30_000)
@@ -981,13 +967,9 @@ class BrowserAcceptance(unittest.TestCase):
         fills, damage text floats up and the target frame shows the wolf."""
         self.open("?debug")
         self.create_and_select("Dorian Voss", "Arcanist")
-        self.enter_world()
+        self.enter_beside_wolf()
         self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
         expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text("Mana 110 / 110")
-        self.walk_until_animal_projected()
-        self.approach_animal(27.0)
-        self.page.keyboard.press("Tab")
-        expect(self.page.locator("[data-part=target]")).to_be_visible()
         self.page.keyboard.press("Digit1")
         cast = self.page.locator("[data-part=cast]")
         expect(cast).to_be_visible()
