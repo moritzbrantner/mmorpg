@@ -340,7 +340,8 @@ export class WorldView {
       viewerLook: look,
       catalog,
       viewerTarget: projection.viewer.target,
-      viewerAction: this.#effects.viewerAction(projection, this.#seconds),
+      // Reduced motion stops every cosmetic animation: no action poses and no spell visuals.
+      viewerAction: animate ? this.#effects.viewerAction(projection, this.#seconds) : null,
     };
     const nodes: RendererSceneNode[] = [];
     const units: RendererSceneNode[] = [];
@@ -393,7 +394,10 @@ export class WorldView {
     this.#camera.lookAt(...view.target);
     this.#camera.updateMatrixWorld(true);
     const frame = sceneryFrame.nodes(view.eye, { seconds: this.#seconds, animate });
-    nodes.push(...frame.nodes, ...units, ...allEffectNodes(this.#effects.active(this.#seconds), this.#seconds, resolveAnchor));
+    nodes.push(...frame.nodes, ...units);
+    if (animate) {
+      nodes.push(...allEffectNodes(this.#effects.active(this.#seconds), this.#seconds, resolveAnchor));
+    }
     this.#lastUnitNodes = units;
     this.#lastProjectedUnits = projected;
     const camera: RendererCamera = {
