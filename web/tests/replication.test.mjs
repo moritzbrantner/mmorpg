@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodeSnapshot, findEntity, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
 import { NO_FLAGS, playerEntity, testSnapshot } from "./support/snapshots.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v9.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v10.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
 const player = (entityId, x, facing = 0) => playerEntity(entityId, [x, 90, 0], [21, 0, 0], facing);
 const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapshot({
@@ -15,13 +15,16 @@ const WOLF = { kind: "creature", id: 108 };
 /** Byte offsets of the fixture's sections (docs/PROTOCOL.md). */
 const CLASS = 59;
 const CAST = CLASS + 8;
-const COOLDOWNS = CAST + 6;
+const DAMAGE = CAST + 6;
+const COOLDOWNS = DAMAGE + 4;
 const AURAS = COOLDOWNS + 1 + 2 * 3;
 const TARGET_OF_TARGET = AURAS + 1 + 6;
 const TARGET_CAST = TARGET_OF_TARGET + 5;
 const TARGET_AURAS = TARGET_CAST + 6;
 const INVENTORY = TARGET_AURAS + 1 + 6;
-const EVENTS = INVENTORY + 8 + 1 + 64 + 1;
+const EQUIPMENT = INVENTORY + 9 + 64;
+const STATS = EQUIPMENT + 12;
+const EVENTS = INVENTORY + 8 + 1 + 84 + 1;
 const ENTITY_COUNT = EVENTS + 1 + 14 * 14;
 const FIRST_ENTITY = ENTITY_COUNT + 2;
 
@@ -35,15 +38,33 @@ describe("Rust/browser snapshot contract", () => {
     const invalidFlag = fixture.slice();
     invalidFlag[INVENTORY + 8] = 2;
     expect(() => decodeSnapshot(invalidFlag)).toThrow("Reserved");
-    for (const [slot, item, quantity] of [[0, 0, 3], [0, 3, 1], [0, 1, 0], [0, 1, 21], [1, 2, 2]]) {
+    for (const [slot, item, quantity] of [[0, 0, 3], [0, 10, 1], [0, 1, 0], [0, 1, 21], [1, 2, 2]]) {
       const bytes = fixture.slice();
       const view = new DataView(bytes.buffer);
       view.setUint16(INVENTORY + 9 + slot * 4, item);
       view.setUint16(INVENTORY + 11 + slot * 4, quantity);
       expect(() => decodeSnapshot(bytes)).toThrow("inventory stack");
     }
-    const omitted = new Uint8Array([...fixture.slice(0, INVENTORY + 8), 0, ...fixture.slice(INVENTORY + 9 + 64)]);
-    expect(decodeSnapshot(omitted)).toMatchObject({ inventoryRevision: 9n, inventory: null });
+    const omitted = new Uint8Array([...fixture.slice(0, INVENTORY + 8), 0, ...fixture.slice(INVENTORY + 9 + 84)]);
+    expect(decodeSnapshot(omitted)).toMatchObject({ inventoryRevision: 9n, inventory: null, equipment: null, stats: null });
+  });
+  test("validates equipment slots and stat totals beside the bag", () => {
+    for (const [slot, item, message] of [[0, 10, "equipment slot"], [0, 1, "equipment slot"], [1, 6, "equipment slot"]]) {
+      const bytes = fixture.slice();
+      new DataView(bytes.buffer).setUint16(EQUIPMENT + 2 * slot, item);
+      expect(() => decodeSnapshot(bytes), `slot ${slot} = item ${item}`).toThrow(message);
+    }
+    const stale = fixture.slice();
+    new DataView(stale.buffer).setUint16(EQUIPMENT, 0);
+    expect(() => decodeSnapshot(stale)).toThrow("Stat totals");
+    for (let stat = 0; stat < 4; stat += 1) {
+      const bytes = fixture.slice();
+      bytes[STATS + 2 * stat + 1] ^= 1;
+      expect(() => decodeSnapshot(bytes)).toThrow("Stat totals");
+    }
+    const inverted = fixture.slice();
+    new DataView(inverted.buffer).setUint16(DAMAGE, 13);
+    expect(() => decodeSnapshot(inverted)).toThrow("Inverted");
   });
   test("rejects invalid progression and the actual legacy v5 fixture", () => {
     const legacy = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v5.hex", import.meta.url), "utf8").trim();
@@ -58,13 +79,14 @@ describe("Rust/browser snapshot contract", () => {
     }
   });
   test("decodes the same golden bytes as the Rust encoder", () => {
-    expect(fixture.length).toBe(100 + 2 * 3 + 2 * 6 + 64 + 14 * 14 + 4 * 21);
+    expect(fixture.length).toBe(104 + 2 * 3 + 2 * 6 + 84 + 14 * 14 + 4 * 21);
     expect(decodeSnapshot(fixture)).toEqual({
       zoneId: 42, tick: 99n, contentRevision: 4n, acknowledgedSequence: 81, viewerId: 7,
       viewer: {
-        copper: 42, experience: 37, experienceToNextLevel: 400, health: 38, maxHealth: 95, level: 4, dead: false, inCombat: true,
+        copper: 42, experience: 37, experienceToNextLevel: 400, health: 38, maxHealth: 110, level: 4, dead: false, inCombat: true,
         autoAttacking: true, target: WOLF, classChoice: { classId: "arcanist", sex: "female" },
         resource: { kind: "mana", value: 121, max: 176 }, cast: { ability: 9, elapsed: 20, total: 60, channel: false }, globalCooldown: 25,
+        damage: { min: 9, max: 12 },
       },
       cooldowns: [{ ability: 10, remaining: 412 }, { ability: 11, remaining: 700 }],
       auras: [{ ability: 11, kind: "absorb", remaining: 500, amount: 31 }],
@@ -75,6 +97,8 @@ describe("Rust/browser snapshot contract", () => {
       },
       inventoryRevision: 9n,
       inventory: [{ itemId: 1, quantity: 3 }, { itemId: 2, quantity: 1 }, ...Array(13).fill(null), { itemId: 1, quantity: 20 }],
+      equipment: [4, null, 6, 7, null, null],
+      stats: { stamina: 3, strength: 0, agility: 0, intellect: 6 },
       loot: null,
       events: [
         { kind: "damage-dealt", source: VIEWER, target: WOLF, amount: 7, critical: true },
@@ -125,6 +149,7 @@ describe("Rust/browser snapshot contract", () => {
       "too-many-intents", "invalid-inventory-move", "inventory-full",
       "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
       "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
+      "not-equippable",
     ];
     codes.forEach((code, index) => {
       const bytes = fixture.slice();
@@ -189,6 +214,8 @@ describe("Rust/browser snapshot contract", () => {
     expect(() => decodeSnapshot(fewer)).toThrow("count");
     expect(() => decodeSnapshot(new Uint8Array([...fixture, 0]))).toThrow();
     expect(() => decodeSnapshot(new Uint8Array(1_078))).toThrow("budget");
+    const legacy = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v9.hex", import.meta.url), "utf8").trim();
+    expect(() => decodeSnapshot(Uint8Array.from(Buffer.from(legacy, "hex")))).toThrow("version");
   });
 
   test("requires the viewer to lead the priority-ordered records", () => {

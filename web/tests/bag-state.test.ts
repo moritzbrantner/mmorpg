@@ -84,3 +84,21 @@ test("refusal feedback survives omitted sheets and copying isolates received rec
   expect(state.feedback).toContain("refused");
   expect(state.slots).toEqual(bag());
 });
+
+test("equipment and stat totals arrive and are retained with the bag sheet", () => {
+  const state = new BagState();
+  const stats = { stamina: 0, strength: 2, agility: 2, intellect: 0 };
+  const equipment = [2, null, null, null, null, null];
+  const unequipped = bag(); unequipped[1] = null;
+  state.update({ ...projection(0, 2n, unequipped), equipment, stats });
+  expect(state.equipment).toEqual(equipment);
+  expect(state.stats).toEqual(stats);
+  equipment[0] = null;
+  expect(state.equipment?.[0]).toBe(2);
+  state.update(projection(1, 2n, null));
+  expect(state.equipment).toEqual([2, null, null, null, null, null]);
+  expect(state.stats).toEqual(stats);
+  state.reset(projection(0));
+  expect(state.equipment).toBeNull();
+  expect(state.stats).toBeNull();
+});

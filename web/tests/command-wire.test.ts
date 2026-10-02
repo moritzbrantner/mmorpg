@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { encodeCommand, type Axis, type WorldCommand } from "../src/command-wire";
 import { entityKindFromCode } from "../src/entity-ref";
 
-const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v4.hex", import.meta.url), "utf8");
+const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v5.hex", import.meta.url), "utf8");
 
 function axis(raw: string | undefined): Axis {
   const value = Number(raw);
@@ -46,6 +46,10 @@ function command(fields: readonly string[]): WorldCommand {
       return { kind: "cancel-cast" };
     case "choose_class":
       return { kind: "choose-class", classId: Number(first), sex: Number(second) };
+    case "equip_item":
+      return { kind: "equip-item", bagSlot: Number(first) };
+    case "unequip_item":
+      return { kind: "unequip-item", equipmentSlot: Number(first) };
     default:
       throw new Error(`Unknown fixture command ${name}`);
   }
@@ -69,8 +73,8 @@ describe("Rust/browser command contract", () => {
     const commands = fixtureCommands();
     const kinds = new Set(commands.map(({ command }) => command.kind));
     expect([...kinds].sort()).toEqual([
-      "cancel-cast", "choose-class", "jump", "loot", "move", "move-item", "release-spirit", "select-target",
-      "start-attack", "stop-attack", "use-ability",
+      "cancel-cast", "choose-class", "equip-item", "jump", "loot", "move", "move-item", "release-spirit",
+      "select-target", "start-attack", "stop-attack", "unequip-item", "use-ability",
     ]);
     expect(commands.filter(({ command }) => command.kind === "move").length).toBeGreaterThanOrEqual(4);
     expect(commands.filter(({ command }) => command.kind === "select-target").length).toBe(4);
@@ -98,6 +102,9 @@ describe("Rust/browser command contract", () => {
       { kind: "use-ability", ability: 1, target: { kind: "creature", id: 2 ** 32 } },
       { kind: "choose-class", classId: 0, sex: 256 },
       { kind: "choose-class", classId: 1.5, sex: 0 },
+      { kind: "equip-item", bagSlot: 256 },
+      { kind: "equip-item", bagSlot: -1 },
+      { kind: "unequip-item", equipmentSlot: 0.5 },
     ]) {
       expect(() => encodeCommand(invalid as WorldCommand)).toThrow();
     }

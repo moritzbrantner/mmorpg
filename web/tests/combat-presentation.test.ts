@@ -33,9 +33,10 @@ describe("content catalog", () => {
     expect(catalog.creatureTemplates.get(2)?.behaviour).toBe("neutral");
     expect(catalog.npcs.get(6)?.role).toBe("guard");
     expect(catalog.areas.get(1)).toBe("Greyhaven Outpost");
-    expect(catalog.itemCatalogRevision).toBe(1n);
+    expect(catalog.itemCatalogRevision).toBe(2n);
     expect([...catalog.items.values()]).toEqual([
-      { id: 1, name: "Torn Fur", maxStack: 20 }, { id: 2, name: "Worn Dagger", maxStack: 1 },
+      { id: 1, name: "Torn Fur", maxStack: 20, slot: null, stats: { stamina: 0, strength: 0, agility: 0, intellect: 0 } },
+      { id: 2, name: "Worn Dagger", maxStack: 1, slot: "mainHand", stats: { stamina: 0, strength: 2, agility: 2, intellect: 0 } },
     ]);
     const broken = (mutate: (json: Record<string, unknown>) => void) => {
       const json = catalogJson();
@@ -51,7 +52,12 @@ describe("content catalog", () => {
       templates[1]!.id = 1;
     })).toThrow("unique");
     expect(broken((json) => { (json.creatureTemplates as Record<string, unknown>[])[0]!.halfExtents = [40, 45]; })).toThrow("three");
-    expect(broken((json) => { json.itemCatalogRevision = "2"; })).toThrow("item catalog revision");
+    expect(broken((json) => { json.itemCatalogRevision = "1"; })).toThrow("item catalog revision");
+    expect(broken((json) => { (json.items as Record<string, unknown>[])[1]!.slot = "ring"; })).toThrow("slot");
+    expect(broken((json) => { (json.items as Record<string, unknown>[])[1]!.stats = { stamina: 0 }; })).toThrow("stats");
+    expect(broken((json) => {
+      (json.items as Record<string, unknown>[])[1]!.stats = { stamina: 256, strength: 0, agility: 0, intellect: 0 };
+    })).toThrow("stamina");
     expect(broken((json) => { (json.items as Record<string, unknown>[])[0]!.maxStack = 0; })).toThrow("stack limit");
     expect(broken((json) => { (json.items as Record<string, unknown>[])[1]!.id = 1; })).toThrow("unique");
     expect(broken((json) => { (json.items as Record<string, unknown>[])[0]!.id = 0; })).toThrow("item 0 id");

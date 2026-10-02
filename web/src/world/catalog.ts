@@ -1,8 +1,9 @@
 /**
  * The content catalog from the WASM `catalog()` export (format
- * `mmorpg.catalog` v3): names and presentation facts for the IDs that
+ * `mmorpg.catalog` v4): names and presentation facts for the IDs that
  * projections carry. Creature templates by template ID, NPCs by NPC ID,
- * areas by area ID, classes by wire value and abilities by ability ID.
+ * areas by area ID, items (with equipment slot and stats) by item ID,
+ * classes by wire value and abilities by ability ID.
  * Combat numbers stay on the server.
  */
 export type CreatureFamily = "wolf" | "boar" | "vermin" | "marauder" | "mirefin" | "redbrand";
@@ -23,7 +24,19 @@ export type CreatureTemplate = {
 
 export type NpcRecord = { id: number; name: string; role: NpcRole; level: number };
 
-export type ItemRecord = { id: number; name: string; maxStack: number };
+export type EquipmentSlotName = "mainHand" | "offHand" | "head" | "chest" | "legs" | "feet";
+/** Equipment slot names by wire index (0 main hand … 5 feet). */
+export const EQUIPMENT_SLOT_NAMES: readonly EquipmentSlotName[] = ["mainHand", "offHand", "head", "chest", "legs", "feet"];
+export type ItemStats = { stamina: number; strength: number; agility: number; intellect: number };
+export type ItemRecord = {
+  id: number;
+  name: string;
+  maxStack: number;
+  /** The equipment slot the item fits, or null for plain bag items. */
+  slot: EquipmentSlotName | null;
+  /** Attributes added while equipped. */
+  stats: ItemStats;
+};
 
 export type ClassName = "warden" | "ranger" | "arcanist";
 export type ClassRecord = { id: number; name: ClassName; resource: "rage" | "focus" | "mana" };
@@ -58,7 +71,7 @@ export type ContentCatalog = {
 };
 
 const FORMAT = "mmorpg.catalog";
-const VERSION = 3;
+const VERSION = 4;
 const CLASS_NAMES: readonly ClassName[] = ["warden", "ranger", "arcanist"];
 const RESOURCES = ["rage", "focus", "mana"] as const;
 const USERS: readonly (ClassName | "creature")[] = [...CLASS_NAMES, "creature"];
@@ -183,15 +196,24 @@ export function decodeCatalog(json: string): ContentCatalog {
     const record = object(value, ["id", "name"], `area ${index}`);
     return { id: int(record.id, `area ${index} id`, 0, 0xffff), name: text(record.name, `area ${index} name`) };
   });
-  if (root.itemCatalogRevision !== "1") {
+  if (root.itemCatalogRevision !== "2") {
     fail("unsupported item catalog revision");
   }
-  const items = list(root.items, "items", 256).map((value, index) => {
-    const record = object(value, ["id", "name", "maxStack"], `item ${index}`);
+  const items = list(root.items, "items", 256).map((value, index): ItemRecord => {
+    const name = `item ${index}`;
+    const record = object(value, ["id", "name", "maxStack", "slot", "stats"], name);
+    const stats = object(record.stats, ["stamina", "strength", "agility", "intellect"], `${name} stats`);
     return {
-      id: int(record.id, `item ${index} id`, 1, 0xffff),
-      name: text(record.name, `item ${index} name`),
-      maxStack: int(record.maxStack, `item ${index} stack limit`, 1, 0xffff),
+      id: int(record.id, `${name} id`, 1, 0xffff),
+      name: text(record.name, `${name} name`),
+      maxStack: int(record.maxStack, `${name} stack limit`, 1, 0xffff),
+      slot: record.slot === null ? null : oneOf(record.slot, EQUIPMENT_SLOT_NAMES, `${name} slot`),
+      stats: {
+        stamina: int(stats.stamina, `${name} stamina`, 0, 255),
+        strength: int(stats.strength, `${name} strength`, 0, 255),
+        agility: int(stats.agility, `${name} agility`, 0, 255),
+        intellect: int(stats.intellect, `${name} intellect`, 0, 255),
+      },
     };
   });
   const classes = list(root.classes, "classes", 3).map((value, index) => {
@@ -228,7 +250,7 @@ export function decodeCatalog(json: string): ContentCatalog {
   return {
     classes: byId(classes, "class"),
     abilities: byId(abilities, "ability"),
-    itemCatalogRevision: 1n,
+    itemCatalogRevision: 2n,
     items: byId(items, "item"),
     contentRevision,
     contentFingerprint: root.contentFingerprint,
