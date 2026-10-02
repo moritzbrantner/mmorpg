@@ -86,7 +86,9 @@ describe("slot state", () => {
   test("target distance is the XZ centre distance, null without a visible target", () => {
     expect(targetDistanceUnits(snapshot())).toBe(1_000);
     expect(targetDistanceUnits(snapshot({}, { target: null }))).toBeNull();
-    expect(targetDistanceUnits(snapshot({}, { target: { kind: "creature", id: 999 } }))).toBeNull();
+    // A selected target outside the interest radius is omitted from the projection: out of reach.
+    expect(targetDistanceUnits(snapshot({}, { target: { kind: "creature", id: 999 } }))).toBe(Number.POSITIVE_INFINITY);
+    expect(slotState(firebolt, snapshot({}, { target: { kind: "creature", id: 999 } }), Number.POSITIVE_INFINITY).outOfRange).toBe(true);
     expect(targetDistanceUnits(snapshot({}, { target: me }))).toBeNull();
   });
 });

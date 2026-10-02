@@ -24,12 +24,20 @@ export type SlotState = {
   cooldown: SlotCooldown | null;
 };
 
-/** XZ centre distance in core units from the viewer to its target, or null without a visible target. */
+/**
+ * XZ centre distance in core units from the viewer to its target, or null without a target (or
+ * when targeting itself). A selected target the projection omits has left the interest radius,
+ * beyond every targeted ability's reach, so it counts as infinitely far.
+ */
 export function targetDistanceUnits(snapshot: ZoneSnapshot): number | null {
+  const selected = snapshot.viewer.target;
   const viewer = findEntity(snapshot, { kind: "player", id: snapshot.viewerId });
-  const target = snapshot.viewer.target === null ? undefined : findEntity(snapshot, snapshot.viewer.target);
-  if (!viewer || !target || sameEntity(snapshot.viewer.target, { kind: "player", id: snapshot.viewerId })) {
+  if (selected === null || !viewer || sameEntity(selected, { kind: "player", id: snapshot.viewerId })) {
     return null;
+  }
+  const target = findEntity(snapshot, selected);
+  if (!target) {
+    return Number.POSITIVE_INFINITY;
   }
   return Math.hypot(target.position[0] - viewer.position[0], target.position[2] - viewer.position[2]);
 }
