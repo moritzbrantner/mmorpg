@@ -5,6 +5,7 @@ import { RELIEF_GRID, RELIEF_PACKAGE_DIRECTORY } from "../scripts/relief-package
 import { encodeCommand } from "../src/command-wire";
 import { ABILITY_SHAPES, ITEM_SHAPES, decodeSnapshot, type EntityState } from "../src/replication";
 import { abilitySlots, useAbilitySlot } from "../src/world/units/abilities";
+import { undescribedAbilities } from "../src/world/units/ability-presentation";
 import { combatStatus } from "../src/world/units/combat-hud";
 import { BagState } from "../src/world/units/bag-state";
 import { LootState } from "../src/world/units/loot-state";
@@ -417,6 +418,10 @@ describe("WASM local zone combat intents", () => {
         ability.castTicks, ability.channel, ability.cooldown, ability.aura === null ? null : auraKinds[ability.aura - 1],
       ]);
     }
+    // Every ability has presentation facts, and the spell visuals key the abilities they name.
+    expect(undescribedAbilities(catalog)).toEqual([]);
+    expect([5, 9, 10, 11, 12].map((id) => catalog.abilities.get(id)?.name)).toEqual(["Aimed Shot", "Firebolt", "Frost Nova", "Arcane Barrier", "Blizzard"]);
+    expect(catalog.abilities.get(12)?.channel).toBe(true);
   });
 
   test("the chosen class reaches the zone and ability slots are refused or validated there", () => {

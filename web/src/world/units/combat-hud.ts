@@ -3,8 +3,8 @@ import { findEntity, type ErrorCode, type ZoneEvent, type ZoneSnapshot } from ".
 import type { ContentCatalog } from "../catalog";
 
 /**
- * Plain-text combat HUD lines for the minimal presentation; the target
- * frame, nameplates and combat text arrive with step 7b.
+ * Plain-text combat HUD lines beside the class HUD's frames, cast bars and
+ * combat text (`class-hud.ts`); nameplates arrive with step 7b.
  */
 const ERROR_TEXT: Record<ErrorCode, string> = {
   "no-target": "You have no target.",
@@ -13,7 +13,7 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "not-attackable": "You cannot attack that.",
   "you-are-dead": "You are dead.",
   "not-dead": "You are not dead.",
-  "invalid-target": "Invalid target.",
+  "invalid-target": "That is not a valid target for that ability.",
   "too-many-intents": "Too many actions at once.",
   "invalid-inventory-move": "Bag move refused.",
   "inventory-full": "Your bags cannot hold those items.",
@@ -21,12 +21,12 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "not-loot-owner": "That loot belongs to another player.",
   "empty-loot": "No loot remains.",
   "money-overflow": "You cannot hold any more copper.",
-  "no-class": "Choose a class first.",
-  "not-learned": "You have not learned that ability.",
-  "not-ready": "That is not ready yet.",
+  "no-class": "You have no class yet.",
+  "not-learned": "You have not learned that ability yet.",
+  "not-ready": "That ability is not ready yet.",
   "not-enough-resource": "Not enough resource.",
-  "stunned": "You are stunned.",
-  "already-casting": "You are already casting.",
+  "stunned": "You are stunned and cannot act.",
+  "already-casting": "You are already casting. Press Esc to cancel.",
   "invalid-class": "That class choice is not available.",
   "not-equippable": "That item cannot be equipped.",
 };
@@ -86,6 +86,12 @@ export function combatStatus(snapshot: ZoneSnapshot, catalog: ContentCatalog): s
   return parts.join(" · ");
 }
 
+/** The readable message for an error code; a resource shortage names the viewer's resource. */
+export function errorText(code: ErrorCode, snapshot: ZoneSnapshot): string {
+  const resource = snapshot.viewer.resource;
+  return code === "not-enough-resource" && resource ? `Not enough ${RESOURCE_NAMES[resource.kind].toLowerCase()}.` : ERROR_TEXT[code];
+}
+
 /** One feedback line per event, from the viewer's point of view. */
 export function eventText(event: ZoneEvent, snapshot: ZoneSnapshot, catalog: ContentCatalog): string {
   const name = (entity: EntityRef) => unitName(entity, snapshot, catalog);
@@ -107,7 +113,7 @@ export function eventText(event: ZoneEvent, snapshot: ZoneSnapshot, catalog: Con
         ? "You die."
         : `${capitalise(name(event.entity))} dies.`;
     case "error":
-      return ERROR_TEXT[event.code];
+      return errorText(event.code, snapshot);
     case "cast-started":
       return `${capitalise(name(event.source))} ${isViewer(event.source) ? "begin" : "begins"} ${abilityName(event.ability, catalog)}.`;
     case "ability-used":

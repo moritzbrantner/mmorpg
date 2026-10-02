@@ -72,6 +72,15 @@ describe("unit model registry", () => {
     expect(draw(3, OTHER_PLAYER_LOOK)).toEqual(draw(8));
   });
 
+  test("the Ranger's draw pose turns the rigid archer mesh side-on", () => {
+    const placement = placeWithModel(PLAYER_MODEL, player(3), CONTEXT, 0);
+    const locomotion = new UnitAnimators().locomotion(player(3), placement, 100, 1 / 30, true);
+    const stave = (viewerAction: UnitContext["viewerAction"]) =>
+      PLAYER_MODEL.nodes({ id: "unit", entity: player(3), placement, locomotion, context: { ...CONTEXT, viewerAction } })
+        .find((node) => node.id === "unit-bow-stave")!.transform.rotationQuaternion;
+    expect(stave({ pose: "draw", progress: 1, hold: true })).not.toEqual(stave(null));
+  });
+
   test("models read the projected entity: registry dispatch, per-entity body height and nodes", () => {
     // A stand-in for a creature model keyed by appearance: its body height depends on the entity.
     const heights = new Map([[5, 40], [6, 120]]);

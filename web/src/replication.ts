@@ -172,7 +172,7 @@ const MAX_EVENTS = 16;
 const MAX_ENTITIES = 46;
 const MAX_COOLDOWNS = 4;
 const MAX_AURAS = 8;
-const GLOBAL_COOLDOWN_TICKS = 45;
+export const GLOBAL_COOLDOWN_TICKS = 45;
 const BUFFER_CAPACITY = 32;
 
 const ERROR_CODES: readonly ErrorCode[] = [

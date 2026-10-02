@@ -7,6 +7,8 @@ import type {
   ThreeSceneRenderer,
 } from "@moritzbrantner/three-d-renderer";
 import type { WorldCommand } from "../command-wire";
+import { entityKey } from "../entity-ref";
+import type { EntityRef } from "../entity-ref";
 import type { EntityState, ZoneSnapshot } from "../replication";
 import { DebugOverlay, FrameRate } from "./debug-overlay";
 import { ENVIRONMENT } from "./environment";
@@ -26,11 +28,15 @@ import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type ScenerySce
 import { SkyLayer } from "./sky";
 import { UnitAnimators, placeWithModel, unitIdentity, unitModel, unitNodeIds, type UnitContext, type UnitLook } from "./unit-nodes";
 import { BagsPanel, type BagsElements } from "./units/bags-panel";
+import { useAbilitySlot } from "./units/abilities";
+import { ClassHud } from "./units/class-hud";
 import { CombatHud } from "./units/combat-hud";
 import { LootPanel, type LootElements } from "./units/loot-panel";
 import { nearestAnimal, projectedUnit, type ProjectedUnit } from "./units/projected-units";
 import { ProgressionHud } from "./units/progression-hud";
+import { SpellEffects, allEffectNodes, type Anchor } from "./units/spell-effects";
 import { SecondaryClick, attackToggle } from "./units/targeting";
+import type { ContentCatalog } from "./catalog";
 
 /**
  * The in-world presentation: static scenery, animated units, the orbit
@@ -54,6 +60,8 @@ export type WorldViewElements = {
   progressionFeedback: HTMLElement;
   bags: BagsElements;
   loot: LootElements;
+  /** Action bar, unit frames, cast bars and combat text. */
+  classHud: HTMLElement;
 };
 
 /** A targeting or attack intent, resolved against the latest projection when it is sent. */
@@ -130,11 +138,16 @@ export class WorldView {
   readonly #animators = new UnitAnimators();
   readonly #combatHud: CombatHud;
   readonly #progressionHud: ProgressionHud;
+  readonly #classHud: ClassHud;
+  readonly #effects = new SpellEffects();
   readonly #bags: BagsPanel;
   readonly #loot: LootPanel;
   readonly #intents: Intent[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
+  #catalog: ContentCatalog | null = null;
+  /** Where each visible unit stood in the last frame (metres), for spell effects. */
+  #anchors = new Map<string, Anchor>();
   /** The unit nodes of the last frame, for debug readouts. */
   #lastUnitNodes: readonly RendererSceneNode[] = [];
   /** The projected units of the last frame, for debug readouts. */
@@ -166,6 +179,9 @@ export class WorldView {
     this.#overlay = new DebugOverlay(elements.overlay);
     this.#sky = new SkyLayer(elements.sky, ENVIRONMENT);
     this.#combatHud = new CombatHud(elements.unitStatus, elements.combatFeedback);
+    this.#classHud = new ClassHud(elements.classHud, {
+      onUse: (slot) => this.queueIntent((projection) => (this.#catalog ? useAbilitySlot(slot, projection, this.#catalog) : null)),
+    });
     this.#progressionHud = new ProgressionHud(elements.experienceBar, elements.experienceStatus, elements.progressionFeedback);
     this.#bags = new BagsPanel(elements.bags, (command) => this.queueIntent(() => command));
     this.#loot = new LootPanel(elements.loot, (intent) => this.queueIntent(intent), () => { this.#bags.close(); });
@@ -180,6 +196,7 @@ export class WorldView {
   /** Builds the static scene and the minimap image once per loaded world. */
   load(world: LocalWorld): void {
     const started = performance.now();
+    this.#catalog = world.catalog;
     this.#bags.load(world.catalog);
     this.#loot.load(world.catalog);
     const scenery = world.scenery.scenery;
@@ -202,6 +219,9 @@ export class WorldView {
     this.#intents.length = 0;
     this.#combatHud.reset();
     this.#progressionHud.reset();
+    this.#classHud.reset();
+    this.#effects.clear();
+    this.#anchors = new Map();
     this.#bags.reset(projection);
     this.#loot.reset(projection);
     this.#shownArea = null;
@@ -228,6 +248,8 @@ export class WorldView {
   }
 
   leave(): void {
+    this.#classHud.reset();
+    this.#effects.clear();
     this.#bags.reset();
     this.#loot.reset();
     this.#endDrag();
@@ -292,7 +314,8 @@ export class WorldView {
     for (const command of this.#outbox.update(this.#input(input), now)) {
       source.sendCommand(command);
     }
-    for (const received of source.advance(deltaSeconds)) {
+    const receivedProjections = source.advance(deltaSeconds);
+    for (const received of receivedProjections) {
       this.#bags.update(received);
       this.#loot.update(received);
     }
@@ -302,6 +325,12 @@ export class WorldView {
     }
     const animate = this.#animate;
     this.#seconds += deltaSeconds;
+    const resolveAnchor = (entity: EntityRef): Anchor | null => this.#anchors.get(entityKey(entity)) ?? null;
+    for (const received of receivedProjections) {
+      this.#classHud.receive(received, now);
+      this.#effects.spawn(received, this.#seconds, resolveAnchor);
+    }
+    this.#effects.sync(projection, this.#seconds, resolveAnchor);
     this.#orbit.update(deltaSeconds, !animate);
     const { unitsPerMetre, playerHalfExtents } = scenery.scenery;
     const unitContext: UnitContext = {
@@ -311,12 +340,15 @@ export class WorldView {
       viewerLook: look,
       catalog,
       viewerTarget: projection.viewer.target,
+      // Reduced motion stops every cosmetic animation: no action poses and no spell visuals.
+      viewerAction: animate ? this.#effects.viewerAction(projection, this.#seconds) : null,
     };
     const nodes: RendererSceneNode[] = [];
     const units: RendererSceneNode[] = [];
     const visible = new Set<string>();
     const projected: ProjectedUnit[] = [];
     const others: MinimapUnit[] = [];
+    const anchors = new Map<string, Anchor>();
     let self: { focus: Vec3; x: number; z: number; facing: number } | null = null;
     for (const entity of source.sample()) {
       const model = unitModel(entity);
@@ -327,6 +359,13 @@ export class WorldView {
       projected.push(projectedUnit(entity, placement, catalog));
       const locomotion = this.#animators.locomotion(entity, placement, unitsPerMetre, deltaSeconds, !animate);
       units.push(...model.nodes({ id, entity, placement, locomotion, context: unitContext }));
+      anchors.set(entityKey({ kind: entity.kind, id: entity.entityId }), {
+        x: placement.x,
+        feetY: placement.feetY,
+        centreY: placement.feetY + model.halfHeightUnits(entity, unitContext) / unitsPerMetre,
+        z: placement.z,
+        yaw: placement.yawRadians,
+      });
       if (isSelf) {
         const centreY = placement.feetY + model.halfHeightUnits(entity, unitContext) / unitsPerMetre;
         self = { focus: [placement.x, centreY, placement.z], x: placement.x, z: placement.z, facing: placement.yawRadians };
@@ -336,10 +375,12 @@ export class WorldView {
       }
     }
     this.#animators.retain(visible);
+    this.#anchors = anchors;
     if (!self) {
       throw new Error("The projection is missing the viewer's own unit.");
     }
     this.#combatHud.update(projection, catalog, now);
+    this.#classHud.update(projection, catalog, now);
     this.#progressionHud.update(projection, now);
     this.#bags.update(projection);
     this.#loot.update(projection);
@@ -354,6 +395,9 @@ export class WorldView {
     this.#camera.updateMatrixWorld(true);
     const frame = sceneryFrame.nodes(view.eye, { seconds: this.#seconds, animate });
     nodes.push(...frame.nodes, ...units);
+    if (animate) {
+      nodes.push(...allEffectNodes(this.#effects.active(this.#seconds), this.#seconds, resolveAnchor));
+    }
     this.#lastUnitNodes = units;
     this.#lastProjectedUnits = projected;
     const camera: RendererCamera = {

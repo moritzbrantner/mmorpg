@@ -894,5 +894,124 @@ class BrowserAcceptance(unittest.TestCase):
                 self.page.screenshot(path=str(ARTIFACTS / f"selection-{width}x{height}.png"))
 
 
+    def hud_number(self, selector, pattern):
+        text = self.page.locator(selector).inner_text()
+        match = re.search(pattern, text)
+        self.assertIsNotNone(match, f"{selector} shows {pattern}: {text!r}")
+        return int(match.group(1))
+
+    def enter_beside_wolf(self):
+        """Enters the world with the source paused and walks the deterministic route of the corpse-loot
+        acceptance toward Timber Wolf 108 (selected at tick 380). The source then stays paused: the
+        page's own frames publish only the ticks the test runs with `step`, so the keyboard and HUD
+        are exercised at a known tick count however slowly headless Chromium renders."""
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          window.__classAdvance = source.advance;
+          source.advance = () => [];
+        }""")
+        self.enter_world(ticking=False)
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          const moves = new Map([[0,[1,0]],[36,[1,49152]],[121,[1,32768]],
+            [131,[1,49152]],[375,[1,32768]],[395,[0,32768]]]);
+          for (let tick = 0; tick < 400; tick++) {
+            const move = moves.get(tick);
+            if (move) source.sendCommand({kind:'move',forward:move[0],strafe:0,facing:move[1]});
+            if (tick === 380) source.sendCommand({kind:'select-target',target:{kind:'creature',id:108}});
+            window.__classAdvance.call(source, 1 / 30);
+          }
+          // Combat text fades after 1.4 s of wall-clock time, which a slow headless frame can outlast,
+          // so count the entries as they are added.
+          window.__combatTexts = [];
+          new MutationObserver(records => {
+            for (const record of records) for (const node of record.addedNodes) {
+              if (node.classList?.contains('combat-text-entry')) window.__combatTexts.push(node.textContent);
+            }
+          }).observe(document.body, {childList: true, subtree: true});
+          window.__classQueue = [];
+          source.advance = () => window.__classQueue.splice(0);
+          window.__classStep = ticks => {
+            for (let tick = 0; tick < ticks; tick++) window.__classQueue.push(...window.__classAdvance.call(source, 1 / 30));
+          };
+        }""")
+        self.frames(2)
+        self.expect_class_resource()
+        expect(self.page.locator("[data-part=target]")).to_be_visible()
+        expect(self.page.locator("[data-part=target-name]")).to_contain_text("Timber Wolf")
+
+    def step(self, ticks):
+        """Lets the page send its pending intents, runs `ticks` zone ticks and lets the page present them."""
+        self.frames(2)
+        self.page.evaluate("ticks => window.__classStep(ticks)", ticks)
+        self.frames(3)
+
+    def create_and_select(self, name, class_label):
+        self.page.get_by_role("button", name="Create character", exact=True).click()
+        self.page.get_by_label("Name").fill(name)
+        self.page.get_by_role("radio", name=re.compile(f"^{class_label}")).check()
+        self.page.get_by_role("button", name="Create character", exact=True).filter(visible=True).click()
+        expect(self.page.locator("#character-name")).to_have_text(name)
+
+    def assert_action_bar(self, locked_levels):
+        slots = self.page.locator("#class-hud .action-slot")
+        expect(slots).to_have_count(4)
+        self.assertEqual(slots.locator(".slot-key").all_inner_texts(), ["1", "2", "3", "4"])
+        states = slots.evaluate_all("els => els.map(el => el.dataset.state)")
+        self.assertEqual(states[0] in ("ready", "cooldown"), True, f"Slot 1 is learned at level 1: {states}")
+        self.assertEqual(states[1:], ["locked"] * 3, f"Higher abilities are not learned yet: {states}")
+        self.assertEqual(slots.locator(".slot-unlock").all_inner_texts()[1:], locked_levels)
+
+    def test_warden_action_bar_rage_and_combat_text(self):
+        """A level-1 Warden fights a wolf: auto-attack builds rage, key 1 spends it on Heroic Strike."""
+        self.open("?debug")
+        self.enter_beside_wolf()
+        self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
+        expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text(re.compile(r"Rage \d+ / 100"))
+        self.page.keyboard.press("KeyF")
+        # The wolf closes in and two swings land within four seconds: hits build rage and combat
+        # text floats up for each damage event.
+        self.step(120)
+        self.assertGreaterEqual(self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)"), 15)
+        self.assertTrue(self.page.evaluate("window.__combatTexts.length"), "Combat text floated up")
+        before = self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)")
+        self.page.keyboard.press("Digit1")
+        self.step(1)
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-warden.png"))
+        self.assertLess(self.hud_number("[data-part=player-resource-text]", r"Rage (\d+)"), before)
+        self.page.locator("#class-hud .action-slot").first.hover()
+        expect(self.page.locator("[data-part=tooltip]")).to_contain_text("Heroic Strike")
+        expect(self.page.locator("[data-part=tooltip]")).to_contain_text("Melee range")
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-warden-tooltip.png"))
+        # Frames, dock and the corner HUD on a portrait phone and a short landscape screen.
+        for width, height in [(390, 844), (844, 390)]:
+            self.page.set_viewport_size({"width": width, "height": height})
+            self.frames(3)
+            self.page.screenshot(path=str(ARTIFACTS / f"class-kit-warden-{width}x{height}.png"))
+
+    def test_arcanist_action_bar_cast_bar_and_combat_text(self):
+        """A level-1 Arcanist targets a wolf and casts Firebolt with key 1: mana is spent, the cast bar
+        fills, damage text floats up and the target frame shows the wolf."""
+        self.open("?debug")
+        self.create_and_select("Dorian Voss", "Arcanist")
+        self.enter_beside_wolf()
+        self.assert_action_bar(["Lv 2", "Lv 4", "Lv 6"])
+        expect(self.page.locator("[data-part=player-resource-text]")).to_contain_text("Mana 110 / 110")
+        self.page.keyboard.press("Digit1")
+        self.step(3)
+        cast = self.page.locator("[data-part=cast]")
+        expect(cast).to_be_visible()
+        expect(self.page.locator("[data-part=cast-name]")).to_have_text("Firebolt")
+        self.assertEqual(self.page.locator("#class-hud .action-slot").first.get_attribute("data-state"), "casting")
+        expect(self.page.locator("#class-hud .action-slot").first).to_have_attribute("data-gcd", "true")
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-cast.png"))
+        # The two-second cast completes: mana is spent, the bolt lands and the cast bar clears.
+        self.step(60)
+        self.assertLess(self.hud_number("[data-part=player-resource-text]", r"Mana (\d+)"), 110)
+        self.assertTrue(self.page.evaluate("window.__combatTexts.length"), "Combat text floated up")
+        self.page.screenshot(path=str(ARTIFACTS / "class-kit-arcanist-hit.png"))
+        expect(cast).to_be_hidden()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -87,7 +87,7 @@ describe("ability input and HUD text", () => {
     const snapshot = caster();
     const bolt = { kind: "cast-started", source: WOLF, target: { kind: "player", id: 1 }, ability: 13, ticks: 45 } as const;
     expect(eventText(bolt, snapshot, catalog)).toBe("A creature begins Muck Bolt.");
-    expect(eventText({ kind: "error", code: "not-ready", target: null }, snapshot, catalog)).toBe("That is not ready yet.");
+    expect(eventText({ kind: "error", code: "not-ready", target: null }, snapshot, catalog)).toBe("That ability is not ready yet.");
   });
 });
 
