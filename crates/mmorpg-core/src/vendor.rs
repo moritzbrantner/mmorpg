@@ -223,12 +223,12 @@ impl ZoneSimulation {
             Trade::Sell { .. } => None,
         };
         let from = self.player_position(player_id)?;
-        let reach = i64::from(VENDOR_REACH_UNITS);
+        // i128 keeps the squared distance exact for any recovered i32 position.
         let [dx, dz] = [
-            i64::from(from.x) - i64::from(feet[0]),
-            i64::from(from.z) - i64::from(feet[1]),
+            i128::from(from.x) - i128::from(feet[0]),
+            i128::from(from.z) - i128::from(feet[1]),
         ];
-        if dx * dx + dz * dz > reach * reach {
+        if dx * dx + dz * dz > i128::from(VENDOR_REACH_UNITS).pow(2) {
             return refuse(ErrorCode::OutOfRange);
         }
         let player = self

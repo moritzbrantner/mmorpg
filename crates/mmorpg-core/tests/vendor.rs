@@ -488,3 +488,22 @@ fn pending_trades_continue_exactly_after_canonical_recovery() {
     // A stale or duplicate sequence cannot buy again.
     assert!(recovered.apply_command(1, 3, buy(BOOTS_OFFER, 1)).is_err());
 }
+
+#[test]
+fn a_recovered_player_at_the_coordinate_limit_is_out_of_reach_without_overflow() {
+    let zone = near(starter_bag(), 30);
+    let mut state = zone.snapshot().unwrap();
+    state.players[0].position = [i32::MIN + 100, 50, i32::MIN + 100];
+    let mut zone = ZoneSimulation::from_snapshot(state, Arc::clone(zone.content())).unwrap();
+    zone.apply_command(1, 1, buy(DAGGER_OFFER, 1)).unwrap();
+    // The trade resolves before physics moves the far-away player.
+    zone.advance_tick().unwrap();
+    assert_eq!(
+        zone.snapshot_for_player(1).unwrap().events,
+        [ZoneEvent::Error {
+            code: ErrorCode::OutOfRange,
+            target: Some(EntityRef::Npc(VENDOR))
+        }]
+    );
+    assert_eq!(zone.snapshot().unwrap().players[0].copper, 30);
+}
