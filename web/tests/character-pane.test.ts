@@ -157,3 +157,18 @@ test("a refusal whose feedback was lost unlocks once a later projection acknowle
   expect(state.feedback).toBe("The zone did not change your items.");
   expect(state.equipment?.[0]).toBe(2);
 });
+
+test("a confirmed change is not overwritten by other intents' errors in the same projection", () => {
+  const state = new BagState();
+  state.update(projection(0, 1n, "bagged"));
+  expect(state.equip(1)).not.toBeNull();
+  state.update(projection(1, 2n, "equipped", { events: [
+    { kind: "error", code: "inventory-full", target: { kind: "creature", id: 7 } },
+    { kind: "error", code: "too-many-intents", target: null },
+  ] }));
+  expect(state.feedback).toBe("Equipment updated.");
+  // Targeted errors never answer a bag or equipment intent.
+  expect(state.unequip(0)).not.toBeNull();
+  state.update(projection(2, 2n, null, { events: [{ kind: "error", code: "inventory-full", target: { kind: "creature", id: 7 } }] }));
+  expect(state.pending).toBe(true);
+});

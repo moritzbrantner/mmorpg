@@ -114,7 +114,9 @@ export class BagState {
       }
     }
     for (const event of snapshot.events) {
-      if (event.kind !== "error") {
+      // Bag and equipment refusals concern no unit; a targeted error answers another intent (a loot
+      // claim, a trade), and nothing reinterprets errors once the pending intent was answered.
+      if (event.kind !== "error" || event.target !== null || this.#pending === null) {
         continue;
       }
       const message = refusalMessage(event.code, this.#pending);

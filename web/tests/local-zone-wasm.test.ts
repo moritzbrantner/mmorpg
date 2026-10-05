@@ -164,7 +164,8 @@ describe("WASM local zone host", () => {
     }
     expect(bag.ready).toBe(true);
     expect(bag.slots?.[15]).toEqual({ itemId: 1, quantity: 2 });
-    source.sendCommand({ kind: "move-item", source: 15, destination: 1, quantity: 1 });
+    // Feedback answers the bag's own pending intent.
+    source.sendCommand(bag.move(15, 1, 1)!);
     const refused = source.advance(4 / 30);
     expect(refused[0]?.events).toContainEqual({ kind: "error", code: "invalid-inventory-move", target: null });
     expect(refused[3]?.events).toEqual([]);
