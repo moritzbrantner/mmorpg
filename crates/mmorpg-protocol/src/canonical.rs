@@ -7,8 +7,9 @@ use mmorpg_core::{
     AbilityId, Aura, CanonicalCreatureAbilities, CanonicalCreatureSnapshot,
     CanonicalPlayerAbilities, CanonicalPlayerCombat, CanonicalPlayerSnapshot,
     CanonicalZoneSnapshot, CastState, ClassChoice, Cooldown, CreatureAi, CreatureId, CreatureLife,
-    EntityRef, MAX_AURAS, MAX_COOLDOWNS, MAX_CREATURE_SPAWNS, MAX_EVENTS_PER_PLAYER,
-    MAX_PENDING_INTENTS, MAX_PLAYERS_PER_ZONE, MAX_THREAT_ENTRIES, PlayerIntent, ThreatEntry,
+    EntityRef, MAX_AURAS, MAX_CHAT_PER_TICK, MAX_COOLDOWNS, MAX_CREATURE_SPAWNS,
+    MAX_EVENTS_PER_PLAYER, MAX_PENDING_INTENTS, MAX_PLAYERS_PER_ZONE, MAX_THREAT_ENTRIES,
+    PlayerIntent, ThreatEntry,
 };
 
 use crate::ProtocolError;
@@ -33,6 +34,7 @@ const EQUIP_ITEM_INTENT: u8 = 10;
 const UNEQUIP_ITEM_INTENT: u8 = 11;
 const BUY_ITEM_INTENT: u8 = 12;
 const SELL_ITEM_INTENT: u8 = 13;
+const CHAT_INTENT: u8 = 14;
 const ALIVE: u8 = 1;
 const CORPSE: u8 = 2;
 const DESPAWNED: u8 = 3;
@@ -169,6 +171,11 @@ fn encode_player(
                 encode_trade_intent(payload, SELL_ITEM_INTENT, npc, bag_slot, quantity);
                 continue;
             }
+            PlayerIntent::Chat { channel, text } => {
+                payload.push(CHAT_INTENT);
+                crate::chat::encode_text(payload, channel, &text);
+                continue;
+            }
         };
         payload.push(code);
         encode_entity_ref(payload, target);
@@ -206,7 +213,17 @@ fn encode_player(
         payload.extend_from_slice(&cooldown.remaining.to_be_bytes());
     }
     encode_cast(payload, abilities.cast);
-    encode_auras(payload, &abilities.auras)
+    encode_auras(payload, &abilities.auras)?;
+    payload.extend_from_slice(&player.chat_ready_at.to_be_bytes());
+    payload.push(encode_u8_count(
+        player.chat.len(),
+        MAX_CHAT_PER_TICK,
+        "player heard too many chat lines",
+    )?);
+    for line in &player.chat {
+        crate::chat::encode_line(payload, line);
+    }
+    Ok(())
 }
 
 /// 17 bytes: ability (0 for none), elapsed ticks, target reference, point
@@ -440,6 +457,11 @@ fn decode_player(
             intents.push(PlayerIntent::ChooseClass { class, sex });
             continue;
         }
+        if code == CHAT_INTENT {
+            let (channel, text) = crate::chat::decode_text(payload, offset)?;
+            intents.push(PlayerIntent::Chat { channel, text });
+            continue;
+        }
         if code == BUY_ITEM_INTENT || code == SELL_ITEM_INTENT {
             let npc = mmorpg_core::NpcId::new(u32::from_be_bytes(take(payload, offset)?));
             let [index, high, low] = take(payload, offset)?;
@@ -535,7 +557,20 @@ fn decode_player(
         cast: decode_cast(payload, offset)?,
         auras: decode_auras(payload, offset)?,
     };
+    let chat_ready_at = u64::from_be_bytes(take(payload, offset)?);
+    let chat_count = decode_u8_count(
+        payload,
+        offset,
+        MAX_CHAT_PER_TICK,
+        "player heard too many chat lines",
+    )?;
+    let mut chat = Vec::with_capacity(chat_count);
+    for _ in 0..chat_count {
+        chat.push(crate::chat::decode_line(payload, offset)?);
+    }
     Ok(CanonicalPlayerSnapshot {
+        chat_ready_at,
+        chat,
         player_id,
         position,
         velocity,
@@ -691,6 +726,8 @@ mod tests {
             rng_state: u64::MAX,
             players: vec![
                 CanonicalPlayerSnapshot {
+                    chat_ready_at: 0,
+                    chat: Vec::new(),
                     copper: 0,
                     player_id: 7,
                     position: [10, 20, -30],
@@ -758,6 +795,8 @@ mod tests {
                     },
                 },
                 CanonicalPlayerSnapshot {
+                    chat_ready_at: 0,
+                    chat: Vec::new(),
                     copper: 0,
                     player_id: 8,
                     position: [0; 3],
@@ -1081,7 +1120,7 @@ mod tests {
         let mut cases = vec![
             (auto_attack, 2, "boolean field must be 0 or 1"),
             (intents, 17, "player has too many pending intents"),
-            (intents + 1, 14, "malformed pending intent"),
+            (intents + 1, 15, "malformed pending intent"),
         ];
         // The third intent (StartAttack) carries no target.
         cases.push((intents + 1 + 2 * 6 + 1, 2, "malformed pending intent"));

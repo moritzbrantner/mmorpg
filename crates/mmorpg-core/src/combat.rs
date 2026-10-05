@@ -134,6 +134,10 @@ impl ZoneSimulation {
                     equipment.unequip(bag, equipment_slot)
                 })?,
             PlayerIntent::Loot(claim) => self.claim_loot(player_id, claim)?,
+            PlayerIntent::Chat { channel, text } => {
+                self.speak(player_id, channel, text, now)?;
+                None
+            }
             PlayerIntent::BuyItem {
                 npc,
                 offer,

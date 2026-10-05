@@ -54,10 +54,11 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             // projection; these fixtures never choose a class, so no
             // cooldown or aura records follow. v10 adds the four-byte melee
             // damage range per projection and 20 equipment and stat bytes per
-            // self sheet. Physics/work fences remain unchanged.
+            // self sheet. v12 adds the one-byte chat count per projection;
+            // these fixtures never chat. Physics/work fences remain unchanged.
             let ceiling = if index == 6 {
                 ceiling
-                    + (22 + 23 + 4) * fixture.players * TICKS
+                    + (22 + 23 + 4 + 1) * fixture.players * TICKS
                     + (64 + 20) * fixture.players * (TICKS / 10)
                     + 21 * report.loot_sheets
             } else {
@@ -78,7 +79,8 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             assert_eq!(report.ai_evaluations, 59 * TICKS);
         }
         if fixture.crowded {
-            assert_eq!(report.max_projection_bytes, 1_077);
+            // Whole 21-byte records after the 105-byte fixed part fill 1,074 bytes.
+            assert_eq!(report.max_projection_bytes, 1_074);
             assert!(report.candidates_tested > 1_000_000);
         }
     }

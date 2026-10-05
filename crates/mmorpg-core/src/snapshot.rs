@@ -66,6 +66,10 @@ pub enum PlayerIntent {
         bag_slot: u8,
         quantity: u16,
     },
+    Chat {
+        channel: crate::ChatChannel,
+        text: crate::ChatText,
+    },
 }
 
 /// A creature's decision state.
@@ -188,6 +192,10 @@ pub struct CanonicalPlayerSnapshot {
     /// Equipped items; validated against the catalog by construction.
     pub equipment: crate::Equipment,
     pub combat: CanonicalPlayerCombat,
+    /// The first tick the player may speak again.
+    pub chat_ready_at: u64,
+    /// Chat lines the player heard this tick, at most [`crate::MAX_CHAT_PER_TICK`].
+    pub chat: Vec<crate::ChatLine>,
 }
 
 /// A creature; `position` is its body or corpse, zero once despawned, and
@@ -278,6 +286,8 @@ impl ZoneSimulation {
                             auras: state.auras.clone(),
                         },
                     },
+                    chat_ready_at: state.chat_ready_at,
+                    chat: state.chat.clone(),
                 })
             })
             .collect::<Result<Vec<_>, ZoneError>>()?;
@@ -413,6 +423,11 @@ impl ZoneSimulation {
         {
             return Err(ZoneError::new("player queues exceed their capacity"));
         }
+        if player.chat.len() > crate::MAX_CHAT_PER_TICK
+            || player.chat_ready_at > self.tick.saturating_add(crate::CHAT_INTERVAL_TICKS)
+        {
+            return Err(ZoneError::new("player chat state is out of range"));
+        }
         if combat.intents_dropped && combat.intents.len() != MAX_PENDING_INTENTS {
             return Err(ZoneError::new("only a full intent queue drops intents"));
         }
@@ -469,6 +484,8 @@ impl ZoneSimulation {
                 cooldowns: combat.abilities.cooldowns,
                 cast: combat.abilities.cast,
                 auras: combat.abilities.auras,
+                chat_ready_at: player.chat_ready_at,
+                chat: player.chat,
             },
         );
         Ok(())

@@ -66,6 +66,8 @@ fn zone_at(positions: &[[i32; 3]], definition: ZoneDefinition) -> ZoneSimulation
             inventory_changed_at: 0,
             equipment: mmorpg_core::Equipment::default(),
             combat: CanonicalPlayerCombat::default(),
+            chat_ready_at: 0,
+            chat: Vec::new(),
         })
         .collect();
     ZoneSimulation::from_snapshot(canonical, Arc::clone(empty.content())).unwrap()

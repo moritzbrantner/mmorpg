@@ -90,6 +90,7 @@ pub fn exhaustive_projection(
         target_of_target,
         target_detail: mmorpg_core::TargetDetail::default(),
         events: combat.events.clone(),
+        chat: Vec::new(),
         entities: relevant
             .into_iter()
             .take(MAX_VISIBLE_ENTITIES)

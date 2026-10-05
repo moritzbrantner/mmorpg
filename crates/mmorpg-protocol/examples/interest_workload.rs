@@ -66,6 +66,8 @@ fn measure(name: &str) -> Result<(), Box<dyn Error>> {
             inventory_changed_at: 0,
             equipment: mmorpg_core::Equipment::default(),
             combat: CanonicalPlayerCombat::default(),
+            chat_ready_at: 0,
+            chat: Vec::new(),
         });
     }
     let mut zone = ZoneSimulation::from_snapshot(canonical, Arc::clone(empty.content()))?;

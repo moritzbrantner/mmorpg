@@ -644,6 +644,7 @@ async fn fragmented_projection_reaches_the_native_client() {
         cooldowns: Vec::new(),
         auras: Vec::new(),
         events: Vec::new(),
+        chat: Vec::new(),
         entities: (0..MAX_WIRE_ENTITIES)
             .map(|index| EntitySnapshot {
                 kind: EntityKind::Player,
