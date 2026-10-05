@@ -100,7 +100,8 @@ pub const fn sell_price(item: ItemId) -> u32 {
 }
 
 /// Bram Tolliver's stock: the starter armour and weapons that humanoids
-/// also drop, at about four times their sale value.
+/// also drop, at about four times their sale value, and a cheap Worn
+/// Dagger that a new character's sold starter bag can just afford.
 #[must_use]
 pub fn starter_vendor_stock() -> VendorStock {
     let offer = |item, price| VendorOffer {
@@ -108,6 +109,7 @@ pub fn starter_vendor_stock() -> VendorStock {
         price,
     };
     VendorStock::new(&[
+        offer(2, 5),
         offer(9, 12),
         offer(8, 12),
         offer(7, 15),

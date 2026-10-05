@@ -76,6 +76,8 @@ pub enum Action {
     MoveItem,
     EquipItem,
     UnequipItem,
+    BuyItem,
+    SellItem,
     Loot,
     ChooseClass,
     UseAbility,
@@ -97,6 +99,8 @@ impl Action {
             Self::MoveItem => "move_item",
             Self::EquipItem => "equip_item",
             Self::UnequipItem => "unequip_item",
+            Self::BuyItem => "buy_item",
+            Self::SellItem => "sell_item",
             Self::Loot => "loot",
             Self::ChooseClass => "choose_class",
             Self::UseAbility => "use_ability",
@@ -118,6 +122,8 @@ impl Action {
             | Self::MoveItem
             | Self::EquipItem
             | Self::UnequipItem
+            | Self::BuyItem
+            | Self::SellItem
             | Self::Loot
             | Self::ChooseClass
             | Self::UseAbility
@@ -139,6 +145,8 @@ impl Action {
             | Self::MoveItem
             | Self::EquipItem
             | Self::UnequipItem
+            | Self::BuyItem
+            | Self::SellItem
             | Self::Loot
             | Self::ChooseClass
             | Self::UseAbility
@@ -176,8 +184,12 @@ pub struct Step {
     pub source_slot: Option<u8>,
     pub destination_slot: Option<u8>,
     pub quantity: Option<u16>,
-    /// `equip_item`: the bag slot, passed through unchanged.
+    /// `equip_item` and `sell_item`: the bag slot, passed through unchanged.
     pub bag_slot: Option<u8>,
+    /// `buy_item` and `sell_item`: the vendor's NPC ID, passed through unchanged.
+    pub npc: Option<u32>,
+    /// `buy_item`: the offer index in the vendor's stock, passed through unchanged.
+    pub offer: Option<u8>,
     /// `unequip_item`: the equipment slot (0 main hand … 5 feet), passed
     /// through unchanged.
     pub equipment_slot: Option<u8>,
@@ -355,17 +367,27 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             ));
         }
         let is_inventory_move = step.action == Action::MoveItem;
-        if [
-            step.source_slot.is_some(),
-            step.destination_slot.is_some(),
-            step.quantity.is_some(),
-        ]
-        .iter()
-        .any(|&present| present != is_inventory_move)
+        if [step.source_slot.is_some(), step.destination_slot.is_some()]
+            .iter()
+            .any(|&present| present != is_inventory_move)
         {
             return Err(format!(
-                "{at}: source_slot, destination_slot and quantity are required only for move_item"
+                "{at}: source_slot and destination_slot are required only for move_item"
             ));
+        }
+        let trades = matches!(step.action, Action::BuyItem | Action::SellItem);
+        if step.quantity.is_some() != (is_inventory_move || trades) {
+            return Err(format!(
+                "{at}: quantity is required only for move_item, buy_item and sell_item"
+            ));
+        }
+        if step.npc.is_some() != trades {
+            return Err(format!(
+                "{at}: npc is required only for buy_item and sell_item"
+            ));
+        }
+        if step.offer.is_some() != (step.action == Action::BuyItem) {
+            return Err(format!("{at}: offer is required only for buy_item"));
         }
         if [step.creature.is_some(), step.died_at.is_some()]
             .iter()
@@ -391,8 +413,10 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                 "{at}: class and sex are required only for choose_class"
             ));
         }
-        if step.bag_slot.is_some() != (step.action == Action::EquipItem) {
-            return Err(format!("{at}: bag_slot is required only for equip_item"));
+        if step.bag_slot.is_some() != matches!(step.action, Action::EquipItem | Action::SellItem) {
+            return Err(format!(
+                "{at}: bag_slot is required only for equip_item and sell_item"
+            ));
         }
         if step.equipment_slot.is_some() != (step.action == Action::UnequipItem) {
             return Err(format!(
@@ -670,6 +694,8 @@ impl Runner<'_> {
             | Action::MoveItem
             | Action::EquipItem
             | Action::UnequipItem
+            | Action::BuyItem
+            | Action::SellItem
             | Action::Loot
             | Action::ChooseClass
             | Action::UseAbility
@@ -802,6 +828,32 @@ impl Runner<'_> {
                 (
                     ZoneCommand::EquipItem { bag_slot },
                     format!(" bag_slot={bag_slot}"),
+                )
+            }
+            Action::BuyItem => {
+                let npc = step.npc.ok_or("buy_item npc is required")?;
+                let offer = step.offer.ok_or("buy_item offer is required")?;
+                let quantity = step.quantity.ok_or("buy_item quantity is required")?;
+                (
+                    ZoneCommand::BuyItem {
+                        npc: mmorpg_core::NpcId::new(npc),
+                        offer,
+                        quantity,
+                    },
+                    format!(" npc={npc} offer={offer} quantity={quantity}"),
+                )
+            }
+            Action::SellItem => {
+                let npc = step.npc.ok_or("sell_item npc is required")?;
+                let bag_slot = step.bag_slot.ok_or("sell_item bag_slot is required")?;
+                let quantity = step.quantity.ok_or("sell_item quantity is required")?;
+                (
+                    ZoneCommand::SellItem {
+                        npc: mmorpg_core::NpcId::new(npc),
+                        bag_slot,
+                        quantity,
+                    },
+                    format!(" npc={npc} bag_slot={bag_slot} quantity={quantity}"),
                 )
             }
             Action::UnequipItem => {

@@ -20,10 +20,11 @@ const TROUSERS: ItemId = ItemId::new(8);
 const BOOTS: ItemId = ItemId::new(9);
 const VENDOR: NpcId = NpcId::new(3);
 const GUARD: NpcId = NpcId::new(6);
-/// The starter stock lists Worn Boots first (12 copper) and the Militia
-/// Shortsword sixth (25 copper).
-const BOOTS_OFFER: u8 = 0;
-const SHORTSWORD_OFFER: u8 = 5;
+/// The starter stock lists the Worn Dagger first (5 copper), Worn Boots
+/// second (12 copper) and the Militia Shortsword seventh (25 copper).
+const DAGGER_OFFER: u8 = 0;
+const BOOTS_OFFER: u8 = 1;
+const SHORTSWORD_OFFER: u8 = 6;
 
 type Bag = [Option<ItemStack>; INVENTORY_SLOTS];
 /// Vendor position, bag, copper, health, command, refusal and its target.
@@ -210,7 +211,7 @@ fn every_refusal_leaves_bag_copper_and_revision_unchanged() {
             starter_bag(),
             99,
             None,
-            buy(7, 1),
+            buy(8, 1),
             ErrorCode::InvalidVendor,
             vendor,
         ),
@@ -438,11 +439,12 @@ fn vendor_stock_is_validated() {
         Err(VendorStockError::DuplicateItem)
     );
     let stock = starter_vendor_stock();
-    assert_eq!(stock.offers().len(), 7);
+    assert_eq!(stock.offers().len(), MAX_VENDOR_OFFERS);
+    assert_eq!(stock.offer(DAGGER_OFFER), Some(offer(2, 5)));
     assert_eq!(stock.offer(BOOTS_OFFER), Some(offer(9, 12)));
-    assert_eq!(stock.offer(1), Some(offer(8, 12)));
+    assert_eq!(stock.offer(2), Some(offer(8, 12)));
     assert_eq!(stock.offer(SHORTSWORD_OFFER), Some(offer(3, 25)));
-    assert_eq!(stock.offer(7), None);
+    assert_eq!(stock.offer(8), None);
     assert_eq!(sell_price(TROUSERS), 3);
 }
 

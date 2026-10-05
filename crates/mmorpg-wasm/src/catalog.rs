@@ -295,8 +295,8 @@ mod tests {
         assert_eq!(
             value["vendors"],
             json!([{"npc": 3, "offers": [
-                offer(9, 12), offer(8, 12), offer(7, 15), offer(6, 15),
-                offer(5, 20), offer(3, 25), offer(4, 25),
+                offer(2, 5), offer(9, 12), offer(8, 12), offer(7, 15),
+                offer(6, 15), offer(5, 20), offer(3, 25), offer(4, 25),
             ]}])
         );
         assert_eq!(value["contentRevision"], content.revision().to_string());
