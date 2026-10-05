@@ -89,9 +89,9 @@ describe("LocalZoneSource", () => {
     // Joining spent sequence 1 on the class choice; the default is a male Warden.
     expect(zone.joins).toEqual([[first, 2, 0], [second, 0, 1]]);
     expect(zone.submitted).toEqual([
-      { player: first, sequence: 2, bytes: "050101ff4000" },
+      { player: first, sequence: 2, bytes: "060101ff4000" },
       { player: first, sequence: 3, bytes: Buffer.from(encodeCommand({ kind: "jump" })).toString("hex") },
-      { player: second, sequence: 2, bytes: "0502" },
+      { player: second, sequence: 2, bytes: "0602" },
     ]);
     expect(zone.left).toEqual([first]);
   });
@@ -140,7 +140,7 @@ describe("LocalZoneSource", () => {
       zone.viewerOverride = null;
       expect(await source.join()).toBe(2);
       source.sendCommand({ kind: "jump" });
-      expect(zone.submitted).toEqual([{ player: 2, sequence: 2, bytes: "0502" }]);
+      expect(zone.submitted).toEqual([{ player: 2, sequence: 2, bytes: "0602" }]);
     }
   });
 });

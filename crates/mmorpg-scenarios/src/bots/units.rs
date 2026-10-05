@@ -258,6 +258,8 @@ pub const fn error_code_name(code: ErrorCode) -> &'static str {
         ErrorCode::AlreadyCasting => "already_casting",
         ErrorCode::InvalidClass => "invalid_class",
         ErrorCode::NotEquippable => "not_equippable",
+        ErrorCode::InvalidVendor => "invalid_vendor",
+        ErrorCode::NotEnoughMoney => "not_enough_money",
     }
 }
 
@@ -285,6 +287,8 @@ fn parse_error_code(name: &str) -> Option<ErrorCode> {
         "already_casting" => ErrorCode::AlreadyCasting,
         "invalid_class" => ErrorCode::InvalidClass,
         "not_equippable" => ErrorCode::NotEquippable,
+        "invalid_vendor" => ErrorCode::InvalidVendor,
+        "not_enough_money" => ErrorCode::NotEnoughMoney,
         _ => return None,
     })
 }

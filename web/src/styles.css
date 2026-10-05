@@ -788,7 +788,7 @@ kbd {
 }
 
 
-.bags-panel, .loot-panel, .character-panel {
+.bags-panel, .loot-panel, .character-panel, .vendor-panel {
   position: fixed;
   z-index: 4;
   top: 5rem;
@@ -805,21 +805,21 @@ kbd {
 .loot-panel { background: #0c1215; }
 .bags-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .bags-heading h2 { margin: 0; color: var(--gold-bright); font-size: 1.1rem; }
-.bags-panel p, .loot-panel p, .character-panel p { font-size: .8rem; line-height: 1.4; }
+.bags-panel p, .loot-panel p, .character-panel p, .vendor-panel p { font-size: .8rem; line-height: 1.4; }
 .bag-slots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .4rem; }
-.bags-panel button, .loot-panel button, .character-panel button { color: #edf4ee; border: 1px solid var(--panel-border); border-radius: .35rem; background: rgb(255 255 255 / 5%); padding: .5rem; cursor: pointer; }
+.bags-panel button, .loot-panel button, .character-panel button, .vendor-panel button { color: #edf4ee; border: 1px solid var(--panel-border); border-radius: .35rem; background: rgb(255 255 255 / 5%); padding: .5rem; cursor: pointer; }
 .bag-slot { min-height: 3.5rem; font-size: .75rem; overflow-wrap: anywhere; }
 .bag-slot[aria-pressed=true] { border-color: var(--gold-bright); background: rgb(198 168 95 / 18%); }
-.bags-panel button:disabled, .loot-panel button:disabled, .character-panel button:disabled { opacity: .55; cursor: default; }
-.bags-panel button:focus-visible, .loot-panel button:focus-visible, .character-panel button:focus-visible, .bag-quantity input:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
+.bags-panel button:disabled, .loot-panel button:disabled, .character-panel button:disabled, .vendor-panel button:disabled { opacity: .55; cursor: default; }
+.bags-panel button:focus-visible, .loot-panel button:focus-visible, .character-panel button:focus-visible, .vendor-panel button:focus-visible, .bag-quantity input:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
 .bag-quantity { display: flex; align-items: center; gap: .7rem; font-size: .85rem; }
 .bag-quantity input { width: 5rem; font: inherit; padding: .4rem; }
-#bag-feedback, #loot-feedback, #character-feedback { min-height: 1.2rem; color: var(--gold-bright); }
+#bag-feedback, #loot-feedback, #character-feedback, #vendor-feedback { min-height: 1.2rem; color: var(--gold-bright); }
 @media (max-width: 480px) {
-  /* Below the four stacked toolbar buttons. */
-  .bags-panel, .loot-panel, .character-panel { top: 12.5rem; max-height: calc(100dvh - 13.5rem); }
+  /* Below the five stacked toolbar buttons. */
+  .bags-panel, .loot-panel, .character-panel, .vendor-panel { top: 15rem; max-height: calc(100dvh - 16rem); }
   .bag-slots { gap: .25rem; }
-  .bags-panel, .loot-panel, .character-panel { padding: .7rem; }
+  .bags-panel, .loot-panel, .character-panel, .vendor-panel { padding: .7rem; }
 }
 /* The character pane opens beside the bags on wide screens so gear can be compared while equipping. */
 .character-panel { width: min(24rem, calc(100vw - 2rem)); background: #0c1215; }
@@ -833,3 +833,8 @@ kbd {
 .character-stats dt { color: #b7c2bb; }
 .character-stats dd { margin: 0; font-variant-numeric: tabular-nums; }
 #bag-equip { margin-top: .5rem; }
+.vendor-panel { background: #0c1215; }
+.vendor-panel h3 { margin: .7rem 0 .3rem; color: var(--gold-bright); font-size: .9rem; }
+.vendor-list { display: grid; gap: .35rem; margin: 0; padding: 0; list-style: none; }
+.vendor-list li { display: flex; align-items: center; justify-content: space-between; gap: .6rem; min-height: 2.4rem; padding: .25rem .5rem; border: 1px solid var(--panel-border); border-radius: .35rem; font-size: .8rem; overflow-wrap: anywhere; }
+.vendor-list button { flex: none; padding: .3rem .6rem; }

@@ -22,11 +22,11 @@ export class BagsPanel {
   readonly #state = new BagState();
   readonly #elements: BagsElements;
   readonly #buttons: HTMLButtonElement[];
-  readonly #send: (command: WorldCommand) => void;
+  readonly #send: (command: WorldCommand, onSent: (sequence: number | null) => void) => void;
   #catalog: ContentCatalog | null = null;
   #selected: number | null = null;
 
-  constructor(elements: BagsElements, send: (command: WorldCommand) => void) {
+  constructor(elements: BagsElements, send: (command: WorldCommand, onSent: (sequence: number | null) => void) => void) {
     this.#elements = elements;
     this.#send = send;
     this.#buttons = Array.from({ length: 16 }, (_, slot) => {
@@ -41,7 +41,7 @@ export class BagsPanel {
     elements.equip.addEventListener("click", () => {
       const command = this.#selected === null ? null : this.#state.equip(this.#selected);
       if (command) {
-        this.#send(command);
+        this.#send(command, (sequence) => this.#state.sent(sequence));
         this.#selected = null;
       }
       this.#render();
@@ -126,7 +126,7 @@ export class BagsPanel {
     } else {
       const command = this.#state.move(this.#selected, slot, this.#elements.quantity.valueAsNumber);
       if (command) {
-        this.#send(command);
+        this.#send(command, (sequence) => this.#state.sent(sequence));
         this.#selected = null;
       } else {
         this.#elements.quantity.reportValidity();

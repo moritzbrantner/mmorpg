@@ -5,8 +5,8 @@
 //! [`CATALOG_FORMAT`], version [`CATALOG_FORMAT_VERSION`]) exports those
 //! tables of the hosted [`ZoneContent`] as compact JSON: creature templates
 //! (name, family, behaviour, levels, elite, body size), NPCs (name, role,
-//! level), areas (name), items (name, stack limit, equipment slot, stats),
-//! classes (name, resource)
+//! level), areas (name), items (name, stack limit, equipment slot, stats,
+//! sale value), vendors (NPC and priced offers), classes (name, resource)
 //! and abilities (name, user, unlock level, cost, cast time, cooldown, aura). It carries the content
 //! revision and fingerprint,
 //! so a client can refuse a catalog of other content. Combat numbers,
@@ -20,7 +20,7 @@ use serde::Serialize;
 use crate::host::hosted_content;
 
 pub const CATALOG_FORMAT: &str = "mmorpg.catalog";
-pub const CATALOG_FORMAT_VERSION: u32 = 4;
+pub const CATALOG_FORMAT_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +40,23 @@ pub struct CatalogExport {
     pub classes: Vec<ClassExport>,
     pub ability_catalog_revision: String,
     pub abilities: Vec<AbilityExport>,
+    /// `"0"` for content without vendors.
+    pub vendor_catalog_revision: String,
+    /// Ordered by NPC ID; offer order is the wire offer index.
+    pub vendors: Vec<VendorExport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VendorExport {
+    pub npc: u32,
+    pub offers: Vec<VendorOfferExport>,
+}
+
+/// One unit of `item` costs `price` copper.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct VendorOfferExport {
+    pub item: u16,
+    pub price: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -108,6 +125,8 @@ pub struct ItemExport {
     /// The camel-case equipment slot name, or `null` for plain bag items.
     pub slot: Option<&'static str>,
     pub stats: StatsExport,
+    /// Copper a vendor pays for one unit.
+    pub sell_price: u32,
 }
 
 /// The attributes an item adds while equipped.
@@ -140,6 +159,23 @@ pub fn catalog(content: &ZoneContent) -> CatalogExport {
                     agility: item.stats.agility,
                     intellect: item.stats.intellect,
                 },
+                sell_price: mmorpg_core::sell_price(item.id),
+            })
+            .collect(),
+        vendor_catalog_revision: content.vendor_revision().to_string(),
+        vendors: content
+            .vendors()
+            .iter()
+            .map(|(npc, stock)| VendorExport {
+                npc: npc.get(),
+                offers: stock
+                    .offers()
+                    .iter()
+                    .map(|offer| VendorOfferExport {
+                        item: offer.item.get(),
+                        price: offer.price,
+                    })
+                    .collect(),
             })
             .collect(),
         content_fingerprint: format!("{:016x}", content.fingerprint()),
@@ -232,7 +268,8 @@ mod tests {
         let stats = |stamina, strength, agility, intellect| json!({"stamina": stamina, "strength": strength, "agility": agility, "intellect": intellect});
         let item = |id, name, slot, stats| {
             let max_stack = if id == 1 { 20 } else { 1 };
-            json!({"id": id, "name": name, "maxStack": max_stack, "slot": slot, "stats": stats})
+            let sell_price = mmorpg_core::sell_price(mmorpg_core::ItemId::new(id));
+            json!({"id": id, "name": name, "maxStack": max_stack, "slot": slot, "stats": stats, "sellPrice": sell_price})
         };
         assert_eq!(
             value["items"],
@@ -252,6 +289,15 @@ mod tests {
                 item(8, "Padded Trousers", json!("legs"), stats(1, 0, 0, 0)),
                 item(9, "Worn Boots", json!("feet"), stats(1, 0, 2, 0)),
             ])
+        );
+        assert_eq!(value["vendorCatalogRevision"], "1");
+        let offer = |item, price| json!({"item": item, "price": price});
+        assert_eq!(
+            value["vendors"],
+            json!([{"npc": 3, "offers": [
+                offer(2, 5), offer(9, 12), offer(8, 12), offer(7, 15),
+                offer(6, 15), offer(5, 20), offer(3, 25), offer(4, 25),
+            ]}])
         );
         assert_eq!(value["contentRevision"], content.revision().to_string());
         assert_eq!(

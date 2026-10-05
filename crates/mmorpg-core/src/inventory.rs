@@ -276,6 +276,31 @@ impl Inventory {
         Ok(())
     }
 
+    /// Takes `quantity` items from one occupied slot, emptying it when the
+    /// whole stack goes. Invalid slots, empty slots, zero or excess
+    /// quantities leave the bag unchanged.
+    pub fn remove(&mut self, slot: usize, quantity: u16) -> Result<ItemStack, InventoryError> {
+        let stack = self
+            .slots
+            .get(slot)
+            .ok_or(InventoryError::InvalidSlot)?
+            .ok_or(InventoryError::EmptySlot)?;
+        if quantity == 0 {
+            return Err(InventoryError::InvalidQuantity);
+        }
+        if quantity > stack.quantity {
+            return Err(InventoryError::InsufficientItems);
+        }
+        self.slots[slot] = (quantity < stack.quantity).then_some(ItemStack {
+            item: stack.item,
+            quantity: stack.quantity - quantity,
+        });
+        Ok(ItemStack {
+            item: stack.item,
+            quantity,
+        })
+    }
+
     /// Move/split into an empty slot or merge with the same item. A complete
     /// stack moved onto a different item swaps slots; a partial swap is refused.
     /// A validated move to the same slot is a no-op. No partial merges occur.

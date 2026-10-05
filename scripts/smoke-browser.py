@@ -885,6 +885,81 @@ class BrowserAcceptance(unittest.TestCase):
         expect(pane).to_be_hidden()
         expect(self.page.locator("#character-select")).to_be_hidden()
 
+    def test_vendor_window_sells_and_buys_at_bram_tolliver(self):
+        """Walk the vendor-resume scenario's route to the inn, sell the starter bag and buy the dagger back."""
+        self.open("?debug")
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          window.__vendorAdvance = source.advance;
+          source.advance = () => [];
+        }""")
+        self.enter_world(ticking=False)
+        self.page.keyboard.press("v")
+        panel = self.page.get_by_role("complementary", name="Vendor", exact=True)
+        expect(panel).to_be_visible()
+        expect(self.page.locator("#vendor-status")).to_contain_text("Move within 5 m of Innkeeper Bram Tolliver")
+        self.page.screenshot(path=str(ARTIFACTS / "vendor-out-of-reach.png"))
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          const moves = new Map([[0,[1,16384]],[145,[1,32768]],[150,[0,32768]]]);
+          for (let tick = 0; tick < 155; tick++) {
+            const move = moves.get(tick);
+            if (move) source.sendCommand({kind:'move',forward:move[0],strafe:0,facing:move[1]});
+            window.__vendorAdvance.call(source, 1 / 30);
+          }
+          window.__vendorQueue = [];
+          source.advance = () => window.__vendorQueue.splice(0);
+          window.__vendorStep = ticks => {
+            for (let tick = 0; tick < ticks; tick++) window.__vendorQueue.push(...window.__vendorAdvance.call(source, 1 / 30));
+          };
+        }""")
+        def step(ticks=2):
+            self.frames(2)
+            self.page.evaluate("ticks => window.__vendorStep(ticks)", ticks)
+            self.frames(3)
+        step()
+        expect(self.page.get_by_role("heading", name="Innkeeper Bram Tolliver")).to_be_visible()
+        expect(self.page.locator("#vendor-status")).to_have_text("Copper: 0")
+        offers = self.page.locator("#vendor-offers li")
+        self.assertEqual(offers.count(), 8)
+        expect(offers.nth(0)).to_contain_text("Worn Dagger · 5 copper (+2 Strength, +2 Agility)")
+        expect(self.page.get_by_role("button", name="Buy Worn Dagger for 5 copper")).to_be_disabled()
+        sales = self.page.locator("#vendor-sales li")
+        expect(sales).to_have_count(2)
+        expect(sales.nth(0)).to_contain_text("Torn Fur × 3 · 3 copper")
+        self.page.screenshot(path=str(ARTIFACTS / "vendor-desktop.png"))
+        self.page.get_by_role("button", name="Sell Torn Fur × 3 for 3 copper").click()
+        step()
+        expect(self.page.locator("#vendor-feedback")).to_have_text("Sold.")
+        expect(self.page.locator("#vendor-status")).to_have_text("Copper: 3")
+        expect(sales).to_have_count(1)
+        self.page.get_by_role("button", name="Sell Worn Dagger × 1 for 2 copper").click()
+        step()
+        expect(self.page.locator("#vendor-status")).to_have_text("Copper: 5")
+        expect(sales).to_have_count(0)
+        self.page.get_by_role("button", name="Buy Worn Dagger for 5 copper").click()
+        step()
+        expect(self.page.locator("#vendor-feedback")).to_have_text("Purchased.")
+        expect(self.page.locator("#vendor-status")).to_have_text("Copper: 0")
+        expect(sales.nth(0)).to_contain_text("Worn Dagger × 1 · 2 copper")
+        expect(self.page.locator("#copper-status")).to_have_text("Copper: 0")
+        for width, height in [(390, 844), (640, 360)]:
+            self.page.set_viewport_size({"width": width, "height": height})
+            box = panel.bounding_box()
+            self.assertIsNotNone(box)
+            self.assertGreaterEqual(box["x"], 0)
+            self.assertLessEqual(box["x"] + box["width"], width)
+            self.assertLessEqual(box["y"] + box["height"], height)
+            self.assertFalse(panel.evaluate("p => p.scrollWidth > p.clientWidth"))
+            close = self.page.get_by_role("button", name="Close vendor")
+            self.assertTrue(close.evaluate("b => { const r = b.getBoundingClientRect(); return b.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); }"),
+                            "The HUD must not cover the vendor window on a small viewport")
+            self.page.screenshot(path=str(ARTIFACTS / f"vendor-{width}x{height}.png"))
+        self.page.get_by_role("button", name="Close vendor").focus()
+        self.page.keyboard.press("Escape")
+        expect(panel).to_be_hidden()
+        expect(self.page.locator("#character-select")).to_be_hidden()
+
     def test_character_creation_classes_sex_and_roster_persistence(self):
         self.open()
         self.page.get_by_role("button", name="Create character", exact=True).click()

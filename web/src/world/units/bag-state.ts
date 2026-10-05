@@ -42,10 +42,8 @@ export class BagState {
   #feedback = "";
   #sentRevision: bigint | null = null;
   #pending: PendingItemIntent | null = null;
-  /** The acknowledged sequence and tick when the pending intent was sent. */
-  #sentAcknowledged = 0;
-  #sentTick = -1n;
-  #acknowledged = 0;
+  /** The sequence the pending intent was sent under, once the source assigned it. */
+  #sentSequence: number | null = null;
 
   get slots(): readonly InventorySlot[] | null { return this.#slots; }
   /** Item IDs by equipment slot, received with the bag under the same revision. */
@@ -86,9 +84,7 @@ export class BagState {
     this.#feedback = "";
     this.#sentRevision = null;
     this.#pending = null;
-    this.#sentAcknowledged = 0;
-    this.#sentTick = -1n;
-    this.#acknowledged = 0;
+    this.#sentSequence = null;
   }
 
   update(snapshot: ZoneSnapshot): boolean {
@@ -99,7 +95,6 @@ export class BagState {
     }
     this.#identity = identity;
     this.#tick = snapshot.tick;
-    this.#acknowledged = snapshot.acknowledgedSequence;
     this.#revision = snapshot.inventoryRevision;
     this.#dead = snapshot.viewer.dead;
     if (snapshot.inventory !== null) {
@@ -126,15 +121,32 @@ export class BagState {
         this.#pending = null;
       }
     }
-    // Events are lossy: once a later projection acknowledges the intent without changing the bag,
-    // it was refused even if its feedback was lost, so the controls unlock (as for loot claims).
-    if (this.#pending !== null && snapshot.tick > this.#sentTick && snapshot.acknowledgedSequence > this.#sentAcknowledged &&
+    // Events are lossy: once a projection acknowledges the intent's own sequence without changing
+    // the bag, it was refused even if its feedback was lost, so the controls unlock.
+    if (this.#pending !== null && this.#sentSequence !== null && snapshot.acknowledgedSequence >= this.#sentSequence &&
         snapshot.inventoryRevision === this.#sentRevision) {
       this.#feedback = "The zone did not change your items.";
       this.#sentRevision = null;
       this.#pending = null;
     }
     return true;
+  }
+
+  /**
+   * Records the sequence the pending intent was sent under; `null` means the source dropped it, so
+   * nothing will answer and the controls unlock at once.
+   */
+  sent(sequence: number | null): void {
+    if (this.#pending === null) {
+      return;
+    }
+    if (sequence === null) {
+      this.#feedback = "That item action was not sent. Your items are unchanged.";
+      this.#sentRevision = null;
+      this.#pending = null;
+      return;
+    }
+    this.#sentSequence = sequence;
   }
 
   move(source: number, destination: number, quantity: number): WorldCommand | null {
@@ -174,7 +186,6 @@ export class BagState {
     this.#feedback = feedback;
     this.#sentRevision = this.#revision;
     this.#pending = kind;
-    this.#sentAcknowledged = this.#acknowledged;
-    this.#sentTick = this.#tick;
+    this.#sentSequence = null;
   }
 }

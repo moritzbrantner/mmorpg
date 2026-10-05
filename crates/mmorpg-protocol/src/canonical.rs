@@ -31,6 +31,8 @@ const CANCEL_CAST_INTENT: u8 = 8;
 const CHOOSE_CLASS_INTENT: u8 = 9;
 const EQUIP_ITEM_INTENT: u8 = 10;
 const UNEQUIP_ITEM_INTENT: u8 = 11;
+const BUY_ITEM_INTENT: u8 = 12;
+const SELL_ITEM_INTENT: u8 = 13;
 const ALIVE: u8 = 1;
 const CORPSE: u8 = 2;
 const DESPAWNED: u8 = 3;
@@ -149,6 +151,22 @@ fn encode_player(
             }
             PlayerIntent::UnequipItem { equipment_slot } => {
                 payload.extend_from_slice(&[UNEQUIP_ITEM_INTENT, equipment_slot]);
+                continue;
+            }
+            PlayerIntent::BuyItem {
+                npc,
+                offer,
+                quantity,
+            } => {
+                encode_trade_intent(payload, BUY_ITEM_INTENT, npc, offer, quantity);
+                continue;
+            }
+            PlayerIntent::SellItem {
+                npc,
+                bag_slot,
+                quantity,
+            } => {
+                encode_trade_intent(payload, SELL_ITEM_INTENT, npc, bag_slot, quantity);
                 continue;
             }
         };
@@ -422,6 +440,25 @@ fn decode_player(
             intents.push(PlayerIntent::ChooseClass { class, sex });
             continue;
         }
+        if code == BUY_ITEM_INTENT || code == SELL_ITEM_INTENT {
+            let npc = mmorpg_core::NpcId::new(u32::from_be_bytes(take(payload, offset)?));
+            let [index, high, low] = take(payload, offset)?;
+            let quantity = u16::from_be_bytes([high, low]);
+            intents.push(if code == BUY_ITEM_INTENT {
+                PlayerIntent::BuyItem {
+                    npc,
+                    offer: index,
+                    quantity,
+                }
+            } else {
+                PlayerIntent::SellItem {
+                    npc,
+                    bag_slot: index,
+                    quantity,
+                }
+            });
+            continue;
+        }
         if code == EQUIP_ITEM_INTENT {
             let [bag_slot] = take(payload, offset)?;
             intents.push(PlayerIntent::EquipItem { bag_slot });
@@ -617,6 +654,20 @@ fn decode_creature(
         loot,
         abilities,
     })
+}
+
+/// A pending trade: code, NPC (u32), offer or bag slot (u8), quantity (u16).
+fn encode_trade_intent(
+    payload: &mut Vec<u8>,
+    code: u8,
+    npc: mmorpg_core::NpcId,
+    index: u8,
+    quantity: u16,
+) {
+    payload.push(code);
+    payload.extend_from_slice(&npc.get().to_be_bytes());
+    payload.push(index);
+    payload.extend_from_slice(&quantity.to_be_bytes());
 }
 
 #[cfg(test)]
@@ -989,6 +1040,38 @@ mod tests {
     }
 
     #[test]
+    fn pending_trades_round_trip_with_exact_records() {
+        let mut snapshot = snapshot();
+        let npc = mmorpg_core::NpcId::new(0x0102_0304);
+        snapshot.players[0].combat.intents = vec![
+            PlayerIntent::BuyItem {
+                npc,
+                offer: 6,
+                quantity: 0x0a0b,
+            },
+            PlayerIntent::SellItem {
+                npc: mmorpg_core::NpcId::new(3),
+                bag_slot: 15,
+                quantity: u16::MAX,
+            },
+        ];
+        let encoded = encode_canonical_snapshot(&snapshot).unwrap();
+        assert_eq!(decode_canonical_snapshot(&encoded).unwrap(), snapshot);
+        let buy = [BUY_ITEM_INTENT, 1, 2, 3, 4, 6, 0x0a, 0x0b];
+        let sell = [SELL_ITEM_INTENT, 0, 0, 0, 3, 15, 0xff, 0xff];
+        let records: Vec<u8> = [buy, sell].concat();
+        assert!(
+            encoded
+                .windows(records.len())
+                .any(|window| window == records.as_slice()),
+            "pending trades are 8-byte records"
+        );
+        for length in 0..encoded.len() {
+            assert!(decode_canonical_snapshot(&encoded[..length]).is_err());
+        }
+    }
+
+    #[test]
     fn canonical_decoding_rejects_malformed_unit_state() {
         let encoded = encode_canonical_snapshot(&snapshot()).unwrap();
         // Player 7's auto-attack flag follows its target reference.
@@ -998,7 +1081,7 @@ mod tests {
         let mut cases = vec![
             (auto_attack, 2, "boolean field must be 0 or 1"),
             (intents, 17, "player has too many pending intents"),
-            (intents + 1, 12, "malformed pending intent"),
+            (intents + 1, 14, "malformed pending intent"),
         ];
         // The third intent (StartAttack) carries no target.
         cases.push((intents + 1 + 2 * 6 + 1, 2, "malformed pending intent"));

@@ -100,14 +100,14 @@ export type CharacterElements = {
 export class CharacterPane {
   readonly #elements: CharacterElements;
   readonly #state: BagState;
-  readonly #send: (command: WorldCommand) => void;
+  readonly #send: (command: WorldCommand, onSent: (sequence: number | null) => void) => void;
   readonly #slotText: HTMLElement[];
   readonly #unequip: HTMLButtonElement[];
   readonly #values: HTMLElement[];
   #catalog: ContentCatalog | null = null;
   #viewer: ViewerState | null = null;
 
-  constructor(elements: CharacterElements, state: BagState, send: (command: WorldCommand) => void) {
+  constructor(elements: CharacterElements, state: BagState, send: (command: WorldCommand, onSent: (sequence: number | null) => void) => void) {
     this.#elements = elements;
     this.#state = state;
     this.#send = send;
@@ -125,7 +125,7 @@ export class CharacterPane {
       button.addEventListener("click", () => {
         const command = this.#state.unequip(slot);
         if (command) {
-          this.#send(command);
+          this.#send(command, (sequence) => this.#state.sent(sequence));
         }
         this.render();
       });

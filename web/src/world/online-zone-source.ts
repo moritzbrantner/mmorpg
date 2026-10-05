@@ -166,12 +166,12 @@ export class OnlineZoneSource implements WorldSource {
     this.#phase = { kind: "idle" };
   }
 
-  sendCommand(command: WorldCommand): void {
+  sendCommand(command: WorldCommand): number | null {
     this.#reportFailure();
     const phase = this.#phase;
     if (phase.kind === "reconnecting") {
       // Intent made during an interruption is dropped, never replayed after the resume.
-      return;
+      return null;
     }
     if (phase.kind !== "connected") {
       throw new Error("Join the world before sending commands.");
@@ -180,8 +180,9 @@ export class OnlineZoneSource implements WorldSource {
     if (command.kind === "move") {
       this.#facing = command.facing;
     }
-    this.#outbox.submit(payload, deliveryOf(command));
+    const sequence = this.#outbox.submit(payload, deliveryOf(command));
     this.#flush();
+    return sequence;
   }
 
   advance(): readonly ZoneSnapshot[] {

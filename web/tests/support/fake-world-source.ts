@@ -31,9 +31,10 @@ export class FakeWorldSource implements WorldSource {
     this.#latest = null;
   }
 
-  sendCommand(command: WorldCommand): void {
+  sendCommand(command: WorldCommand): number {
     if (this.#player === null) throw new Error("not joined");
     this.sent.push({ player: this.#player, command });
+    return this.sent.length;
   }
 
   advance(deltaSeconds: number): void {

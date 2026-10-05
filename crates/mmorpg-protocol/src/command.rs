@@ -1,13 +1,14 @@
 //! Command wire version 4 added ability use (tag 9), cast cancellation
-//! (tag 10) and the class choice (tag 11); version 5 adds equipping
-//! (tag 12) and unequipping (tag 13).
+//! (tag 10) and the class choice (tag 11); version 5 added equipping
+//! (tag 12) and unequipping (tag 13); version 6 adds vendor purchases
+//! (tag 14) and sales (tag 15).
 
-use mmorpg_core::ZoneCommand;
+use mmorpg_core::{NpcId, ZoneCommand};
 
 use crate::ProtocolError;
 use crate::wire::{decode_entity_ref, encode_entity_ref};
 
-pub const COMMAND_WIRE_VERSION: u8 = 5;
+pub const COMMAND_WIRE_VERSION: u8 = 6;
 
 const MOVE_TAG: u8 = 1;
 const JUMP_TAG: u8 = 2;
@@ -22,6 +23,10 @@ const CANCEL_CAST_TAG: u8 = 10;
 const CHOOSE_CLASS_TAG: u8 = 11;
 const EQUIP_ITEM_TAG: u8 = 12;
 const UNEQUIP_ITEM_TAG: u8 = 13;
+const BUY_ITEM_TAG: u8 = 14;
+const SELL_ITEM_TAG: u8 = 15;
+/// Version, tag, NPC (u32), offer or bag slot (u8), quantity (u16).
+const TRADE_COMMAND_BYTES: usize = 9;
 const USE_ABILITY_COMMAND_BYTES: usize = 8;
 const CHOOSE_CLASS_COMMAND_BYTES: usize = 4;
 const MOVE_COMMAND_BYTES: usize = 6;
@@ -74,6 +79,16 @@ pub fn encode_command(command: ZoneCommand) -> Vec<u8> {
         ZoneCommand::StartAttack => vec![COMMAND_WIRE_VERSION, START_ATTACK_TAG],
         ZoneCommand::StopAttack => vec![COMMAND_WIRE_VERSION, STOP_ATTACK_TAG],
         ZoneCommand::ReleaseSpirit => vec![COMMAND_WIRE_VERSION, RELEASE_SPIRIT_TAG],
+        ZoneCommand::BuyItem {
+            npc,
+            offer,
+            quantity,
+        } => encode_trade(BUY_ITEM_TAG, npc, offer, quantity),
+        ZoneCommand::SellItem {
+            npc,
+            bag_slot,
+            quantity,
+        } => encode_trade(SELL_ITEM_TAG, npc, bag_slot, quantity),
         ZoneCommand::MoveItem {
             source,
             destination,
@@ -90,6 +105,29 @@ pub fn encode_command(command: ZoneCommand) -> Vec<u8> {
             ]
         }
     }
+}
+
+fn encode_trade(tag: u8, npc: NpcId, index: u8, quantity: u16) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(TRADE_COMMAND_BYTES);
+    payload.extend_from_slice(&[COMMAND_WIRE_VERSION, tag]);
+    payload.extend_from_slice(&npc.get().to_be_bytes());
+    payload.push(index);
+    payload.extend_from_slice(&quantity.to_be_bytes());
+    payload
+}
+
+/// The NPC, offer or bag slot, and quantity of a 9-byte trade command.
+fn decode_trade(payload: &[u8], name: &str) -> Result<(NpcId, u8, u16), ProtocolError> {
+    let [_, _, n0, n1, n2, n3, index, q0, q1] = payload else {
+        return Err(ProtocolError::new(format!(
+            "{name} command payload must be exactly 9 bytes"
+        )));
+    };
+    Ok((
+        NpcId::new(u32::from_be_bytes([*n0, *n1, *n2, *n3])),
+        *index,
+        u16::from_be_bytes([*q0, *q1]),
+    ))
 }
 
 pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
@@ -208,6 +246,22 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
                 equipment_slot: *equipment_slot,
             })
         }
+        BUY_ITEM_TAG => {
+            let (npc, offer, quantity) = decode_trade(payload, "buy item")?;
+            Ok(ZoneCommand::BuyItem {
+                npc,
+                offer,
+                quantity,
+            })
+        }
+        SELL_ITEM_TAG => {
+            let (npc, bag_slot, quantity) = decode_trade(payload, "sell item")?;
+            Ok(ZoneCommand::SellItem {
+                npc,
+                bag_slot,
+                quantity,
+            })
+        }
         CANCEL_CAST_TAG => bare(ZoneCommand::CancelCast),
         JUMP_TAG => bare(ZoneCommand::Jump),
         START_ATTACK_TAG => bare(ZoneCommand::StartAttack),
@@ -229,47 +283,63 @@ mod tests {
             strafe: 1,
             facing: 0xabcd,
         };
-        assert_eq!(encode_command(movement), [5, 1, 0xff, 1, 0xab, 0xcd]);
-        assert_eq!(encode_command(ZoneCommand::Jump), [5, 2]);
+        assert_eq!(encode_command(movement), [6, 1, 0xff, 1, 0xab, 0xcd]);
+        assert_eq!(encode_command(ZoneCommand::Jump), [6, 2]);
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(Some(EntityRef::Creature(
                 CreatureId::new(0x0102_0304)
             )))),
-            [5, 3, 2, 1, 2, 3, 4]
+            [6, 3, 2, 1, 2, 3, 4]
         );
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(None)),
-            [5, 3, 0, 0, 0, 0, 0]
+            [6, 3, 0, 0, 0, 0, 0]
         );
-        assert_eq!(encode_command(ZoneCommand::StartAttack), [5, 4]);
-        assert_eq!(encode_command(ZoneCommand::StopAttack), [5, 5]);
-        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [5, 6]);
+        assert_eq!(encode_command(ZoneCommand::StartAttack), [6, 4]);
+        assert_eq!(encode_command(ZoneCommand::StopAttack), [6, 5]);
+        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [6, 6]);
         assert_eq!(
             encode_command(ZoneCommand::UseAbility {
                 ability: 9,
                 target: Some(EntityRef::Creature(CreatureId::new(0x0102_0304))),
             }),
-            [5, 9, 9, 2, 1, 2, 3, 4]
+            [6, 9, 9, 2, 1, 2, 3, 4]
         );
         assert_eq!(
             encode_command(ZoneCommand::UseAbility {
                 ability: 3,
                 target: None,
             }),
-            [5, 9, 3, 0, 0, 0, 0, 0]
+            [6, 9, 3, 0, 0, 0, 0, 0]
         );
-        assert_eq!(encode_command(ZoneCommand::CancelCast), [5, 10]);
+        assert_eq!(encode_command(ZoneCommand::CancelCast), [6, 10]);
         assert_eq!(
             encode_command(ZoneCommand::ChooseClass { class: 2, sex: 1 }),
-            [5, 11, 2, 1]
+            [6, 11, 2, 1]
         );
         assert_eq!(
             encode_command(ZoneCommand::EquipItem { bag_slot: 3 }),
-            [5, 12, 3]
+            [6, 12, 3]
         );
         assert_eq!(
             encode_command(ZoneCommand::UnequipItem { equipment_slot: 5 }),
-            [5, 13, 5]
+            [6, 13, 5]
+        );
+        assert_eq!(
+            encode_command(ZoneCommand::BuyItem {
+                npc: NpcId::new(0x0102_0304),
+                offer: 6,
+                quantity: 0x0a0b,
+            }),
+            [6, 14, 1, 2, 3, 4, 6, 0x0a, 0x0b]
+        );
+        assert_eq!(
+            encode_command(ZoneCommand::SellItem {
+                npc: NpcId::new(3),
+                bag_slot: 15,
+                quantity: 2,
+            }),
+            [6, 15, 0, 0, 0, 3, 15, 0, 2]
         );
         for command in [
             movement,
@@ -299,6 +369,17 @@ mod tests {
             ZoneCommand::EquipItem { bag_slot: u8::MAX },
             ZoneCommand::UnequipItem {
                 equipment_slot: u8::MAX,
+            },
+            // Unknown vendors, offers, slots and quantities are tick-time refusals.
+            ZoneCommand::BuyItem {
+                npc: NpcId::new(u32::MAX),
+                offer: u8::MAX,
+                quantity: u16::MAX,
+            },
+            ZoneCommand::SellItem {
+                npc: NpcId::new(0),
+                bag_slot: u8::MAX,
+                quantity: 0,
             },
         ] {
             assert_eq!(decode_command(&encode_command(command)).unwrap(), command);
@@ -392,9 +473,29 @@ mod tests {
             ZoneCommand::UnequipItem {
                 equipment_slot: u8::MAX,
             },
+            ZoneCommand::BuyItem {
+                npc: NpcId::new(3),
+                offer: 0,
+                quantity: 1,
+            },
+            ZoneCommand::BuyItem {
+                npc: NpcId::new(u32::MAX),
+                offer: u8::MAX,
+                quantity: u16::MAX,
+            },
+            ZoneCommand::SellItem {
+                npc: NpcId::new(3),
+                bag_slot: 0,
+                quantity: 3,
+            },
+            ZoneCommand::SellItem {
+                npc: NpcId::new(0),
+                bag_slot: u8::MAX,
+                quantity: 0,
+            },
         ];
         let mut fixture = String::from(
-            "# Command wire v5 golden fixture, verified by mmorpg-protocol and web tests.\n",
+            "# Command wire v6 golden fixture, verified by mmorpg-protocol and web tests.\n",
         );
         for command in commands {
             let hex = encode_command(command)
@@ -425,6 +526,16 @@ mod tests {
                 ZoneCommand::UnequipItem { equipment_slot } => {
                     format!("unequip_item {equipment_slot}")
                 }
+                ZoneCommand::BuyItem {
+                    npc,
+                    offer,
+                    quantity,
+                } => format!("buy_item {} {offer} {quantity}", npc.get()),
+                ZoneCommand::SellItem {
+                    npc,
+                    bag_slot,
+                    quantity,
+                } => format!("sell_item {} {bag_slot} {quantity}", npc.get()),
                 ZoneCommand::StartAttack => "start_attack".to_owned(),
                 ZoneCommand::StopAttack => "stop_attack".to_owned(),
                 ZoneCommand::ReleaseSpirit => "release_spirit".to_owned(),
@@ -452,7 +563,7 @@ mod tests {
 
     #[test]
     fn commands_match_the_shared_golden_fixture() {
-        let checked_in = include_str!("../../../fixtures/protocol/commands-v5.hex");
+        let checked_in = include_str!("../../../fixtures/protocol/commands-v6.hex");
         if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
             print!("{}", command_fixture());
         }
@@ -468,11 +579,12 @@ mod tests {
     }
 
     #[test]
-    fn actual_legacy_v2_to_v4_command_fixtures_are_rejected() {
+    fn actual_legacy_v2_to_v5_command_fixtures_are_rejected() {
         for line in include_str!("../../../fixtures/protocol/commands-v2.hex")
             .lines()
             .chain(include_str!("../../../fixtures/protocol/commands-v3.hex").lines())
             .chain(include_str!("../../../fixtures/protocol/commands-v4.hex").lines())
+            .chain(include_str!("../../../fixtures/protocol/commands-v5.hex").lines())
             .filter(|line| !line.starts_with('#') && !line.is_empty())
         {
             let hex = line.split_whitespace().next().unwrap();
@@ -505,8 +617,18 @@ mod tests {
         let class = encode_command(ZoneCommand::ChooseClass { class: 1, sex: 0 });
         let equip = encode_command(ZoneCommand::EquipItem { bag_slot: 1 });
         let unequip = encode_command(ZoneCommand::UnequipItem { equipment_slot: 1 });
+        let buy = encode_command(ZoneCommand::BuyItem {
+            npc: NpcId::new(3),
+            offer: 1,
+            quantity: 1,
+        });
+        let sell = encode_command(ZoneCommand::SellItem {
+            npc: NpcId::new(3),
+            bag_slot: 1,
+            quantity: 1,
+        });
         for encoded in [
-            &movement, &select, &loot, &ability, &class, &equip, &unequip,
+            &movement, &select, &loot, &ability, &class, &equip, &unequip, &buy, &sell,
         ] {
             for length in 0..encoded.len() {
                 assert!(decode_command(&encoded[..length]).is_err(), "{length}");
@@ -517,18 +639,18 @@ mod tests {
         }
         for tag in [2, 4, 5, 6, 10] {
             assert_eq!(
-                decode_command(&[5, tag, 0]).unwrap_err().to_string(),
+                decode_command(&[6, tag, 0]).unwrap_err().to_string(),
                 "command payload must be exactly 2 bytes",
                 "tag {tag} has no body"
             );
         }
-        for unknown in [0, 14, u8::MAX] {
+        for unknown in [0, 16, u8::MAX] {
             assert_eq!(
-                decode_command(&[5, unknown]).unwrap_err().to_string(),
+                decode_command(&[6, unknown]).unwrap_err().to_string(),
                 "unknown command tag"
             );
         }
-        for version in [1, 2, 3, 4, 6] {
+        for version in [1, 2, 3, 4, 5, 7] {
             let mut other = movement.clone();
             other[0] = version;
             assert_eq!(
@@ -550,19 +672,19 @@ mod tests {
             );
         }
         assert_eq!(
-            decode_command(&[5, 3, 4, 0, 0, 0, 1])
+            decode_command(&[6, 3, 4, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "unknown entity kind"
         );
         assert_eq!(
-            decode_command(&[5, 9, 1, 4, 0, 0, 0, 1])
+            decode_command(&[6, 9, 1, 4, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "unknown entity kind"
         );
         assert_eq!(
-            decode_command(&[5, 3, 0, 0, 0, 0, 1])
+            decode_command(&[6, 3, 0, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "an absent entity must have ID 0"

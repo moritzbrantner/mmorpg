@@ -237,6 +237,16 @@ const worldView = new WorldView(renderer, camera, {
     stats: requireElement<HTMLElement>("#character-stats"),
     feedback: requireElement<HTMLElement>("#character-feedback"),
   },
+  vendor: {
+    panel: requireElement<HTMLElement>("#vendor-panel"),
+    toggle: requireElement<HTMLButtonElement>("#vendor-toggle"),
+    close: requireElement<HTMLButtonElement>("#vendor-close"),
+    title: requireElement<HTMLElement>("#vendor-title"),
+    status: requireElement<HTMLElement>("#vendor-status"),
+    offers: requireElement<HTMLElement>("#vendor-offers"),
+    sales: requireElement<HTMLElement>("#vendor-sales"),
+    feedback: requireElement<HTMLElement>("#vendor-feedback"),
+  },
 });
 const controls = new GameControls({
   screen: () =>
@@ -1015,8 +1025,11 @@ function runAction(action: GameAction): void {
     case "ui.toggleCharacter":
       worldView.toggleCharacter();
       return;
+    case "ui.toggleVendor":
+      worldView.toggleVendor();
+      return;
     case "ui.closePanel":
-      if (!worldView.closeLoot() && !worldView.closeCharacter()) {
+      if (!worldView.closeLoot() && !worldView.closeVendor() && !worldView.closeCharacter()) {
         worldView.closeBags();
       }
       return;

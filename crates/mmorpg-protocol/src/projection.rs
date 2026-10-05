@@ -897,7 +897,7 @@ mod tests {
 
     fn fixture_bytes() -> Vec<u8> {
         hex(include_str!(
-            "../../../fixtures/protocol/player-snapshot-v10.hex"
+            "../../../fixtures/protocol/player-snapshot-v11.hex"
         ))
     }
 
@@ -948,7 +948,7 @@ mod tests {
         assert_eq!(encoded[FIRST_ENTITY], 1, "the viewer's record leads");
         // The previous version's fixture is rejected, never reinterpreted.
         let legacy = hex(include_str!(
-            "../../../fixtures/protocol/player-snapshot-v9.hex"
+            "../../../fixtures/protocol/player-snapshot-v10.hex"
         ));
         assert_eq!(
             decode_snapshot(&legacy).unwrap_err().to_string(),
@@ -984,7 +984,7 @@ mod tests {
         // A dead target has no target detail.
         snapshot.target_detail = TargetDetail::default();
         let expected = hex(include_str!(
-            "../../../fixtures/protocol/player-loot-v10.hex"
+            "../../../fixtures/protocol/player-loot-v11.hex"
         ));
         if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
             let bytes = encode_snapshot(&snapshot).unwrap();
@@ -1036,6 +1036,7 @@ mod tests {
             include_str!("../../../fixtures/protocol/player-snapshot-v7.hex"),
             include_str!("../../../fixtures/protocol/player-loot-v8.hex"),
             include_str!("../../../fixtures/protocol/player-loot-v9.hex"),
+            include_str!("../../../fixtures/protocol/player-loot-v10.hex"),
         ] {
             assert!(decode_snapshot(&hex(legacy)).is_err());
         }

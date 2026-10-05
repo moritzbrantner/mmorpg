@@ -95,3 +95,15 @@ above the unchanged 65,536-byte growth gate;
 retains the observation. These are raw archive/metadata bytes, not a linked-code
 or runtime cost estimate. The explicit capture passed the unchanged 3 MiB
 absolute limit, and the ordinary gate never updated evidence.
+
+The #67 vendor/schema-v11 change advances the reviewed baseline to
+**2,753,096 bytes**, SHA-256
+`3f02fb2d7487a908c8112f932339ddf82d8c72c1d1d64217cb185358abc9d5a8`. Its complete
+build identity matches the #66 baseline. Vendor stock validation, sale values,
+the buy and sell intents and their settlement, the content binding and the
+canonical trade intent records add 103,068 archive bytes, above the unchanged
+65,536-byte growth gate;
+[the failed comparison](../.performance/observations/vendor-v11-growth.json)
+retains the observation. These are raw archive/metadata bytes, not a linked-code
+or runtime cost estimate. The explicit capture passed the unchanged 3 MiB
+absolute limit, and the ordinary gate never updated evidence.

@@ -24,7 +24,7 @@ the same names and limits):
 
 Zero and unknown IDs fail closed. IDs are never reassigned. Names, limits,
 slots and stats are content, not client preferences. Equippable items stack to
-one; prices belong to the vendor slice.
+one; prices and sale values are vendor content ([Vendors](#vendors-67)).
 
 Insertion fills matching stacks in ascending slot order, then empty slots in
 ascending order. The entire requested quantity must fit. Moves to an empty
@@ -71,7 +71,7 @@ budget and packs fewer low-priority entities when a sheet is present; see
 
 Core recovery/loss fixtures, the `inventory-resume` real-session scenario, a real
 native WebTransport move/resume/merge test, and the browser WASM adapter prove
-ownership, sequenced moves and periodic recovery. Browser bags presentation (#84) reads these sheets; loot and money are in [LOOT.md](LOOT.md), equipment below, and vendors remain their own slice.
+ownership, sequenced moves and periodic recovery. Browser bags presentation (#84) reads these sheets; loot and money are in [LOOT.md](LOOT.md), equipment and vendors below.
 
 ## Equipment
 
@@ -121,6 +121,61 @@ stats with the bag and keeps them under the same revision rules; the character
 pane below shows them.
 
 
+## Vendors (#67)
+
+Vendor catalog revision 1 gives every catalog item a sale value in copper per
+unit and binds one stock to Innkeeper Bram Tolliver (NPC 3, the hub's vendor):
+
+| Offer | Item | Price | Sale value |
+| ---: | --- | ---: | ---: |
+| 0 | Worn Dagger | 5 | 2 |
+| 1 | Worn Boots | 12 | 3 |
+| 2 | Padded Trousers | 12 | 3 |
+| 3 | Padded Tunic | 15 | 4 |
+| 4 | Cloth Hood | 15 | 4 |
+| 5 | Pine Buckler | 20 | 5 |
+| 6 | Militia Shortsword | 25 | 6 |
+| 7 | Apprentice Wand | 25 | 6 |
+
+Torn Fur sells for 1 copper and is not stocked. A stock holds one to eight
+offers of distinct catalog items with nonzero prices; the offer index is its
+wire identity. `ZoneContent::with_vendors` binds stocks to NPCs with the
+`Vendor` role and enters the vendor revision, every sale value and every offer
+into content identity without changing the AI/combat seed (Greyhaven revision 8).
+
+`BuyItem { npc, offer, quantity }` and `SellItem { npc, bag_slot, quantity }` are
+sequenced intents resolved in tick step 1 like `MoveItem`:
+
+- dead players are refused with `YouAreDead`; an NPC without bound stock (or a
+  missing offer) with `InvalidVendor`; a player whose horizontal distance to the
+  vendor's feet exceeds 5 m (500 units, inclusive) with `OutOfRange`;
+- a purchase costs `price × quantity` (computed without overflow): too little
+  copper is `NotEnoughMoney`, a bag that cannot take the whole quantity is
+  `InventoryFull`, quantity zero is `InvalidInventoryMove`;
+- a sale removes `quantity` units from one bag slot and pays their sale value:
+  an invalid or empty slot, zero or excess quantity is `InvalidInventoryMove`,
+  a balance that would overflow `u32` is `MoneyOverflow`;
+- each refusal targets the vendor NPC and leaves bag, copper and revision
+  unchanged; an exhausted bag revision is `InvalidInventoryMove`;
+- a trade commits bag and copper together and increments the shared bag
+  revision, so the next projection carries the complete sheet and copper.
+
+Pending trades are canonical intents and continue exactly after recovery; the
+`vendor-resume` scenario covers reach, copper, refusals and a connection resume.
+
+### Browser vendor window
+
+Open **Vendor** or press V. The window names the nearest projected vendor NPC
+and lists its offers (name, price, stats) with **Buy**, and every occupied bag
+slot with its total sale value and **Sell** (the whole stack). Buttons are
+enabled only within 5 m of the vendor (measured in XZ from projected positions,
+as the zone does), with enough copper for an offer, while alive and with a
+current bag sheet, and one trade waits for its answer before the next. Copper
+and items change only with the zone's next sheet; refusals addressed to the
+vendor appear in the window. Escape or **Close** closes it; opening it closes
+Bags, Loot and the character pane, and Escape from the world closes Loot, then
+the vendor, then the character pane, then Bags.
+
 ## Browser Bags panel (#84)
 
 Open **Bags** or press B from the world canvas. All 16 slots show core catalog
@@ -155,8 +210,8 @@ damage stay unchanged while an intent is pending. The client never predicts a
 swap or a health change. `NotEquippable`, `InventoryFull` on unequip, dead
 players and the existing inventory refusals appear as readable feedback in both
 panels. Escape or **Close** closes the pane. Escape inside an open panel closes that
-panel; from the world it closes Loot first, then the pane, then Bags. Opening
-Loot closes Bags and the pane. While an equip or unequip awaits the zone's
+panel; from the world it closes Loot first, then the vendor, then the pane, then
+Bags. Opening Loot or the vendor closes Bags and the pane. While an equip or unequip awaits the zone's
 answer, Equip and Unequip are disabled, so a double click cannot send a second
 change that would only be refused.
 

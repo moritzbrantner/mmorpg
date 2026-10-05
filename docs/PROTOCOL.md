@@ -10,43 +10,47 @@ Commands and projections travel inside the pinned `game-server` session frames (
 
 The shared fixture `fixtures/protocol/session-frames-v3.hex` pins these frames and the browser route contract: `crates/mmorpg-game-server/tests/session_frames.rs` renders it from the pinned encoders and decodes it with the pinned decoders, and the browser (`web/tests/session-frames.test.ts`) decodes and encodes the same bytes. A `game-server` pin bump that changes a frame fails in both languages.
 
-## Commands (wire version 5)
+## Commands (wire version 6)
 
 The shared session runtime supplies player identity, connection epoch and command sequence separately. Core rejects zero, stale and duplicate sequences without changing state.
 
 | Command | Bytes | Layout |
 | --- | ---: | --- |
-| Move | 6 | `[version = 5, tag = 1, forward: i8, strafe: i8, facing: u16]` |
-| Jump | 2 | `[version = 5, tag = 2]` |
-| SelectTarget | 7 | `[version = 5, tag = 3, kind: u8, id: u32]` |
-| StartAttack | 2 | `[version = 5, tag = 4]` |
-| StopAttack | 2 | `[version = 5, tag = 5]` |
-| ReleaseSpirit | 2 | `[version = 5, tag = 6]` |
-| MoveItem | 6 | `[version = 5, tag = 7, source_slot: u8, destination_slot: u8, quantity: u16]` |
-| Loot | 14 | `[version = 5, tag = 8, creature_id: u32, died_at: u64]` |
-| UseAbility | 8 | `[version = 5, tag = 9, ability: u8, kind: u8, id: u32]` |
-| CancelCast | 2 | `[version = 5, tag = 10]` |
-| ChooseClass | 4 | `[version = 5, tag = 11, class: u8, sex: u8]` |
-| EquipItem | 3 | `[version = 5, tag = 12, bag_slot: u8]` |
-| UnequipItem | 3 | `[version = 5, tag = 13, equipment_slot: u8]` |
+| Move | 6 | `[version = 6, tag = 1, forward: i8, strafe: i8, facing: u16]` |
+| Jump | 2 | `[version = 6, tag = 2]` |
+| SelectTarget | 7 | `[version = 6, tag = 3, kind: u8, id: u32]` |
+| StartAttack | 2 | `[version = 6, tag = 4]` |
+| StopAttack | 2 | `[version = 6, tag = 5]` |
+| ReleaseSpirit | 2 | `[version = 6, tag = 6]` |
+| MoveItem | 6 | `[version = 6, tag = 7, source_slot: u8, destination_slot: u8, quantity: u16]` |
+| Loot | 14 | `[version = 6, tag = 8, creature_id: u32, died_at: u64]` |
+| UseAbility | 8 | `[version = 6, tag = 9, ability: u8, kind: u8, id: u32]` |
+| CancelCast | 2 | `[version = 6, tag = 10]` |
+| ChooseClass | 4 | `[version = 6, tag = 11, class: u8, sex: u8]` |
+| EquipItem | 3 | `[version = 6, tag = 12, bag_slot: u8]` |
+| UnequipItem | 3 | `[version = 6, tag = 13, equipment_slot: u8]` |
+| BuyItem | 9 | `[version = 6, tag = 14, npc: u32, offer: u8, quantity: u16]` |
+| SellItem | 9 | `[version = 6, tag = 15, npc: u32, bag_slot: u8, quantity: u16]` |
 
-Version 5 adds equipping and unequipping; tags 1–11 retain their field layouts.
+Version 6 adds vendor purchases and sales; tags 1–13 retain their field layouts.
 
 - `Move` is held intent relative to `facing`. `forward` and `strafe` are each in `[-1, 1]`; positive strafe is the character's right. The server rotates the intent into one of eight headings (multiples of 45° relative to `facing`) through its integer trigonometry table. Horizontal speed is 21 units/tick (6.3 m/s) when `forward ≥ 0` and 13 units/tick when `forward < 0`. Zero intent stops horizontal movement; vertical velocity always stays with physics.
 - `Jump` is edge-triggered. It is recorded as pending and evaluated during the next tick before physics steps: when a thin probe directly below the feet touches any body other than the character (ground, geometry or another unit), vertical velocity becomes 16 units/tick. The tick always consumes the pending jump, so a mid-air jump has no effect and is not buffered until landing.
 - `SelectTarget` carries an [entity reference](#entity-references): kind 1 player, 2 creature or 3 NPC with its ID, or kind 0 with ID 0 to clear the selection. `StartAttack` starts auto-attacking the selected target, `StopAttack` stops it, and `ReleaseSpirit` returns a dead player to the graveyard with half health.
 
-The eleven discrete intents (every command but `Move` and `Jump`) are queued in sequence order (at most 16 per player between ticks) and resolved during the next tick in `(player id, sequence)` order, never inside `apply_command`. A well-formed intent that is not allowed right now, such as attacking without a target or out of range, or selecting a unit that is not visible, is accepted and answered with an `Error` [event](#events); it never closes the session. An intent that finds the queue full is accepted the same way: it consumes its sequence, is dropped, and the next tick answers with one `too many intents` error. Only malformed payloads and stale or duplicate sequences fail.
+The thirteen discrete intents (every command but `Move` and `Jump`) are queued in sequence order (at most 16 per player between ticks) and resolved during the next tick in `(player id, sequence)` order, never inside `apply_command`. A well-formed intent that is not allowed right now, such as attacking without a target or out of range, or selecting a unit that is not visible, is accepted and answered with an `Error` [event](#events); it never closes the session. An intent that finds the queue full is accepted the same way: it consumes its sequence, is dropped, and the next tick answers with one `too many intents` error. Only malformed payloads and stale or duplicate sequences fail.
 
 `MoveItem` names only slots in the sender’s own bag. Slot/quantity values that fit the wire but cannot be applied are tick-time feedback, not session errors; there is no item grant command. `EquipItem` equips the item in one of the sender's bag slots into its catalog equipment slot, and `UnequipItem` moves the item in equipment slot 0 main hand, 1 off hand, 2 head, 3 chest, 4 legs or 5 feet to the lowest empty bag slot; every `u8` fits the wire and invalid slots are tick-time feedback. See [INVENTORY.md](INVENTORY.md#equipment).
 
 `UseAbility` names a global ability ID and an [entity reference](#entity-references) as in `SelectTarget`; kind 0 (ID 0) means the current selection, and self-centred abilities ignore it. `CancelCast` stops the player's own cast or channel (nothing happens without one). `ChooseClass` picks class 0 Warden, 1 Ranger or 2 Arcanist and sex 0 female or 1 male, once per player. Every `u8` value fits the wire: unknown abilities, classes or sexes, repeats and every other refusal are `Error` events, never session errors (see [Classes and abilities](#classes-and-abilities)).
 
+`BuyItem` buys `quantity` units of offer `offer` (its index in the vendor's stock) from vendor NPC `npc`; `SellItem` sells `quantity` units from one of the sender's bag slots to that vendor. Every value fits the wire; unknown vendors and offers, reach, copper, capacity and slot problems are tick-time feedback. See [INVENTORY.md](INVENTORY.md#vendors).
+
 `Loot` names a creature spawn and its observed death tick. Core checks life, owner, expiry, authoritative 3D reach and remaining rewards during the tick, then atomically settles money and items. Refusals preserve rewards; no client supplies reward amounts. See [LOOT.md](LOOT.md).
 
-Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, known entity kinds, ID 0 for the absent reference, and only version 5. Versions 1–4 are rejected.
+Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, known entity kinds, ID 0 for the absent reference, and only version 6. Versions 1–5 are rejected.
 
-The shared command fixture is `fixtures/protocol/commands-v5.hex`: one encoded command per line followed by its fields, covering every tag. `mmorpg-protocol` renders and verifies it, and the browser encoder (`web/src/command-wire.ts`) must produce the same bytes.
+The shared command fixture is `fixtures/protocol/commands-v6.hex`: one encoded command per line followed by its fields, covering every tag. `mmorpg-protocol` renders and verifies it, and the browser encoder (`web/src/command-wire.ts`) must produce the same bytes.
 
 ## Entity references
 
@@ -56,9 +60,9 @@ An entity reference is 5 bytes: kind (`u8`) then ID (`u32`). Kind 1 is a player 
 
 | Offset | Width | Field |
 | --- | --- | --- |
-| 0 | 1 | Wire version: 10 |
+| 0 | 1 | Wire version: 11 |
 | 1 | 1 | Scope: 1 canonical, 2 player-visible |
-| 2 | 2 | Core schema version: 10 |
+| 2 | 2 | Core schema version: 11 |
 | 4 | 4 | Zone ID |
 | 8 | 8 | Simulation tick |
 
@@ -126,7 +130,7 @@ The events are the viewer's feedback from the tick the snapshot describes (see [
 - Damage dealt and damage taken carry both units and the damage in `amount`.
 - Miss and evade carry both units and amount 0: a missed swing between the viewer and a unit, or the viewer's swing ignored by an evading creature.
 - Died carries the dead unit as target, its killer as source (or none) and amount 0.
-- Error carries no source, the unit the refused intent concerned as target (or none) and the error code in `amount`: 1 no target, 2 out of range, 3 target dead, 4 not attackable, 5 you are dead, 6 not dead, 7 invalid target, 8 too many intents (a full queue dropped an intent), 9 invalid inventory move, 10 inventory full, 11 invalid loot (unknown/non-corpse, expired or wrong death tick), 12 not loot owner, 13 empty loot, 14 money overflow, 15 no class, 16 not learned, 17 not ready (global or ability cooldown), 18 not enough resource, 19 stunned, 20 already casting, 21 invalid class (unknown or repeated choice), 22 not equippable (the bag item has no equipment slot).
+- Error carries no source, the unit the refused intent concerned as target (or none) and the error code in `amount`: 1 no target, 2 out of range, 3 target dead, 4 not attackable, 5 you are dead, 6 not dead, 7 invalid target, 8 too many intents (a full queue dropped an intent), 9 invalid inventory move, 10 inventory full, 11 invalid loot (unknown/non-corpse, expired or wrong death tick), 12 not loot owner, 13 empty loot, 14 money overflow, 15 no class, 16 not learned, 17 not ready (global or ability cooldown), 18 not enough resource, 19 stunned, 20 already casting, 21 invalid class (unknown or repeated choice), 22 not equippable (the bag item has no equipment slot), 23 invalid vendor (not a bound vendor NPC, or no such offer), 24 not enough money.
 - Cast started carries the caster, its target (or none) and the cast or channel ticks in `amount`. Ability used carries the user, its target (none for self-centred abilities) and amount 0.
 - Healed carries the healer, the healed unit and the effective healing. Aura applied carries the caster, the unit and the aura's ticks; aura removed (expiry, a broken root, an emptied shield or replacement on a full unit) carries the caster, the unit and amount 0.
 - Interrupted carries the interrupting unit (none for movement, a jump or cancellation), the interrupted unit and amount 0, with the interrupted ability in the flag byte.
@@ -177,7 +181,7 @@ Decoders reject payloads above the byte budget, a wrong wire version, scope or s
 
 Decoders additionally reject class codes above 6, a resource that does not match the class or its maximum, a global cooldown above 45, casts with unknown abilities or a wrong total, channel flag or progress, more than 4 cooldowns or out-of-order, unknown or over-long cooldowns, more than 8 auras, auras whose kind or time left does not match the catalog, ability state without a class or on a dead viewer, target detail without a target, and unknown abilities in ability events.
 
-The shared fixture is `fixtures/protocol/player-snapshot-v10.hex`: a level-4 Arcanist wearing an Apprentice Wand, a Cloth Hood and a Padded Tunic (3 stamina, 6 intellect: 110 maximum health and a 9–12 melee range) casting Firebolt behind an Arcane Barrier at a rooted Mirefin Lurker that casts Muck Bolt, next to an NPC and a corpse tapped by another player, with a sparse self bag and one event of every kind. Rust encoding and browser decoding both verify these exact bytes. `player-loot-v10.hex` additionally pins an owned eligible corpse with two copper and two Torn Fur. The v8 and v9 fixtures remain as rejection evidence.
+The shared fixture is `fixtures/protocol/player-snapshot-v11.hex`: a level-4 Arcanist wearing an Apprentice Wand, a Cloth Hood and a Padded Tunic (3 stamina, 6 intellect: 110 maximum health and a 9–12 melee range) casting Firebolt behind an Arcane Barrier at a rooted Mirefin Lurker that casts Muck Bolt, next to an NPC and a corpse tapped by another player, with a sparse self bag and one event of every kind. Rust encoding and browser decoding both verify these exact bytes. `player-loot-v11.hex` additionally pins an owned eligible corpse with two copper and two Torn Fur. The v8–v10 fixtures remain as rejection evidence.
 
 ## Canonical scope
 
@@ -235,7 +239,7 @@ A player record starts with 39 movement bytes, 92 inventory and equipment bytes 
 | … | 1 | Aura count, at most 8 |
 | … | 10 × auras | Ability ID (`u8`), caster (entity reference), ticks left (`u16`), amount (`u16`), in slot order |
 
-Pending intent codes 7–11 extend the list: code 7 (use ability, 7 bytes) carries the ability ID and an entity reference, code 8 (cancel cast, 6 bytes) the absent reference, code 9 (choose class, 3 bytes) class and sex, code 10 (equip item, 2 bytes) the bag slot and code 11 (unequip item, 2 bytes) the equipment slot.
+Pending intent codes 7–11 extend the list: code 7 (use ability, 7 bytes) carries the ability ID and an entity reference, code 8 (cancel cast, 6 bytes) the absent reference, code 9 (choose class, 3 bytes) class and sex, code 10 (equip item, 2 bytes) the bag slot, code 11 (unequip item, 2 bytes) the equipment slot, and codes 12 (buy item) and 13 (sell item), 8 bytes each, the vendor NPC (`u32`), the offer or bag slot (`u8`) and the quantity (`u16`).
 
 A creature record:
 
@@ -334,3 +338,9 @@ Version 8 and earlier snapshots/checkpoints, version 3 and earlier commands and 
 Version 10 adds the six canonical equipment slots after each player's bag, pending intent codes 10 and 11, the viewer's melee damage range after its cast record, equipment and stat totals in the self sheet (84 bytes when present) and error code 22. Command version 5 adds tags 12 and 13 and rejects v4. Item catalog revision 2 adds seven equippable items, loot catalog revision 2 drops them from humanoids, and Greyhaven revision 7 binds both (fingerprint `5a8f35c63f4c8849`) and keeps the existing AI/combat seed. The projection budget, `MAX_WIRE_ENTITIES` and the entity record are unchanged. The WASM `catalog()` export is format v4: each item gains `slot` (`null` or `"mainHand"`, `"offHand"`, `"head"`, `"chest"`, `"legs"`, `"feet"`) and `stats` (`{stamina, strength, agility, intellect}`).
 
 Version 9 and earlier snapshots/checkpoints, version 4 and earlier commands and old recovery bundles fail closed. Historical fixtures remain rejection evidence. This change provides no automatic migration; arrange an explicit migration or fresh development recovery state before upgrading a standalone host.
+
+## Vendors: snapshot v11 and command v6
+
+Version 11 adds pending intent codes 12 and 13 to canonical player records and error codes 23 and 24 to events; the player-visible layout is otherwise unchanged. Command version 6 adds tags 14 and 15 and rejects v5. Vendor catalog revision 1 gives every catalog item a sale value and binds Innkeeper Bram Tolliver's eight-offer stock; Greyhaven revision 8 binds it (fingerprint `e07f6bec8e077beb`) and keeps the existing AI/combat seed. The projection budget, `MAX_WIRE_ENTITIES` and the entity record are unchanged. The WASM `catalog()` export is format v5: each item gains `sellPrice`, and `vendorCatalogRevision` and `vendors` (`[{npc, offers: [{item, price}]}]`, offer order is the wire offer index) list the stock.
+
+Version 10 and earlier snapshots/checkpoints, version 5 and earlier commands and old recovery bundles fail closed. Historical fixtures remain rejection evidence. This change provides no automatic migration; arrange an explicit migration or fresh development recovery state before upgrading a standalone host.

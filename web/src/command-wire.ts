@@ -1,6 +1,6 @@
 /**
- * Command wire version 5, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
- * `fixtures/protocol/commands-v5.hex` holds both encoders to the same bytes.
+ * Command wire version 6, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
+ * `fixtures/protocol/commands-v6.hex` holds both encoders to the same bytes.
  * The session supplies player identity and sequence separately.
  */
 import { entityKindCode, isU32, type EntityRef } from "./entity-ref";
@@ -25,9 +25,13 @@ export type WorldCommand =
   /** Equips the item in a bag slot, swapping any item already in its equipment slot. */
   | { kind: "equip-item"; bagSlot: number }
   /** Equipment slot 0 main hand, 1 off hand, 2 head, 3 chest, 4 legs, 5 feet. */
-  | { kind: "unequip-item"; equipmentSlot: number };
+  | { kind: "unequip-item"; equipmentSlot: number }
+  /** Buys `quantity` units of the vendor NPC's offer at index `offer`. */
+  | { kind: "buy-item"; npc: number; offer: number; quantity: number }
+  /** Sells `quantity` units from one of the player's own bag slots to the vendor NPC. */
+  | { kind: "sell-item"; npc: number; bagSlot: number; quantity: number };
 
-const COMMAND_WIRE_VERSION = 5;
+const COMMAND_WIRE_VERSION = 6;
 const MOVE_TAG = 1;
 const JUMP_TAG = 2;
 const SELECT_TARGET_TAG = 3;
@@ -41,6 +45,8 @@ const CANCEL_CAST_TAG = 10;
 const CHOOSE_CLASS_TAG = 11;
 const EQUIP_ITEM_TAG = 12;
 const UNEQUIP_ITEM_TAG = 13;
+const BUY_ITEM_TAG = 14;
+const SELL_ITEM_TAG = 15;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
@@ -137,6 +143,10 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       }
       return Uint8Array.of(COMMAND_WIRE_VERSION, CHOOSE_CLASS_TAG, command.classId, command.sex);
     }
+    case "buy-item":
+      return encodeTrade(BUY_ITEM_TAG, command.npc, command.offer, command.quantity);
+    case "sell-item":
+      return encodeTrade(SELL_ITEM_TAG, command.npc, command.bagSlot, command.quantity);
     case "equip-item":
       if (!isU8(command.bagSlot)) {
         throw new Error("Bag slots must be u8.");
@@ -158,4 +168,19 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       throw new Error(`Unsupported command ${String(unsupported)}.`);
     }
   }
+}
+
+/** Version, tag, NPC (u32), offer or bag slot (u8), quantity (u16). */
+function encodeTrade(tag: number, npc: number, index: number, quantity: number): Uint8Array {
+  if (!isU32(npc) || !isU8(index) || !Number.isInteger(quantity) || quantity < 0 || quantity > 0xffff) {
+    throw new Error("Trades need a u32 NPC, a u8 offer or bag slot and a u16 quantity.");
+  }
+  const payload = new Uint8Array(9);
+  const view = new DataView(payload.buffer);
+  view.setUint8(0, COMMAND_WIRE_VERSION);
+  view.setUint8(1, tag);
+  view.setUint32(2, npc);
+  view.setUint8(6, index);
+  view.setUint16(7, quantity);
+  return payload;
 }

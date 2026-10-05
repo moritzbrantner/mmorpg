@@ -21,8 +21,9 @@ pub mod units;
 /// Content revision of this zone. Revision 1 was the former test outpost;
 /// revision 2 had no creatures or NPCs; revision 6 binds the ability catalog
 /// (Mirefin Lurkers cast Muck Bolt, Redbrand Bandits use Crude Bandage);
-/// revision 7 binds item catalog 2 (equipment) and loot catalog 2.
-pub const REVISION: u64 = 7;
+/// revision 7 binds item catalog 2 (equipment) and loot catalog 2;
+/// revision 8 binds vendor catalog 1 (Innkeeper Bram Tolliver's stock).
+pub const REVISION: u64 = 8;
 /// Revision 3's simulation seed, retained when revision 4 adds bag content.
 /// Economy changes must not reroll Greyhaven's existing creature/combat scripts.
 pub const RNG_SEED: u64 = 0x3cbc_808b_be89_b29c;
@@ -521,7 +522,9 @@ static CONTENT: LazyLock<Arc<ZoneContent>> = LazyLock::new(|| {
             .with_loot_tables(crate::LOOT_CATALOG_REVISION, tables)
             .expect("built-in Greyhaven Vale loot content is valid")
             .with_creature_abilities(crate::ABILITY_CATALOG_REVISION, units::creature_abilities())
-            .expect("built-in Greyhaven Vale ability content is valid"),
+            .expect("built-in Greyhaven Vale ability content is valid")
+            .with_vendors(crate::VENDOR_CATALOG_REVISION, units::vendors())
+            .expect("built-in Greyhaven Vale vendor content is valid"),
     )
 });
 

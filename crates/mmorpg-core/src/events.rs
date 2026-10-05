@@ -62,6 +62,10 @@ pub enum ErrorCode {
     InvalidClass,
     /// The bag item has no equipment slot.
     NotEquippable,
+    /// The NPC is not a vendor, or the vendor has no such offer.
+    InvalidVendor,
+    /// The copper balance does not cover the purchase.
+    NotEnoughMoney,
 }
 
 /// One feedback event addressed to a player.

@@ -12,7 +12,7 @@ const ENTITY_BYTES = 21;
 const ERROR_CODES = [
   "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target", "too-many-intents", "invalid-inventory-move", "inventory-full", "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
   "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
-  "not-equippable",
+  "not-equippable", "invalid-vendor", "not-enough-money",
 ];
 
 function flagByte(flags: readonly boolean[]): number {
@@ -20,7 +20,7 @@ function flagByte(flags: readonly boolean[]): number {
 }
 
 /**
- * Test-only player-visible snapshot v10 encoder (docs/PROTOCOL.md); Rust owns the real one.
+ * Test-only player-visible snapshot v11 encoder (docs/PROTOCOL.md); Rust owns the real one.
  * Like it, positions must fit i16 and velocities saturate to i8.
  */
 export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
@@ -41,9 +41,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u8(value === null ? 0 : entityKindCode(value.kind));
     u32(value?.id ?? 0);
   };
-  u8(10);
+  u8(11);
   u8(2);
-  u16(10);
+  u16(11);
   u32(snapshot.zoneId);
   u64(snapshot.tick);
   u64(snapshot.contentRevision);
