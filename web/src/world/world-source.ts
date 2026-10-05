@@ -45,8 +45,13 @@ export type WorldSource = {
    * network host after its reconnect grace). Does nothing when not joined.
    */
   leave(): void;
-  /** Sends intent under the next strictly increasing sequence. Throws when not joined. */
-  sendCommand(command: WorldCommand): void;
+  /**
+   * Sends intent under the next strictly increasing sequence and returns that sequence, or `null`
+   * when the source dropped the intent (a network source during an interruption or with a full
+   * queue). A projection whose acknowledged sequence reaches it has resolved the intent. Throws when
+   * not joined.
+   */
+  sendCommand(command: WorldCommand): number | null;
   /**
    * Progresses by elapsed wall-clock seconds and returns the projections received since the last
    * call in tick order; intermediate sheets/events are retained. Local catch-up is bounded to four

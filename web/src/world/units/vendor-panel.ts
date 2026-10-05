@@ -76,14 +76,14 @@ export class VendorPanel {
   readonly #state = new VendorState();
   readonly #elements: VendorElements;
   readonly #bag: BagState;
-  readonly #send: (command: WorldCommand) => void;
+  readonly #send: (command: WorldCommand, onSent: (sequence: number | null) => void) => void;
   readonly #onOpen: () => void;
   readonly #offers: ActionList;
   readonly #sales: ActionList;
   #catalog: ContentCatalog | null = null;
   #vendor: NearbyVendor | null = null;
 
-  constructor(elements: VendorElements, bag: BagState, send: (command: WorldCommand) => void, onOpen: () => void) {
+  constructor(elements: VendorElements, bag: BagState, send: (command: WorldCommand, onSent: (sequence: number | null) => void) => void, onOpen: () => void) {
     this.#elements = elements;
     this.#bag = bag;
     this.#send = send;
@@ -151,7 +151,7 @@ export class VendorPanel {
 
   #trade(command: WorldCommand | null): void {
     if (command) {
-      this.#send(command);
+      this.#send(command, (sequence) => this.#state.sent(sequence));
     }
     this.#render();
   }

@@ -147,11 +147,12 @@ test("a refusal whose feedback was lost unlocks once a later projection acknowle
   const state = new BagState();
   state.update(projection(0, 1n, "equipped", { acknowledgedSequence: 4 }));
   expect(state.unequip(0)).not.toBeNull();
-  // Same acknowledgement: still waiting.
-  state.update(projection(1, 1n, null, { acknowledgedSequence: 4 }));
+  // An earlier command's acknowledgement does not answer the unequip sent as sequence 6.
+  state.sent(6);
+  state.update(projection(1, 1n, null, { acknowledgedSequence: 5 }));
   expect(state.canChangeEquipment).toBe(false);
-  // The intent was acknowledged, the bag did not change and its refusal event was lost.
-  state.update(projection(2, 1n, null, { acknowledgedSequence: 5 }));
+  // Its own sequence was acknowledged, the bag did not change and its refusal event was lost.
+  state.update(projection(2, 1n, null, { acknowledgedSequence: 6 }));
   expect(state.pending).toBe(false);
   expect(state.canChangeEquipment).toBe(true);
   expect(state.feedback).toBe("The zone did not change your items.");
@@ -171,4 +172,13 @@ test("a confirmed change is not overwritten by other intents' errors in the same
   expect(state.unequip(0)).not.toBeNull();
   state.update(projection(2, 2n, null, { events: [{ kind: "error", code: "inventory-full", target: { kind: "creature", id: 7 } }] }));
   expect(state.pending).toBe(true);
+});
+
+test("an item intent the source dropped unlocks at once", () => {
+  const state = new BagState();
+  state.update(projection(0, 1n, "equipped"));
+  expect(state.unequip(0)).not.toBeNull();
+  state.sent(null);
+  expect(state.pending).toBe(false);
+  expect(state.feedback).toContain("not sent");
 });

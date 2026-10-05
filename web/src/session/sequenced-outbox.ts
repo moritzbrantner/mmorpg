@@ -82,13 +82,18 @@ export class SequencedOutbox {
     return { ...this.#stats };
   }
 
-  /** Queues a command; returns `false` when a reliable one was dropped because the queue is full. */
-  submit(payload: Uint8Array, delivery: Delivery): boolean {
+  /**
+   * Queues a command and returns the sequence it will be sent under, or `null` when a reliable one
+   * was dropped because the queue is full. Queued commands take sequences in queue order and only a
+   * trailing held state coalesces, so a reliable command's sequence is fixed once queued; a
+   * `restart` forgets it unsent.
+   */
+  submit(payload: Uint8Array, delivery: Delivery): number | null {
     if (delivery === "reliable") {
       const reliable = this.#queue.filter((queued) => queued.delivery === "reliable").length;
       if (reliable >= MAX_QUEUED_RELIABLE) {
         this.#stats.dropped += 1;
-        return false;
+        return null;
       }
     } else if (this.#queue.at(-1)?.delivery === "latest") {
       // Only the tail coalesces, so held state never jumps ahead of an intent queued before it.
@@ -96,7 +101,7 @@ export class SequencedOutbox {
       this.#stats.coalesced += 1;
     }
     this.#queue.push({ payload: payload.slice(), delivery });
-    return true;
+    return this.#sequence + this.#queue.length;
   }
 
   /** Records the host's acknowledged sequence from a projection. */

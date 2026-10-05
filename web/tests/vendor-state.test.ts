@@ -127,11 +127,13 @@ test("a refused trade whose feedback was lost unlocks once a later projection ac
   bags.update(first);
   vendor.update(first, bags);
   expect(vendor.sell(nearestVendor(first, catalog), 0, bags)).not.toBeNull();
-  const waiting = projection(1, { acknowledgedSequence: 3, inventory: null });
+  // The source queued the trade behind another command: an acknowledgement of 4 is not its answer.
+  vendor.sent(5);
+  const waiting = projection(1, { acknowledgedSequence: 4, inventory: null });
   bags.update(waiting);
   vendor.update(waiting, bags);
   expect(vendor.pending).toBe(true);
-  const acknowledged = projection(2, { acknowledgedSequence: 4, inventory: null });
+  const acknowledged = projection(2, { acknowledgedSequence: 5, inventory: null });
   bags.update(acknowledged);
   vendor.update(acknowledged, bags);
   expect(vendor.pending).toBe(false);

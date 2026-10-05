@@ -47,8 +47,8 @@ const REFUSALS: Partial<Record<ErrorCode, string>> = {
   "invalid-inventory-move": "That trade was refused. Your items are unchanged.",
 };
 
-/** The trade, its vendor, and the bag revision, tick and acknowledged sequence when it was sent. */
-type PendingTrade = { kind: "buy" | "sell"; npc: number; revision: bigint; tick: bigint; acknowledged: number };
+/** The trade, its vendor, the bag revision when it was sent and the sequence the source assigned it. */
+type PendingTrade = { kind: "buy" | "sell"; npc: number; revision: bigint; sequence: number | null };
 
 /**
  * Trade intents over the shared received bag cache. Nothing is predicted: bag and copper change only
@@ -56,7 +56,6 @@ type PendingTrade = { kind: "buy" | "sell"; npc: number; revision: bigint; tick:
  */
 export class VendorState {
   #tick = -1n;
-  #acknowledged = 0;
   #copper = 0;
   #dead = false;
   #feedback = "";
@@ -68,7 +67,6 @@ export class VendorState {
 
   reset(): void {
     this.#tick = -1n;
-    this.#acknowledged = 0;
     this.#copper = 0;
     this.#dead = false;
     this.#feedback = "";
@@ -81,7 +79,6 @@ export class VendorState {
       return;
     }
     this.#tick = snapshot.tick;
-    this.#acknowledged = snapshot.acknowledgedSequence;
     this.#copper = snapshot.viewer.copper;
     this.#dead = snapshot.viewer.dead;
     const pending = this.#pending;
@@ -112,9 +109,9 @@ export class VendorState {
       this.#pending = null;
       return;
     }
-    if (snapshot.tick > pending.tick && snapshot.acknowledgedSequence > pending.acknowledged &&
+    if (pending.sequence !== null && snapshot.acknowledgedSequence >= pending.sequence &&
         snapshot.inventoryRevision === pending.revision) {
-      // Events are lossy: an acknowledged trade that left the bag unchanged was refused.
+      // Events are lossy: a trade whose own sequence was acknowledged with the bag unchanged was refused.
       this.#feedback = "The vendor did not trade. Your items are unchanged.";
       this.#pending = null;
     }
@@ -145,8 +142,22 @@ export class VendorState {
     return { kind: "sell-item", npc: vendor.npc, bagSlot, quantity: stack.quantity };
   }
 
+  /** Records the sequence the pending trade was sent under; `null` means the source dropped it. */
+  sent(sequence: number | null): void {
+    const pending = this.#pending;
+    if (pending === null) {
+      return;
+    }
+    if (sequence === null) {
+      this.#feedback = "That trade was not sent. Your items are unchanged.";
+      this.#pending = null;
+      return;
+    }
+    pending.sequence = sequence;
+  }
+
   #send(kind: PendingTrade["kind"], npc: number, bag: BagState, feedback: string): void {
-    this.#pending = { kind, npc, revision: bag.revision, tick: this.#tick, acknowledged: this.#acknowledged };
+    this.#pending = { kind, npc, revision: bag.revision, sequence: null };
     this.#feedback = feedback;
   }
 }

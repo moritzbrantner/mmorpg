@@ -148,7 +148,7 @@ export class WorldView {
   readonly #character: CharacterPane;
   readonly #loot: LootPanel;
   readonly #vendor: VendorPanel;
-  readonly #intents: Intent[] = [];
+  readonly #intents: { intent: Intent; onSent: ((sequence: number | null) => void) | undefined }[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
   #catalog: ContentCatalog | null = null;
@@ -191,15 +191,15 @@ export class WorldView {
       onUse: (slot) => this.queueIntent((projection) => (this.#catalog ? useAbilitySlot(slot, projection, this.#catalog) : null)),
     });
     this.#progressionHud = new ProgressionHud(elements.experienceBar, elements.experienceStatus, elements.progressionFeedback);
-    this.#bags = new BagsPanel(elements.bags, (command) => this.queueIntent(() => command));
+    this.#bags = new BagsPanel(elements.bags, (command, onSent) => this.queueIntent(() => command, onSent));
     // The pane and the vendor share the bags' received sheet: one revision covers bag and equipment.
-    this.#character = new CharacterPane(elements.character, this.#bags.state, (command) => this.queueIntent(() => command));
+    this.#character = new CharacterPane(elements.character, this.#bags.state, (command, onSent) => this.queueIntent(() => command, onSent));
     this.#loot = new LootPanel(elements.loot, (intent) => this.queueIntent(intent), () => {
       this.#bags.close();
       this.#character.close(false);
       this.#vendor.close(false);
     });
-    this.#vendor = new VendorPanel(elements.vendor, this.#bags.state, (command) => this.queueIntent(() => command), () => {
+    this.#vendor = new VendorPanel(elements.vendor, this.#bags.state, (command, onSent) => this.queueIntent(() => command, onSent), () => {
       this.#loot.close(false);
       this.#character.close(false);
       this.#bags.close();
@@ -292,8 +292,8 @@ export class WorldView {
   }
 
   /** Queues an intent for the next frame; the zone decides what happens. */
-  queueIntent(intent: Intent): void {
-    this.#intents.push(intent);
+  queueIntent(intent: Intent, onSent?: (sequence: number | null) => void): void {
+    this.#intents.push({ intent, onSent });
   }
 
   toggleBags(): void {
@@ -354,10 +354,10 @@ export class WorldView {
     }
     const { source, scenery, catalog } = world;
     const latest = source.latestProjection();
-    for (const intent of this.#intents.splice(0)) {
+    for (const { intent, onSent } of this.#intents.splice(0)) {
       const command = latest ? intent(latest) : null;
       if (command) {
-        source.sendCommand(command);
+        onSent?.(source.sendCommand(command));
       }
     }
     for (const command of this.#outbox.update(this.#input(input), now)) {

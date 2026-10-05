@@ -97,14 +97,17 @@ describe("sequenced command outbox", () => {
   test("the reliable queue is bounded; overflow drops the newest intent", () => {
     const outbox = new SequencedOutbox();
     for (let index = 0; index < MAX_QUEUED_RELIABLE; index += 1) {
-      expect(outbox.submit(JUMP, "reliable")).toBe(true);
+      // Each queued command learns the sequence it will be sent under.
+      expect(outbox.submit(JUMP, "reliable")).toBe(index + 1);
     }
-    expect(outbox.submit(JUMP, "reliable")).toBe(false);
-    expect(outbox.submit(move(1), "latest")).toBe(true);
+    expect(outbox.submit(JUMP, "reliable")).toBeNull();
+    expect(outbox.submit(move(1), "latest")).toBe(MAX_QUEUED_RELIABLE + 1);
     expect(outbox.stats().dropped).toBe(1);
+    // The first intent goes out as sequence 1 and waits for its acknowledgement.
     outbox.poll(0);
-    // The first intent left the queue, which makes room for one more.
-    expect(outbox.submit(JUMP, "reliable")).toBe(true);
+    expect(outbox.awaiting).toBe(1);
+    // It left the queue, which makes room for one more, sent after the queued move.
+    expect(outbox.submit(JUMP, "reliable")).toBe(MAX_QUEUED_RELIABLE + 2);
   });
 
   test("a restart forgets queued and unacknowledged commands and sends its barrier first", () => {

@@ -68,7 +68,7 @@ export class LocalZoneSource implements WorldSource {
     this.#zone.leave(player);
   }
 
-  sendCommand(command: WorldCommand): void {
+  sendCommand(command: WorldCommand): number {
     const player = this.#requirePlayer();
     if (this.#sequence >= MAX_SEQUENCE) {
       throw new Error("Command sequences are exhausted for this player.");
@@ -78,6 +78,7 @@ export class LocalZoneSource implements WorldSource {
     if (!this.#zone.submit(player, this.#sequence, payload)) {
       throw new Error(`The local zone ignored fresh sequence ${this.#sequence}.`);
     }
+    return this.#sequence;
   }
 
   advance(deltaSeconds: number): readonly ZoneSnapshot[] {

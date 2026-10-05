@@ -73,6 +73,21 @@ describe("OnlineZoneSource", () => {
     expect(self(source).position[0]).toBeGreaterThan(0);
   });
 
+  test("a queued intent learns the sequence it is sent under, behind one still in flight", async () => {
+    const { clock, host, source } = online();
+    await clock.until(source.join());
+    host.toHost = () => [];
+    // The class choice took sequence 1; the jump goes out as 2 and waits for its acknowledgement.
+    expect(source.sendCommand({ kind: "jump" })).toBe(2);
+    expect(source.sendCommand({ kind: "sell-item", npc: 3, bagSlot: 0, quantity: 1 })).toBe(3);
+    host.toHost = (datagram) => [datagram];
+    for (let frames = 0; frames < 6; frames += 1) {
+      await frame(clock, source);
+    }
+    expect(host.applied.map(({ sequence }) => sequence)).toEqual([1, 2, 3]);
+    expect(source.latestProjection()?.acknowledgedSequence).toBe(3);
+  });
+
   test("a lost jump is resent until acknowledged, applied once, and movement waits behind it", async () => {
     const { clock, host, source } = online();
     await clock.until(source.join());
