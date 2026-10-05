@@ -6,7 +6,7 @@
       "name": "mmorpg-pages-tech-demo",
       "dependencies": {
         "@moritzbrantner/input-bindings": "github:moritzbrantner/input-bindings#fdbdd74d8d9a3baf196b1b38f82959a82030689f",
-        "@moritzbrantner/input-bindings-runtime": "github:moritzbrantner/input-bindings#a51ef8a07791e6aa5031ac19178af84cadbfd613",
+        "@moritzbrantner/input-bindings-runtime": "github:moritzbrantner/input-bindings#ecf35db9db017f9db29091ca535a613009dc3d98",
         "@moritzbrantner/input-bindings-web": "github:moritzbrantner/input-bindings#2f97db985002e70d1692352fe823c39dd01ad6c4",
         "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#f484db8a3d2a7a555fa463eddf9c28790b240ce0",
         "three": "0.185.1",
@@ -79,7 +79,7 @@
 
     "@moritzbrantner/input-bindings": ["@moritzbrantner/input-bindings@github:moritzbrantner/input-bindings#fdbdd74", {}, "moritzbrantner-input-bindings-fdbdd74", "sha512-+a9XtGvDPcbuoaqNzsGS1G1BFc258mKExwYH8N8d2nIysuJWBSsDSKIJ342Vv9BEb0GMyZDK3NFVRSnGjHOAfA=="],
 
-    "@moritzbrantner/input-bindings-runtime": ["@moritzbrantner/input-bindings-runtime@github:moritzbrantner/input-bindings#a51ef8a", { "dependencies": { "@moritzbrantner/input-bindings": "github:moritzbrantner/input-bindings#fdbdd74d8d9a3baf196b1b38f82959a82030689f" } }, "moritzbrantner-input-bindings-a51ef8a", "sha512-17x1fEgUZzSH8jwLalJz3zzwp8M50MdXXE2La54rofBfrSFWy8XHXuxq0fGPnnubNgePq1u+JjES5zc3EuzUjA=="],
+    "@moritzbrantner/input-bindings-runtime": ["input-bindings-workspace@github:moritzbrantner/input-bindings#ecf35db", {}, "moritzbrantner-input-bindings-ecf35db", "sha512-jiKwCMyriOpaa4m4fgefuAHqi+jjE63a+Pq7AqzhpBtknVsFfg6Sjb8N6218fH3ICrzFyjPTZW+7jvoM9caqJg=="],
 
     "@moritzbrantner/input-bindings-web": ["@moritzbrantner/input-bindings-web@github:moritzbrantner/input-bindings#2f97db9", { "dependencies": { "@moritzbrantner/input-bindings": "github:moritzbrantner/input-bindings#fdbdd74d8d9a3baf196b1b38f82959a82030689f", "@moritzbrantner/input-bindings-runtime": "github:moritzbrantner/input-bindings#a51ef8a07791e6aa5031ac19178af84cadbfd613" } }, "moritzbrantner-input-bindings-2f97db9", "sha512-AaZsW+PVO8D81qS4MElqwS116WMn3CWOB+z39SDzzs+iPUB+lqxfS60yTRDLIu/PX2AfapBjy81XJ0yNTtpm4A=="],
 
@@ -184,5 +184,7 @@
     "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
 
     "vite": ["vite@7.3.6", "", { "dependencies": { "esbuild": "^0.27.0 || ^0.28.0", "fdir": "^6.5.0", "picomatch": "^4.0.3", "postcss": "^8.5.6", "rollup": "^4.43.0", "tinyglobby": "^0.2.15" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "peerDependencies": { "@types/node": "^20.19.0 || >=22.12.0", "jiti": ">=1.21.0", "less": "^4.0.0", "lightningcss": "^1.21.0", "sass": "^1.70.0", "sass-embedded": "^1.70.0", "stylus": ">=0.54.8", "sugarss": "^5.0.0", "terser": "^5.16.0", "tsx": "^4.8.1", "yaml": "^2.4.2" }, "optionalPeers": ["@types/node", "jiti", "less", "lightningcss", "sass", "sass-embedded", "stylus", "sugarss", "terser", "tsx", "yaml"], "bin": { "vite": "bin/vite.js" } }, "sha512-4XP60spRGjSZFf1qYH+dJIkK2znL3zQfl9KkOV9MkkRR/3Dls0dxaBsQPTloEc5BLXWPL9vsOxopxyKoMmDueg=="],
+
+    "@moritzbrantner/input-bindings-web/@moritzbrantner/input-bindings-runtime": ["@moritzbrantner/input-bindings-runtime@github:moritzbrantner/input-bindings#a51ef8a", { "dependencies": { "@moritzbrantner/input-bindings": "github:moritzbrantner/input-bindings#fdbdd74d8d9a3baf196b1b38f82959a82030689f" } }, "moritzbrantner-input-bindings-a51ef8a", "sha512-17x1fEgUZzSH8jwLalJz3zzwp8M50MdXXE2La54rofBfrSFWy8XHXuxq0fGPnnubNgePq1u+JjES5zc3EuzUjA=="],
   }
 }
