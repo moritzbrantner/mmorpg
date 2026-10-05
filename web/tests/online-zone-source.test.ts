@@ -13,9 +13,9 @@ import { worldSourceContract } from "./support/world-source-contract";
 
 const EAST = 16_384;
 const MOVE_EAST = { kind: "move", forward: 1, strafe: 0, facing: EAST } as const;
-const JUMP = "0502";
+const JUMP = "0602";
 /** The joining player's first command: `ChooseClass` for the default male Warden. */
-const CLASS_CHOICE = "050b0001";
+const CLASS_CHOICE = "060b0001";
 
 function online(options: FakeZoneHostOptions = {}) {
   const clock = new ManualClock();
@@ -66,9 +66,9 @@ describe("OnlineZoneSource", () => {
     source.sendCommand({ ...MOVE_EAST, forward: 0 });
     expect(host.applied).toEqual([
       { playerId: 1, sequence: 1, payload: CLASS_CHOICE },
-      { playerId: 1, sequence: 2, payload: "050101004000" },
+      { playerId: 1, sequence: 2, payload: "060101004000" },
       { playerId: 1, sequence: 3, payload: JUMP },
-      { playerId: 1, sequence: 4, payload: "050100004000" },
+      { playerId: 1, sequence: 4, payload: "060100004000" },
     ]);
     expect(self(source).position[0]).toBeGreaterThan(0);
   });
@@ -91,7 +91,7 @@ describe("OnlineZoneSource", () => {
     for (let frames = 0; frames < 6; frames += 1) {
       await frame(clock, source);
     }
-    expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[1, CLASS_CHOICE], [2, JUMP], [3, "050101004000"]]);
+    expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[1, CLASS_CHOICE], [2, JUMP], [3, "060101004000"]]);
   });
 
   test("targeting and attack intents are resent until acknowledged and applied once, in order", async () => {
@@ -108,7 +108,7 @@ describe("OnlineZoneSource", () => {
       await frame(clock, source);
     }
     expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([
-      [1, CLASS_CHOICE], [2, "05030200000007"], [3, "0504"], [4, "0505"], [5, "0506"],
+      [1, CLASS_CHOICE], [2, "06030200000007"], [3, "0604"], [4, "0605"], [5, "0606"],
     ]);
   });
 
@@ -176,7 +176,7 @@ describe("OnlineZoneSource", () => {
     await frame(clock, source);
     await frame(clock, source);
     expect(source.linkState()).toBe("connected");
-    expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[2, CLASS_CHOICE], [3, "050100000000"]]);
+    expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[2, CLASS_CHOICE], [3, "060100000000"]]);
   });
 
   test("projections waiting for a paused page are bounded to the newest second", async () => {
@@ -231,7 +231,7 @@ describe("OnlineZoneSource", () => {
     expect(host.connectionEpoch(player)).toBe(2);
     expect(host.players()).toEqual([player]);
     // The resumed connection starts with a stopped move at the last facing, sequenced after everything sent.
-    expect(host.applied.slice(sequencesBefore)).toEqual([{ playerId: player, sequence: 3, payload: "050100004000" }]);
+    expect(host.applied.slice(sequencesBefore)).toEqual([{ playerId: player, sequence: 3, payload: "060100004000" }]);
     expect(host.unit(player)?.forward).toBe(0);
     // Presentation restarted from the new connection's projections.
     expect(source.sample()).toEqual(source.latestProjection()!.entities);

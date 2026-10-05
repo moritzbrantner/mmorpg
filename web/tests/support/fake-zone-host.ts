@@ -60,11 +60,12 @@ export class ManualClock implements SessionClock {
 const TICK_HZ = 30;
 export const TICK_MS = 1_000 / TICK_HZ;
 /**
- * Command wire v5 payload lengths by tag: move, jump, select target, start and stop attack, release
- * spirit, move item, loot, use ability, cancel cast, choose class, equip and unequip item.
+ * Command wire v6 payload lengths by tag: move, jump, select target, start and stop attack, release
+ * spirit, move item, loot, use ability, cancel cast, choose class, equip and unequip item, buy and sell item.
  */
 const COMMAND_LENGTHS = new Map([
   [1, 6], [2, 2], [3, 7], [4, 2], [5, 2], [6, 2], [7, 6], [8, 14], [9, 8], [10, 2], [11, 4], [12, 3], [13, 3],
+  [14, 9], [15, 9],
 ]);
 const RUN_UNITS_PER_TICK = 21;
 
@@ -334,7 +335,7 @@ export class FakeZoneHost {
         return;
       }
       const [version, tag] = frame.payload;
-      if (version !== 5 || tag === undefined || COMMAND_LENGTHS.get(tag) !== frame.payload.length) {
+      if (version !== 6 || tag === undefined || COMMAND_LENGTHS.get(tag) !== frame.payload.length) {
         throw new Error("malformed command payload");
       }
       if (tag === 1) {
