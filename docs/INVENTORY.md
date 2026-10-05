@@ -154,8 +154,11 @@ revision, so the same retain/pause rules apply, and slots, totals, health and
 damage stay unchanged while an intent is pending. The client never predicts a
 swap or a health change. `NotEquippable`, `InventoryFull` on unequip, dead
 players and the existing inventory refusals appear as readable feedback in both
-panels. Escape or **Close** closes the pane; Escape closes Loot first, then the
-pane, then Bags. Opening Loot closes Bags and the pane.
+panels. Escape or **Close** closes the pane. Escape inside an open panel closes that
+panel; from the world it closes Loot first, then the pane, then Bags. Opening
+Loot closes Bags and the pane. While an equip or unequip awaits the zone's
+answer, Equip and Unequip are disabled, so a double click cannot send a second
+change that would only be refused.
 
 Catalog JSON format v2 includes `itemCatalogRevision` (decimal string) and an
 ordered `items` array of `{id, name, maxStack}` from core; format v4 adds each

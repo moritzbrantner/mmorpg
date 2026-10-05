@@ -53,6 +53,11 @@ export class BagState {
   get revision(): bigint { return this.#revision; }
   /** Whether an item intent was sent and its sheet or refusal has not arrived yet. */
   get pending(): boolean { return this.#pending !== null; }
+  /**
+   * Equipment changes wait for the answer to the previous item intent: a second change built from the
+   * same sheet would only be refused and misreport the first one's result.
+   */
+  get canChangeEquipment(): boolean { return this.canMove && this.#pending === null; }
   get status(): string {
     if (!this.ready) {
       return "Waiting for your bag…";
@@ -128,7 +133,7 @@ export class BagState {
    * the caller's offer to make; the zone decides and refuses anything else.
    */
   equip(bagSlot: number): WorldCommand | null {
-    if (!this.canMove || !Number.isInteger(bagSlot) || bagSlot < 0 || bagSlot >= 16 || !this.#slots?.[bagSlot]) {
+    if (!this.canChangeEquipment || !Number.isInteger(bagSlot) || bagSlot < 0 || bagSlot >= 16 || !this.#slots?.[bagSlot]) {
       return null;
     }
     this.#send("equip", "Equip sent. Waiting for the zone.");
@@ -137,7 +142,7 @@ export class BagState {
 
   /** Moves an occupied equipment slot's item into the bag; the zone picks the bag slot. */
   unequip(equipmentSlot: number): WorldCommand | null {
-    if (!this.canMove || !Number.isInteger(equipmentSlot) || equipmentSlot < 0 || equipmentSlot >= EQUIPMENT_SLOT_COUNT ||
+    if (!this.canChangeEquipment || !Number.isInteger(equipmentSlot) || equipmentSlot < 0 || equipmentSlot >= EQUIPMENT_SLOT_COUNT ||
         this.#equipment?.[equipmentSlot] == null) {
       return null;
     }

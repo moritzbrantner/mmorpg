@@ -36,7 +36,7 @@ export type CharacterPaneModel = {
 };
 
 /** The parts of the received bag cache the pane reads. */
-export type EquipmentView = Pick<BagState, "equipment" | "stats" | "ready" | "canMove">;
+export type EquipmentView = Pick<BagState, "equipment" | "stats" | "ready" | "canMove" | "canChangeEquipment">;
 
 /**
  * Builds the pane from received facts only: the equipment and stat totals of the last self sheet,
@@ -71,7 +71,7 @@ export function characterPaneModel(
       label,
       itemName: item.name,
       text: stats ? `${label} · ${item.name} (${stats})` : `${label} · ${item.name}`,
-      canUnequip: equipment.canMove,
+      canUnequip: equipment.canChangeEquipment,
     };
   });
   const totals: StatTotals | null = equipment.stats;

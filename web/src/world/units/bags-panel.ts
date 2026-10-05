@@ -151,7 +151,7 @@ export class BagsPanel {
     const selectedStack = this.#selected === null ? null : this.#state.slots?.[this.#selected];
     const selectedItem = selectedStack ? this.#catalog?.items.get(selectedStack.itemId) : null;
     equip.hidden = !selectedItem?.slot;
-    equip.disabled = !this.#state.canMove;
+    equip.disabled = !this.#state.canChangeEquipment;
     const equipText = selectedItem?.slot ? `Equip ${selectedItem.name}` : "Equip";
     if (equip.textContent !== equipText) {
       equip.textContent = equipText;

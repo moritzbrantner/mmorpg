@@ -80,6 +80,9 @@ test("equip and unequip send intent while the received sheet stays unchanged unt
   expect(state.pending).toBe(false);
   expect(state.feedback).toBe("Equipment updated.");
   expect(state.unequip(0)).toEqual({ kind: "unequip-item", equipmentSlot: 0 });
+  // A double click cannot queue a second change from the same sheet.
+  expect(state.unequip(0)).toBeNull();
+  expect(characterPaneModel(state, HEALTHY_VIEWER, catalog).slots[0]?.canUnequip).toBe(false);
   expect(state.equipment?.[0]).toBe(2);
   state.update(projection(2, 3n, "bagged"));
   expect(state.feedback).toBe("Equipment updated.");
