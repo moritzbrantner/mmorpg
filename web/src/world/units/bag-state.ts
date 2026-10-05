@@ -1,5 +1,33 @@
 import type { WorldCommand } from "../../command-wire";
-import type { InventorySlot, StatTotals, ZoneSnapshot } from "../../replication";
+import type { ErrorCode, InventorySlot, StatTotals, ZoneSnapshot } from "../../replication";
+
+/** The kind of item intent awaiting the zone's answer. */
+type PendingItemIntent = "move" | "equip" | "unequip";
+
+const EQUIPMENT_SLOT_COUNT = 6;
+
+/** Readable refusals by error code and the pending intent they answer. */
+function refusalMessage(code: ErrorCode, pending: PendingItemIntent | null): string | null {
+  const equipment = pending === "equip" || pending === "unequip";
+  switch (code) {
+    case "invalid-inventory-move":
+      return equipment
+        ? "That equipment change was refused. Your items are unchanged."
+        : "That bag move was refused. Your items are unchanged.";
+    case "inventory-full":
+      return pending === "unequip"
+        ? "Your bag is full. The item stays equipped."
+        : "That stack is full. Your items are unchanged.";
+    case "not-equippable":
+      return "That item cannot be equipped. Your items are unchanged.";
+    case "you-are-dead":
+      return equipment ? "You cannot change equipment while dead." : "You cannot move items while dead.";
+    case "too-many-intents":
+      return equipment ? "Too many actions. Try the equipment change again." : "Too many actions. Try the bag move again.";
+    default:
+      return null;
+  }
+}
 
 /** Retains received sheets; intents never modify this presentation cache. */
 export class BagState {
@@ -13,6 +41,7 @@ export class BagState {
   #dead = false;
   #feedback = "";
   #sentRevision: bigint | null = null;
+  #pending: PendingItemIntent | null = null;
 
   get slots(): readonly InventorySlot[] | null { return this.#slots; }
   /** Item IDs by equipment slot, received with the bag under the same revision. */
@@ -22,6 +51,8 @@ export class BagState {
   get canMove(): boolean { return this.ready && !this.#dead; }
   get feedback(): string { return this.#feedback; }
   get revision(): bigint { return this.#revision; }
+  /** Whether an item intent was sent and its sheet or refusal has not arrived yet. */
+  get pending(): boolean { return this.#pending !== null; }
   get status(): string {
     if (!this.ready) {
       return "Waiting for your bag…";
@@ -43,6 +74,7 @@ export class BagState {
     this.#dead = false;
     this.#feedback = "";
     this.#sentRevision = null;
+    this.#pending = null;
   }
 
   update(snapshot: ZoneSnapshot): boolean {
@@ -61,28 +93,20 @@ export class BagState {
       this.#stats = snapshot.stats ? { ...snapshot.stats } : null;
       this.#sheetRevision = snapshot.inventoryRevision;
       if (this.#sentRevision !== null && this.#sheetRevision > this.#sentRevision) {
-        this.#feedback = "Bag updated.";
+        this.#feedback = this.#pending === "move" ? "Bag updated." : "Equipment updated.";
         this.#sentRevision = null;
+        this.#pending = null;
       }
     }
     for (const event of snapshot.events) {
       if (event.kind !== "error") {
         continue;
       }
-      if (event.code === "invalid-inventory-move") {
-        this.#feedback = "That bag move was refused. Your items are unchanged.";
-      }
-      if (event.code === "inventory-full") {
-        this.#feedback = "That stack is full. Your items are unchanged.";
-      }
-      if (event.code === "you-are-dead") {
-        this.#feedback = "You cannot move items while dead.";
-      }
-      if (event.code === "too-many-intents") {
-        this.#feedback = "Too many actions. Try the bag move again.";
-      }
-      if (["invalid-inventory-move", "inventory-full", "you-are-dead", "too-many-intents"].includes(event.code)) {
+      const message = refusalMessage(event.code, this.#pending);
+      if (message !== null) {
+        this.#feedback = message;
         this.#sentRevision = null;
+        this.#pending = null;
       }
     }
     return true;
@@ -95,8 +119,35 @@ export class BagState {
         !stack || !Number.isInteger(quantity) || quantity < 1 || quantity > stack.quantity) {
       return null;
     }
-    this.#feedback = "Move sent. Waiting for the zone.";
-    this.#sentRevision = this.#revision;
+    this.#send("move", "Move sent. Waiting for the zone.");
     return { kind: "move-item", source, destination, quantity };
+  }
+
+  /**
+   * Equips the item in an occupied bag slot. Whether the catalog item fits an equipment slot is
+   * the caller's offer to make; the zone decides and refuses anything else.
+   */
+  equip(bagSlot: number): WorldCommand | null {
+    if (!this.canMove || !Number.isInteger(bagSlot) || bagSlot < 0 || bagSlot >= 16 || !this.#slots?.[bagSlot]) {
+      return null;
+    }
+    this.#send("equip", "Equip sent. Waiting for the zone.");
+    return { kind: "equip-item", bagSlot };
+  }
+
+  /** Moves an occupied equipment slot's item into the bag; the zone picks the bag slot. */
+  unequip(equipmentSlot: number): WorldCommand | null {
+    if (!this.canMove || !Number.isInteger(equipmentSlot) || equipmentSlot < 0 || equipmentSlot >= EQUIPMENT_SLOT_COUNT ||
+        this.#equipment?.[equipmentSlot] == null) {
+      return null;
+    }
+    this.#send("unequip", "Unequip sent. Waiting for the zone.");
+    return { kind: "unequip-item", equipmentSlot };
+  }
+
+  #send(kind: PendingItemIntent, feedback: string): void {
+    this.#feedback = feedback;
+    this.#sentRevision = this.#revision;
+    this.#pending = kind;
   }
 }
