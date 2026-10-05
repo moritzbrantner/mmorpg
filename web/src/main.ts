@@ -249,7 +249,7 @@ const controls = new GameControls({
 
 // Debug-only camera and public-source hooks for deterministic acceptance; `?debug` enables them.
 if (new URLSearchParams(window.location.search).has("debug")) {
-  Object.assign(window, { __valeDebug: { ...worldView.debugApi(), worldSource: () => activeWorld?.source ?? null } });
+  Object.assign(window, { __valeDebug: { ...worldView.debugApi(), worldSource: () => (activeWorld ?? chosenWorld())?.source ?? null } });
 }
 
 const selectionStageNodes: RendererSceneNode[] = [
