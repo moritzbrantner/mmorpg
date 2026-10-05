@@ -12,7 +12,9 @@ import { worldSourceContract } from "./support/world-source-contract";
 
 const EAST = 16_384;
 const MOVE_EAST = { kind: "move", forward: 1, strafe: 0, facing: EAST } as const;
-const JUMP = "0202";
+const JUMP = "0502";
+/** The joining player's first command: `ChooseClass` for the default male Warden. */
+const CLASS_CHOICE = "050b0001";
 
 function online(options: FakeZoneHostOptions = {}) {
   const clock = new ManualClock();
@@ -62,9 +64,10 @@ describe("OnlineZoneSource", () => {
     await frame(clock, source);
     source.sendCommand({ ...MOVE_EAST, forward: 0 });
     expect(host.applied).toEqual([
-      { playerId: 1, sequence: 1, payload: "020101004000" },
-      { playerId: 1, sequence: 2, payload: JUMP },
-      { playerId: 1, sequence: 3, payload: "020100004000" },
+      { playerId: 1, sequence: 1, payload: CLASS_CHOICE },
+      { playerId: 1, sequence: 2, payload: "050101004000" },
+      { playerId: 1, sequence: 3, payload: JUMP },
+      { playerId: 1, sequence: 4, payload: "050100004000" },
     ]);
     expect(self(source).position[0]).toBeGreaterThan(0);
   });
@@ -83,11 +86,11 @@ describe("OnlineZoneSource", () => {
     };
     source.sendCommand({ kind: "jump" });
     source.sendCommand(MOVE_EAST);
-    expect(host.applied).toEqual([]);
+    expect(host.applied.map(({ payload }) => payload)).toEqual([CLASS_CHOICE]);
     for (let frames = 0; frames < 6; frames += 1) {
       await frame(clock, source);
     }
-    expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[1, JUMP], [2, "020101004000"]]);
+    expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[1, CLASS_CHOICE], [2, JUMP], [3, "050101004000"]]);
   });
 
   test("targeting and attack intents are resent until acknowledged and applied once, in order", async () => {
@@ -104,7 +107,7 @@ describe("OnlineZoneSource", () => {
       await frame(clock, source);
     }
     expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([
-      [1, "02030200000007"], [2, "0204"], [3, "0205"], [4, "0206"],
+      [1, CLASS_CHOICE], [2, "05030200000007"], [3, "0504"], [4, "0505"], [5, "0506"],
     ]);
   });
 
@@ -182,12 +185,12 @@ describe("OnlineZoneSource", () => {
     expect(host.connectionEpoch(player)).toBe(2);
     expect(host.players()).toEqual([player]);
     // The resumed connection starts with a stopped move at the last facing, sequenced after everything sent.
-    expect(host.applied.slice(sequencesBefore)).toEqual([{ playerId: player, sequence: 2, payload: "020100004000" }]);
+    expect(host.applied.slice(sequencesBefore)).toEqual([{ playerId: player, sequence: 3, payload: "050100004000" }]);
     expect(host.unit(player)?.forward).toBe(0);
     // Presentation restarted from the new connection's projections.
     expect(source.sample()).toEqual(source.latestProjection()!.entities);
     source.sendCommand({ kind: "jump" });
-    expect(host.applied.at(-1)).toEqual({ playerId: player, sequence: 3, payload: JUMP });
+    expect(host.applied.at(-1)).toEqual({ playerId: player, sequence: 4, payload: JUMP });
   });
 
   test("a resume the host refuses fails closed and never admits a new player", async () => {

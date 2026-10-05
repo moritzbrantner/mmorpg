@@ -5,7 +5,7 @@ import { decodeWelcome, type SnapshotFrame, type Welcome } from "../session/fram
 import { reconnectUrl, type SessionRoute } from "../session/route";
 import { SequencedOutbox, type Delivery } from "../session/sequenced-outbox";
 import { SnapshotReassembler } from "../session/snapshot-reassembler";
-import type { LinkState, WorldSource } from "./world-source";
+import { classChoiceCodes, DEFAULT_JOIN_CHARACTER, type JoinCharacter, type LinkState, type WorldSource } from "./world-source";
 
 /** A join (welcome and first projection) must finish within this bound, like the native client's connect. */
 export const CONNECT_TIMEOUT_MS = 10_000;
@@ -56,16 +56,7 @@ type Phase =
  * resent until acknowledged, so a lost datagram never drops a press.
  */
 function deliveryOf(command: WorldCommand): Delivery {
-  switch (command.kind) {
-    case "move":
-      return "latest";
-    case "jump":
-    case "select-target":
-    case "start-attack":
-    case "stop-attack":
-    case "release-spirit":
-      return "reliable";
-  }
+  return command.kind === "move" ? "latest" : "reliable";
 }
 
 function describe(error: unknown): string {
@@ -118,6 +109,10 @@ export class OnlineZoneSource implements WorldSource {
   #resumeAvailable = true;
   /** The first projection of a resumed connection replaces the presentation history. */
   #resetHistory = false;
+  /** The class and sex the joining player chooses with its first command. */
+  #character: JoinCharacter = DEFAULT_JOIN_CHARACTER;
+  /** Projections accepted since the last `advance`, in tick order. */
+  #received: ZoneSnapshot[] = [];
 
   constructor(options: OnlineZoneOptions) {
     this.#route = options.route;
@@ -126,11 +121,12 @@ export class OnlineZoneSource implements WorldSource {
     this.#clock = options.clock ?? browserClock;
   }
 
-  join(): Promise<number> {
+  join(character: JoinCharacter = DEFAULT_JOIN_CHARACTER): Promise<number> {
     if (this.#phase.kind !== "idle" && this.#phase.kind !== "failed") {
       return Promise.reject(new Error("Already in the world; leave before joining again."));
     }
     this.#teardown();
+    this.#character = character;
     return new Promise<number>((resolve, reject) => {
       const cancelTimeout = this.#clock.after(CONNECT_TIMEOUT_MS, () =>
         this.#abortJoin(new Error("The zone host did not admit this player within ten seconds.")));
@@ -180,7 +176,7 @@ export class OnlineZoneSource implements WorldSource {
     this.#flush();
   }
 
-  advance(): void {
+  advance(): readonly ZoneSnapshot[] {
     if (this.#phase.kind === "connected") {
       if (this.#clock.now() - this.#latestAt > SNAPSHOT_TIMEOUT_MS) {
         this.#resume("No projection arrived from the zone host for five seconds.");
@@ -189,6 +185,7 @@ export class OnlineZoneSource implements WorldSource {
       }
     }
     this.#reportFailure();
+    return this.#received.splice(0);
   }
 
   latestProjection(): ZoneSnapshot | null {
@@ -255,6 +252,14 @@ export class OnlineZoneSource implements WorldSource {
     if (phase.kind === "joining") {
       link.welcome = welcome;
       this.#welcome = welcome;
+      // Like the native client, the admitted player chooses its class with its first command.
+      const { classId, sex } = classChoiceCodes(this.#character);
+      this.#outbox.submit(encodeCommand({ kind: "choose-class", classId, sex }), "reliable");
+      try {
+        this.#flush();
+      } catch (error) {
+        this.#linkFailed(link, new Error(describe(error)));
+      }
       return;
     }
     if (phase.kind !== "reconnecting") {
@@ -331,6 +336,7 @@ export class OnlineZoneSource implements WorldSource {
     }
     this.#latest = snapshot;
     this.#latestAt = this.#clock.now();
+    this.#received.push(snapshot);
     this.#outbox.acknowledge(snapshot.acknowledgedSequence);
     this.#flush();
     const phase = this.#phase;
@@ -464,5 +470,6 @@ export class OnlineZoneSource implements WorldSource {
     this.#facing = 0;
     this.#resumeAvailable = true;
     this.#resetHistory = false;
+    this.#received = [];
   }
 }
