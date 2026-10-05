@@ -110,7 +110,7 @@ export class VendorState {
 
   /** Whether a trade with `vendor` may be offered now. */
   canTrade(vendor: NearbyVendor | null, bag: BagState): boolean {
-    return vendor !== null && vendor.inReach && !this.#dead && this.#pending === null && bag.canMove;
+    return vendor !== null && vendor.inReach && !this.#dead && this.#pending === null && bag.canMoveItems;
   }
 
   buy(vendor: NearbyVendor | null, offer: number, bag: BagState): WorldCommand | null {

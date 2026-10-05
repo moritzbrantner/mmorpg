@@ -173,7 +173,8 @@ as the zone does), with enough copper for an offer, while alive and with a
 current bag sheet, and one trade waits for its answer before the next. Copper
 and items change only with the zone's next sheet; refusals addressed to the
 vendor appear in the window. Escape or **Close** closes it; opening it closes
-Bags and Loot, and Escape closes Loot, then the vendor, then Bags.
+Bags, Loot and the character pane, and Escape from the world closes Loot, then
+the vendor, then the character pane, then Bags.
 
 ## Browser Bags panel (#84)
 
@@ -209,8 +210,8 @@ damage stay unchanged while an intent is pending. The client never predicts a
 swap or a health change. `NotEquippable`, `InventoryFull` on unequip, dead
 players and the existing inventory refusals appear as readable feedback in both
 panels. Escape or **Close** closes the pane. Escape inside an open panel closes that
-panel; from the world it closes Loot first, then the pane, then Bags. Opening
-Loot closes Bags and the pane. While an equip or unequip awaits the zone's
+panel; from the world it closes Loot first, then the vendor, then the pane, then
+Bags. Opening Loot or the vendor closes Bags and the pane. While an equip or unequip awaits the zone's
 answer, Equip and Unequip are disabled, so a double click cannot send a second
 change that would only be refused.
 
