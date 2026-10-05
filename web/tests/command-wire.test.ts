@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { encodeCommand, type Axis, type WorldCommand } from "../src/command-wire";
 import { entityKindFromCode } from "../src/entity-ref";
 
-const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v5.hex", import.meta.url), "utf8");
+const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v6.hex", import.meta.url), "utf8");
 
 function axis(raw: string | undefined): Axis {
   const value = Number(raw);
@@ -50,6 +50,10 @@ function command(fields: readonly string[]): WorldCommand {
       return { kind: "equip-item", bagSlot: Number(first) };
     case "unequip_item":
       return { kind: "unequip-item", equipmentSlot: Number(first) };
+    case "buy_item":
+      return { kind: "buy-item", npc: Number(first), offer: Number(second), quantity: Number(third) };
+    case "sell_item":
+      return { kind: "sell-item", npc: Number(first), bagSlot: Number(second), quantity: Number(third) };
     default:
       throw new Error(`Unknown fixture command ${name}`);
   }
@@ -73,8 +77,8 @@ describe("Rust/browser command contract", () => {
     const commands = fixtureCommands();
     const kinds = new Set(commands.map(({ command }) => command.kind));
     expect([...kinds].sort()).toEqual([
-      "cancel-cast", "choose-class", "equip-item", "jump", "loot", "move", "move-item", "release-spirit",
-      "select-target", "start-attack", "stop-attack", "unequip-item", "use-ability",
+      "buy-item", "cancel-cast", "choose-class", "equip-item", "jump", "loot", "move", "move-item", "release-spirit",
+      "select-target", "sell-item", "start-attack", "stop-attack", "unequip-item", "use-ability",
     ]);
     expect(commands.filter(({ command }) => command.kind === "move").length).toBeGreaterThanOrEqual(4);
     expect(commands.filter(({ command }) => command.kind === "select-target").length).toBe(4);

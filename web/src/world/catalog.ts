@@ -1,6 +1,6 @@
 /**
  * The content catalog from the WASM `catalog()` export (format
- * `mmorpg.catalog` v4): names and presentation facts for the IDs that
+ * `mmorpg.catalog` v5): names and presentation facts for the IDs that
  * projections carry. Creature templates by template ID, NPCs by NPC ID,
  * areas by area ID, items (with equipment slot and stats) by item ID,
  * classes by wire value and abilities by ability ID.
@@ -36,7 +36,13 @@ export type ItemRecord = {
   slot: EquipmentSlotName | null;
   /** Attributes added while equipped. */
   stats: ItemStats;
+  /** Copper a vendor pays for one unit. */
+  sellPrice: number;
 };
+
+/** One unit of `item` costs `price` copper; the offer's array index is its wire index. */
+export type VendorOffer = { item: number; price: number };
+export type VendorRecord = { npc: number; offers: readonly VendorOffer[] };
 
 export type ClassName = "warden" | "ranger" | "arcanist";
 export type ClassRecord = { id: number; name: ClassName; resource: "rage" | "focus" | "mana" };
@@ -68,10 +74,12 @@ export type ContentCatalog = {
   areas: ReadonlyMap<number, string>;
   classes: ReadonlyMap<number, ClassRecord>;
   abilities: ReadonlyMap<number, AbilityRecord>;
+  /** Vendor stock by NPC ID. */
+  vendors: ReadonlyMap<number, VendorRecord>;
 };
 
 const FORMAT = "mmorpg.catalog";
-const VERSION = 4;
+const VERSION = 5;
 const CLASS_NAMES: readonly ClassName[] = ["warden", "ranger", "arcanist"];
 const RESOURCES = ["rage", "focus", "mana"] as const;
 const USERS: readonly (ClassName | "creature")[] = [...CLASS_NAMES, "creature"];
@@ -144,7 +152,7 @@ export function decodeCatalog(json: string): ContentCatalog {
   }
   const root = object(parsed, [
     "format", "version", "contentRevision", "contentFingerprint", "creatureTemplates", "npcs", "areas", "itemCatalogRevision", "items",
-    "classes", "abilityCatalogRevision", "abilities",
+    "classes", "abilityCatalogRevision", "abilities", "vendorCatalogRevision", "vendors",
   ], "export");
   if (root.format !== FORMAT || root.version !== VERSION) {
     fail(`unsupported format ${String(root.format)} v${String(root.version)}`);
@@ -201,7 +209,7 @@ export function decodeCatalog(json: string): ContentCatalog {
   }
   const items = list(root.items, "items", 256).map((value, index): ItemRecord => {
     const name = `item ${index}`;
-    const record = object(value, ["id", "name", "maxStack", "slot", "stats"], name);
+    const record = object(value, ["id", "name", "maxStack", "slot", "stats", "sellPrice"], name);
     const stats = object(record.stats, ["stamina", "strength", "agility", "intellect"], `${name} stats`);
     return {
       id: int(record.id, `${name} id`, 1, 0xffff),
@@ -214,8 +222,36 @@ export function decodeCatalog(json: string): ContentCatalog {
         agility: int(stats.agility, `${name} agility`, 0, 255),
         intellect: int(stats.intellect, `${name} intellect`, 0, 255),
       },
+      sellPrice: int(record.sellPrice, `${name} sale value`, 0, 0xffff_ffff),
     };
   });
+  const itemsById = byId(items, "item");
+  if (root.vendorCatalogRevision !== "0" && root.vendorCatalogRevision !== "1") {
+    fail("unsupported vendor catalog revision");
+  }
+  const vendors = list(root.vendors, "vendors", 256).map((value, index): VendorRecord & { id: number } => {
+    const name = `vendor ${index}`;
+    const record = object(value, ["npc", "offers"], name);
+    const npc = int(record.npc, `${name} npc`, 0, 0xffff_ffff);
+    if (npcs.find((candidate) => candidate.id === npc)?.role !== "vendor") {
+      fail(`${name} must name a vendor npc`);
+    }
+    const offers = list(record.offers, `${name} offers`, 8).map((offer, slot) => {
+      const entry = object(offer, ["item", "price"], `${name} offer ${slot}`);
+      const item = int(entry.item, `${name} offer ${slot} item`, 1, 0xffff);
+      if (!itemsById.has(item)) {
+        fail(`${name} offer ${slot} names an unknown item`);
+      }
+      return { item, price: int(entry.price, `${name} offer ${slot} price`, 1, 0xffff_ffff) };
+    });
+    if (offers.length === 0) {
+      fail(`${name} must offer at least one item`);
+    }
+    return { id: npc, npc, offers };
+  });
+  if (root.vendorCatalogRevision === "0" && vendors.length > 0) {
+    fail("content without a vendor catalog cannot list vendors");
+  }
   const classes = list(root.classes, "classes", 3).map((value, index) => {
     const record = object(value, ["id", "name", "resource"], `class ${index}`);
     return {
@@ -251,7 +287,8 @@ export function decodeCatalog(json: string): ContentCatalog {
     classes: byId(classes, "class"),
     abilities: byId(abilities, "ability"),
     itemCatalogRevision: 2n,
-    items: byId(items, "item"),
+    items: itemsById,
+    vendors: new Map([...byId(vendors, "vendor")].map(([id, { npc, offers }]) => [id, { npc, offers }])),
     contentRevision,
     contentFingerprint: root.contentFingerprint,
     creatureTemplates: byId(templates, "creature template"),

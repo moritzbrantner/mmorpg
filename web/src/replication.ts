@@ -93,7 +93,9 @@ export type ErrorCode =
   | "stunned"
   | "already-casting"
   | "invalid-class"
-  | "not-equippable";
+  | "not-equippable"
+  | "invalid-vendor"
+  | "not-enough-money";
 
 /** Feedback the viewer received in the projection's tick; cosmetic and lossy. */
 export type ZoneEvent =
@@ -155,8 +157,8 @@ export type ZoneSnapshot = {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 10;
-const SCHEMA_VERSION = 10;
+const WIRE_VERSION = 11;
+const SCHEMA_VERSION = 11;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
@@ -180,7 +182,7 @@ const ERROR_CODES: readonly ErrorCode[] = [
   "too-many-intents", "invalid-inventory-move", "inventory-full",
   "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
   "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
-  "not-equippable",
+  "not-equippable", "invalid-vendor", "not-enough-money",
 ];
 const EQUIPMENT_SLOTS = 6;
 

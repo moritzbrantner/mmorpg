@@ -35,9 +35,10 @@ describe("content catalog", () => {
     expect(catalog.areas.get(1)).toBe("Greyhaven Outpost");
     expect(catalog.itemCatalogRevision).toBe(2n);
     expect([...catalog.items.values()]).toEqual([
-      { id: 1, name: "Torn Fur", maxStack: 20, slot: null, stats: { stamina: 0, strength: 0, agility: 0, intellect: 0 } },
-      { id: 2, name: "Worn Dagger", maxStack: 1, slot: "mainHand", stats: { stamina: 0, strength: 2, agility: 2, intellect: 0 } },
+      { id: 1, name: "Torn Fur", maxStack: 20, slot: null, stats: { stamina: 0, strength: 0, agility: 0, intellect: 0 }, sellPrice: 1 },
+      { id: 2, name: "Worn Dagger", maxStack: 1, slot: "mainHand", stats: { stamina: 0, strength: 2, agility: 2, intellect: 0 }, sellPrice: 2 },
     ]);
+    expect([...catalog.vendors.values()]).toEqual([{ npc: 3, offers: [{ item: 2, price: 9 }] }]);
     const broken = (mutate: (json: Record<string, unknown>) => void) => {
       const json = catalogJson();
       mutate(json);
@@ -61,6 +62,14 @@ describe("content catalog", () => {
     expect(broken((json) => { (json.items as Record<string, unknown>[])[0]!.maxStack = 0; })).toThrow("stack limit");
     expect(broken((json) => { (json.items as Record<string, unknown>[])[1]!.id = 1; })).toThrow("unique");
     expect(broken((json) => { (json.items as Record<string, unknown>[])[0]!.id = 0; })).toThrow("item 0 id");
+    expect(broken((json) => { json.vendorCatalogRevision = "2"; })).toThrow("vendor catalog revision");
+    expect(broken((json) => { json.vendorCatalogRevision = "0"; })).toThrow("without a vendor catalog");
+    const vendors = (json: Record<string, unknown>) => json.vendors as { npc: number; offers: { item: number; price: number }[] }[];
+    expect(broken((json) => { vendors(json)[0]!.npc = 6; })).toThrow("vendor npc");
+    expect(broken((json) => { vendors(json)[0]!.offers = []; })).toThrow("at least one");
+    expect(broken((json) => { vendors(json)[0]!.offers[0]!.item = 99; })).toThrow("unknown item");
+    expect(broken((json) => { vendors(json)[0]!.offers[0]!.price = 0; })).toThrow("price");
+    expect(broken((json) => { (json.items as Record<string, unknown>[])[0]!.sellPrice = -1; })).toThrow("sale value");
     expect(() => decodeCatalog("{")).toThrow("not JSON");
   });
 });

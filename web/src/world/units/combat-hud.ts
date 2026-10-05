@@ -29,6 +29,8 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "already-casting": "You are already casting. Press Esc to cancel.",
   "invalid-class": "That class choice is not available.",
   "not-equippable": "That item cannot be equipped.",
+  "invalid-vendor": "That vendor does not sell that.",
+  "not-enough-money": "You do not have enough copper.",
 };
 
 const RESOURCE_NAMES = { rage: "Rage", focus: "Focus", mana: "Mana" } as const;

@@ -32,6 +32,7 @@ import { useAbilitySlot } from "./units/abilities";
 import { ClassHud } from "./units/class-hud";
 import { CombatHud } from "./units/combat-hud";
 import { LootPanel, type LootElements } from "./units/loot-panel";
+import { VendorPanel, type VendorElements } from "./units/vendor-panel";
 import { nearestAnimal, projectedUnit, type ProjectedUnit } from "./units/projected-units";
 import { ProgressionHud } from "./units/progression-hud";
 import { SpellEffects, allEffectNodes, type Anchor } from "./units/spell-effects";
@@ -62,6 +63,7 @@ export type WorldViewElements = {
   bags: BagsElements;
   character: CharacterElements;
   loot: LootElements;
+  vendor: VendorElements;
   /** Action bar, unit frames, cast bars and combat text. */
   classHud: HTMLElement;
 };
@@ -145,6 +147,7 @@ export class WorldView {
   readonly #bags: BagsPanel;
   readonly #character: CharacterPane;
   readonly #loot: LootPanel;
+  readonly #vendor: VendorPanel;
   readonly #intents: Intent[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
@@ -189,14 +192,26 @@ export class WorldView {
     });
     this.#progressionHud = new ProgressionHud(elements.experienceBar, elements.experienceStatus, elements.progressionFeedback);
     this.#bags = new BagsPanel(elements.bags, (command) => this.queueIntent(() => command));
-    // The pane shares the bags' received sheet: one revision covers bag and equipment.
+    // The pane and the vendor share the bags' received sheet: one revision covers bag and equipment.
     this.#character = new CharacterPane(elements.character, this.#bags.state, (command) => this.queueIntent(() => command));
     this.#loot = new LootPanel(elements.loot, (intent) => this.queueIntent(intent), () => {
       this.#bags.close();
       this.#character.close(false);
+      this.#vendor.close(false);
     });
-    elements.bags.toggle.addEventListener("click", () => this.#loot.close(false));
-    elements.character.toggle.addEventListener("click", () => this.#loot.close(false));
+    this.#vendor = new VendorPanel(elements.vendor, this.#bags.state, (command) => this.queueIntent(() => command), () => {
+      this.#loot.close(false);
+      this.#character.close(false);
+      this.#bags.close();
+    });
+    elements.bags.toggle.addEventListener("click", () => {
+      this.#loot.close(false);
+      this.#vendor.close(false);
+    });
+    elements.character.toggle.addEventListener("click", () => {
+      this.#loot.close(false);
+      this.#vendor.close(false);
+    });
     this.#outbox = new MovementOutbox(this.#input({ held: IDLE_INTENT, jumps: 0 }));
   }
 
@@ -211,6 +226,7 @@ export class WorldView {
     this.#bags.load(world.catalog);
     this.#character.load(world.catalog);
     this.#loot.load(world.catalog);
+    this.#vendor.load(world.catalog);
     const scenery = world.scenery.scenery;
     this.#presentationFingerprint = scenery.presentationFingerprint;
     this.#reliefAt = world.scenery.reliefAt;
@@ -237,6 +253,7 @@ export class WorldView {
     this.#bags.reset(projection);
     this.#character.reset(projection);
     this.#loot.reset(projection);
+    this.#vendor.reset(projection);
     this.#shownArea = null;
     this.#flyTo = null;
     this.#framePending = true;
@@ -268,6 +285,7 @@ export class WorldView {
     this.#bags.reset();
     this.#character.reset();
     this.#loot.reset();
+    this.#vendor.reset();
     this.#endDrag();
     this.#sky.show(false);
     this.#overlay.hide();
@@ -280,13 +298,21 @@ export class WorldView {
 
   toggleBags(): void {
     this.#loot.close(false);
+    this.#vendor.close(false);
     this.#bags.toggle();
   }
 
   toggleCharacter(): void {
     this.#loot.close(false);
+    this.#vendor.close(false);
     this.#character.toggle();
   }
+
+  toggleVendor(): void {
+    this.#vendor.toggle();
+  }
+
+  closeVendor(): boolean { return this.#vendor.close(); }
 
   closeLoot(): boolean { return this.#loot.close(); }
 
@@ -294,8 +320,8 @@ export class WorldView {
 
   closeCharacter(): boolean { return this.#character.close(); }
 
-  /** Whether bags, the character pane or loot are open: a non-blocking overlay over gameplay controls. */
-  get panelOpen(): boolean { return this.#bags.open || this.#character.open || this.#loot.open; }
+  /** Whether bags, the character pane, loot or the vendor are open: a non-blocking overlay over gameplay controls. */
+  get panelOpen(): boolean { return this.#bags.open || this.#character.open || this.#loot.open || this.#vendor.open; }
 
   toggleOverlay(): void {
     this.#overlay.toggle();
@@ -342,6 +368,7 @@ export class WorldView {
       this.#bags.update(received);
       this.#character.update(received);
       this.#loot.update(received);
+      this.#vendor.update(received);
     }
     const projection = source.latestProjection();
     if (!projection) {
