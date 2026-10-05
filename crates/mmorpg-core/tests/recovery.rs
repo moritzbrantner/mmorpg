@@ -60,15 +60,14 @@ fn recovery_refuses_changed_content_of_the_same_revision() {
     );
 }
 
-/// Dead units cannot move, so a dead player's checkpoint holds no movement
-/// or jump intent; restoring one that does fails closed.
+/// Dead units cannot move. A checkpoint from an earlier build may still hold
+/// a dead player's movement or jump intent; recovery lets go of it, as death
+/// does, so the restored spirit stands.
 #[test]
-fn recovery_refuses_a_dead_player_holding_movement_intent() {
+fn recovery_lets_a_dead_player_go_of_legacy_movement_intent() {
     let content = wandering_wolf(arena::wolf(30, [1, 2]));
     let mut dead = checkpoint(&content);
     dead.players[0].combat.health = 0;
-    let mut zone = restore(dead.clone(), &content).unwrap();
-    zone.advance_tick().unwrap();
     let holding = |forward: i8, strafe: i8, jump_pending: bool| {
         let mut state = dead.clone();
         state.players[0].forward = forward;
@@ -77,18 +76,27 @@ fn recovery_refuses_a_dead_player_holding_movement_intent() {
         state
     };
     for (forward, strafe, jump) in [(1, 0, false), (0, -1, false), (-1, 1, false), (0, 0, true)] {
+        let zone = restore(holding(forward, strafe, jump), &content).unwrap();
+        let player = &zone.snapshot().unwrap().players[0];
         assert_eq!(
-            restore(holding(forward, strafe, jump), &content)
-                .err()
-                .unwrap(),
-            "a dead player holds no movement intent",
+            (player.forward, player.strafe, player.jump_pending),
+            (0, 0, false),
             "{forward} {strafe} {jump}"
         );
     }
-    // The living may hold both.
+    // The living keep both.
     let mut alive = holding(1, -1, true);
     alive.players[0].combat.health = 1;
-    assert!(restore(alive, &content).is_ok());
+    let player = restore(alive, &content)
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .players
+        .remove(0);
+    assert_eq!(
+        (player.forward, player.strafe, player.jump_pending),
+        (1, -1, true)
+    );
 }
 
 #[test]
