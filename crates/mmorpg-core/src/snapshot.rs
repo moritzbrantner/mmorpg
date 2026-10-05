@@ -419,6 +419,15 @@ impl ZoneSimulation {
         if combat.health == 0 && combat.auto_attack {
             return Err(ZoneError::new("a dead player cannot auto-attack"));
         }
+        // Dead players hold no movement. Earlier builds kept it at death, so a
+        // v11 checkpoint may still carry it: recovery lets go of it, exactly as
+        // death now does, instead of refusing a checkpoint of the same format.
+        let alive = combat.health > 0;
+        let (forward, strafe, jump_pending) = if alive {
+            (forward, strafe, player.jump_pending)
+        } else {
+            (Axis::Zero, Axis::Zero, false)
+        };
         if combat.abilities.class.is_some() && self.content.ability_revision() == 0 {
             return Err(ZoneError::new(
                 "a class player needs content that binds the ability catalog",
@@ -439,7 +448,7 @@ impl ZoneSimulation {
                 facing: player.facing,
                 forward,
                 strafe,
-                jump_pending: player.jump_pending,
+                jump_pending,
                 last_sequence: player.last_sequence,
                 spawn_slot: player.spawn_slot,
                 copper: player.copper,

@@ -119,7 +119,7 @@ A unit is a player, creature or NPC, named by `EntityRef = Player(PlayerId) | Cr
 
 **Auto-attack** swings whenever the swing timer is ready and the target is within reach after movement. Out of range it holds the ready swing and reports `OutOfRange` at most once per second. The target's death stops it.
 
-**Death.** A creature at zero health leaves a corpse without a physics body for 30 s, then despawns and respawns at its spawn point with full health and a new level roll after its template's respawn time (counted from death). A player at zero health keeps its body where it fell, leaves every threat table, cannot move and can only `ReleaseSpirit`, which moves it to the graveyard through the physics API with half its maximum health (rounded up).
+**Death.** A creature at zero health leaves a corpse without a physics body for 30 s, then despawns and respawns at its spawn point with full health and a new level roll after its template's respawn time (counted from death). A player at zero health keeps its body where it fell, leaves every threat table, lets go of its held movement and pending jump, cannot move (`Move` and `Jump` hold no intent while dead) and can only `ReleaseSpirit`, which moves it to the graveyard through the physics API with half its maximum health (rounded up).
 
 **Combat state and regeneration.** A unit is in combat while it is on a living creature's threat table or dealt or took a blow in the last 150 ticks, dead or alive. After 180 ticks out of combat a living player regenerates 3 % of its maximum health (rounded up) and again every 30 ticks.
 

@@ -107,6 +107,29 @@ const BACKWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyS, KeyCode::ArrowDown];
 const LEFT_KEYS: [KeyCode; 3] = [KeyCode::KeyA, KeyCode::KeyQ, KeyCode::ArrowLeft];
 const RIGHT_KEYS: [KeyCode; 3] = [KeyCode::KeyD, KeyCode::KeyE, KeyCode::ArrowRight];
 
+/// Movement intent from the held keys.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HeldMovement {
+    forward: i8,
+    strafe: i8,
+    /// Any movement key is held, so the character faces the camera.
+    steering: bool,
+}
+
+/// W/S run and backpedal, A/D or Q/E strafe. Dead units cannot move, so the
+/// dead hold no movement whatever keys are down.
+fn held_movement(keys: &HashSet<KeyCode>, dead: bool) -> HeldMovement {
+    let held = |group: &[KeyCode]| !dead && group.iter().any(|key| keys.contains(key));
+    HeldMovement {
+        forward: i8::from(held(&FORWARD_KEYS)) - i8::from(held(&BACKWARD_KEYS)),
+        strafe: i8::from(held(&RIGHT_KEYS)) - i8::from(held(&LEFT_KEYS)),
+        steering: held(&FORWARD_KEYS)
+            || held(&BACKWARD_KEYS)
+            || held(&LEFT_KEYS)
+            || held(&RIGHT_KEYS),
+    }
+}
+
 /// Browser-style pixel scrolling: this many pixels count as one wheel line.
 const PIXELS_PER_WHEEL_LINE: f64 = 40.0;
 const CONTROL_HINTS: &str = "W/S move · A/D or Q/E strafe · Space jumps · Tab target · F attack · 1-4 abilities · drag to orbit · wheel zooms · Esc cancels a cast or closes";
@@ -127,13 +150,22 @@ impl App {
         event_loop.exit();
     }
 
+    /// Whether the latest projection shows the player dead.
+    fn dead(&self) -> bool {
+        self.presentation
+            .latest()
+            .is_some_and(|latest| latest.viewer.dead)
+    }
+
     /// While any movement key is held, the character faces the camera's yaw.
+    /// The dead send no held movement; it resumes with the next projection
+    /// that shows them alive.
     fn update_movement(&self) {
-        let held = |keys: &[KeyCode]| keys.iter().any(|key| self.keys.contains(key));
-        let forward = i8::from(held(&FORWARD_KEYS)) - i8::from(held(&BACKWARD_KEYS));
-        let strafe = i8::from(held(&RIGHT_KEYS)) - i8::from(held(&LEFT_KEYS));
-        let steering =
-            held(&FORWARD_KEYS) || held(&BACKWARD_KEYS) || held(&LEFT_KEYS) || held(&RIGHT_KEYS);
+        let HeldMovement {
+            forward,
+            strafe,
+            steering,
+        } = held_movement(&self.keys, self.dead());
         let facing = steering.then(|| self.camera.facing());
         self.input.send_if_modified(|input| {
             let next = PlayerInput {
@@ -148,9 +180,12 @@ impl App {
         });
     }
 
+    /// Dead units cannot jump, so a press while dead sends nothing.
     fn jump(&self) {
-        self.input
-            .send_modify(|input| input.jumps = input.jumps.wrapping_add(1));
+        if !self.dead() {
+            self.input
+                .send_modify(|input| input.jumps = input.jumps.wrapping_add(1));
+        }
     }
 
     /// Tab, F and R are intents derived from the latest projection; the zone
@@ -344,6 +379,8 @@ impl ApplicationHandler for App {
                             self.fail(event_loop, error);
                             return;
                         }
+                        // Dying lets go of held movement; living again resumes it.
+                        self.update_movement();
                         self.show_title(now);
                     }
                     NetworkUpdate::Failed(error) => {
@@ -388,5 +425,37 @@ mod tests {
         assert_eq!(ability_slots(PlayerClass::Warden), [1, 2, 3, 4]);
         assert_eq!(ability_slots(PlayerClass::Ranger), [5, 6, 7, 8]);
         assert_eq!(ability_slots(PlayerClass::Arcanist), [9, 10, 11, 12]);
+    }
+
+    #[test]
+    fn the_dead_hold_no_movement() {
+        let keys: HashSet<_> = [KeyCode::KeyW, KeyCode::KeyA].into_iter().collect();
+        assert_eq!(
+            held_movement(&keys, false),
+            HeldMovement {
+                forward: 1,
+                strafe: -1,
+                steering: true
+            }
+        );
+        assert_eq!(
+            held_movement(&keys, true),
+            HeldMovement {
+                forward: 0,
+                strafe: 0,
+                steering: false
+            }
+        );
+        let opposed: HashSet<_> = [KeyCode::KeyS, KeyCode::ArrowUp, KeyCode::KeyE]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            held_movement(&opposed, false),
+            HeldMovement {
+                forward: 0,
+                strafe: 1,
+                steering: true
+            }
+        );
     }
 }

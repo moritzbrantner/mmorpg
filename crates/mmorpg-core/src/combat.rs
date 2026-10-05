@@ -19,7 +19,7 @@ use crate::unit::{
     PLAYER_SWING_TICKS, REGEN_DELAY_TICKS, REGEN_INTERVAL_TICKS, REGEN_PERCENT,
     RELEASE_HEALTH_PERCENT, Swing, percent_of, roll_swing,
 };
-use crate::zone::physics_error;
+use crate::zone::{Axis, physics_error};
 use crate::{
     CreatureId, EntityRef, ErrorCode, INTEREST_RADIUS_UNITS, PLAYER_HALF_EXTENTS_UNITS, PlayerId,
     ZoneError, ZoneEvent, ZoneSimulation,
@@ -633,8 +633,8 @@ impl ZoneSimulation {
         Ok(())
     }
 
-    /// A dead player keeps its body where it fell, stops attacking and
-    /// leaves every threat table.
+    /// A dead player keeps its body where it fell, stops attacking, lets go
+    /// of its held movement and pending jump, and leaves every threat table.
     fn player_dies(&mut self, player_id: PlayerId, killer: EntityRef) -> Result<(), ZoneError> {
         let entity = EntityRef::Player(player_id);
         let body = body_id(entity);
@@ -672,6 +672,9 @@ impl ZoneSimulation {
                 player.resource.value = 0;
                 player.resource.ticks = 0;
             }
+            player.forward = Axis::Zero;
+            player.strafe = Axis::Zero;
+            player.jump_pending = false;
         });
         self.notify(
             player_id,
