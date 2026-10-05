@@ -88,6 +88,12 @@ export class VendorState {
     if (pending === null) {
       return;
     }
+    // A sheet past the sent revision confirms the trade, whatever uncorrelated feedback arrives with it.
+    if (bag.ready && bag.revision > pending.revision) {
+      this.#feedback = pending.kind === "buy" ? "Purchased." : "Sold.";
+      this.#pending = null;
+      return;
+    }
     for (const event of snapshot.events) {
       if (event.kind !== "error") {
         continue;
@@ -106,10 +112,7 @@ export class VendorState {
       this.#pending = null;
       return;
     }
-    if (bag.ready && bag.revision > pending.revision) {
-      this.#feedback = pending.kind === "buy" ? "Purchased." : "Sold.";
-      this.#pending = null;
-    } else if (snapshot.tick > pending.tick && snapshot.acknowledgedSequence > pending.acknowledged &&
+    if (snapshot.tick > pending.tick && snapshot.acknowledgedSequence > pending.acknowledged &&
         snapshot.inventoryRevision === pending.revision) {
       // Events are lossy: an acknowledged trade that left the bag unchanged was refused.
       this.#feedback = "The vendor did not trade. Your items are unchanged.";
@@ -119,7 +122,8 @@ export class VendorState {
 
   /** Whether a trade with `vendor` may be offered now. */
   canTrade(vendor: NearbyVendor | null, bag: BagState): boolean {
-    return vendor !== null && vendor.inReach && !this.#dead && this.#pending === null && bag.canMoveItems;
+    // Any pending bag intent could change the slots a trade names, so trades wait for its answer.
+    return vendor !== null && vendor.inReach && !this.#dead && this.#pending === null && bag.canMove && !bag.pending;
   }
 
   buy(vendor: NearbyVendor | null, offer: number, bag: BagState): WorldCommand | null {

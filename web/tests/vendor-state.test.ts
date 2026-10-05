@@ -138,3 +138,25 @@ test("a refused trade whose feedback was lost unlocks once a later projection ac
   expect(vendor.feedback).toContain("did not trade");
   expect(vendor.canTrade(nearestVendor(acknowledged, catalog), bags)).toBe(true);
 });
+
+test("a confirmed trade wins over uncorrelated capacity feedback, and trades wait for pending bag moves", () => {
+  const bags = new BagState();
+  const vendor = new VendorState();
+  const first = projection(0);
+  bags.update(first);
+  vendor.update(first, bags);
+  expect(vendor.sell(nearestVendor(first, catalog), 0, bags)).not.toBeNull();
+  const sold = [...bag()];
+  sold[0] = null;
+  const confirmed = projection(1, {
+    inventoryRevision: 2n, inventory: sold, viewer: { ...HEALTHY_VIEWER, copper: 13 },
+    events: [{ kind: "error", code: "too-many-intents", target: null }],
+  });
+  bags.update(confirmed);
+  vendor.update(confirmed, bags);
+  expect(vendor.feedback).toBe("Sold.");
+  // A pending bag move could swap the slot a sale names.
+  expect(bags.move(1, 5, 1)).not.toBeNull();
+  expect(vendor.canTrade(nearestVendor(confirmed, catalog), bags)).toBe(false);
+  expect(vendor.sell(nearestVendor(confirmed, catalog), 1, bags)).toBeNull();
+});
