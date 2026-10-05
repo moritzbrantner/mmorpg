@@ -42,6 +42,10 @@ export class BagState {
   #feedback = "";
   #sentRevision: bigint | null = null;
   #pending: PendingItemIntent | null = null;
+  /** The acknowledged sequence and tick when the pending intent was sent. */
+  #sentAcknowledged = 0;
+  #sentTick = -1n;
+  #acknowledged = 0;
 
   get slots(): readonly InventorySlot[] | null { return this.#slots; }
   /** Item IDs by equipment slot, received with the bag under the same revision. */
@@ -82,6 +86,9 @@ export class BagState {
     this.#feedback = "";
     this.#sentRevision = null;
     this.#pending = null;
+    this.#sentAcknowledged = 0;
+    this.#sentTick = -1n;
+    this.#acknowledged = 0;
   }
 
   update(snapshot: ZoneSnapshot): boolean {
@@ -92,6 +99,7 @@ export class BagState {
     }
     this.#identity = identity;
     this.#tick = snapshot.tick;
+    this.#acknowledged = snapshot.acknowledgedSequence;
     this.#revision = snapshot.inventoryRevision;
     this.#dead = snapshot.viewer.dead;
     if (snapshot.inventory !== null) {
@@ -115,6 +123,14 @@ export class BagState {
         this.#sentRevision = null;
         this.#pending = null;
       }
+    }
+    // Events are lossy: once a later projection acknowledges the intent without changing the bag,
+    // it was refused even if its feedback was lost, so the controls unlock (as for loot claims).
+    if (this.#pending !== null && snapshot.tick > this.#sentTick && snapshot.acknowledgedSequence > this.#sentAcknowledged &&
+        snapshot.inventoryRevision === this.#sentRevision) {
+      this.#feedback = "The zone did not change your items.";
+      this.#sentRevision = null;
+      this.#pending = null;
     }
     return true;
   }
@@ -156,5 +172,7 @@ export class BagState {
     this.#feedback = feedback;
     this.#sentRevision = this.#revision;
     this.#pending = kind;
+    this.#sentAcknowledged = this.#acknowledged;
+    this.#sentTick = this.#tick;
   }
 }

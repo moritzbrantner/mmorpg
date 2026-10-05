@@ -142,3 +142,18 @@ test("refusals read for the pending equipment change and leave items unchanged",
   moving.update(refusal(1, 1n, "inventory-full"));
   expect(moving.feedback).toBe("That stack is full. Your items are unchanged.");
 });
+
+test("a refusal whose feedback was lost unlocks once a later projection acknowledges the intent", () => {
+  const state = new BagState();
+  state.update(projection(0, 1n, "equipped", { acknowledgedSequence: 4 }));
+  expect(state.unequip(0)).not.toBeNull();
+  // Same acknowledgement: still waiting.
+  state.update(projection(1, 1n, null, { acknowledgedSequence: 4 }));
+  expect(state.canChangeEquipment).toBe(false);
+  // The intent was acknowledged, the bag did not change and its refusal event was lost.
+  state.update(projection(2, 1n, null, { acknowledgedSequence: 5 }));
+  expect(state.pending).toBe(false);
+  expect(state.canChangeEquipment).toBe(true);
+  expect(state.feedback).toBe("The zone did not change your items.");
+  expect(state.equipment?.[0]).toBe(2);
+});
