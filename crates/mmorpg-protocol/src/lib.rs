@@ -2,7 +2,7 @@
 
 //! Versioned wire encoding of zone commands and snapshots (docs/PROTOCOL.md).
 //!
-//! Commands use wire version 5. Snapshots use wire version 10 in two scopes:
+//! Commands use wire version 6. Snapshots use wire version 11 in two scopes:
 //! canonical (trusted replay and recovery) and player-visible (one player's
 //! projection within a single-datagram byte budget). All multibyte fields are
 //! big-endian and every decoder is strict.

@@ -1,4 +1,4 @@
-/** Player-visible protocol v10 only. Canonical recovery state never enters rendering. */
+/** Player-visible protocol v11 only. Canonical recovery state never enters rendering. */
 import { entityKindFromCode, sameEntity, type EntityKind, type EntityRef } from "./entity-ref";
 
 export type { EntityKind, EntityRef } from "./entity-ref";

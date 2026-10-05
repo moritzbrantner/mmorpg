@@ -47,7 +47,8 @@ const REFUSALS: Partial<Record<ErrorCode, string>> = {
   "invalid-inventory-move": "That trade was refused. Your items are unchanged.",
 };
 
-type PendingTrade = { kind: "buy" | "sell"; npc: number; revision: bigint };
+/** The trade, its vendor, and the bag revision, tick and acknowledged sequence when it was sent. */
+type PendingTrade = { kind: "buy" | "sell"; npc: number; revision: bigint; tick: bigint; acknowledged: number };
 
 /**
  * Trade intents over the shared received bag cache. Nothing is predicted: bag and copper change only
@@ -55,6 +56,7 @@ type PendingTrade = { kind: "buy" | "sell"; npc: number; revision: bigint };
  */
 export class VendorState {
   #tick = -1n;
+  #acknowledged = 0;
   #copper = 0;
   #dead = false;
   #feedback = "";
@@ -66,6 +68,7 @@ export class VendorState {
 
   reset(): void {
     this.#tick = -1n;
+    this.#acknowledged = 0;
     this.#copper = 0;
     this.#dead = false;
     this.#feedback = "";
@@ -78,6 +81,7 @@ export class VendorState {
       return;
     }
     this.#tick = snapshot.tick;
+    this.#acknowledged = snapshot.acknowledgedSequence;
     this.#copper = snapshot.viewer.copper;
     this.#dead = snapshot.viewer.dead;
     const pending = this.#pending;
@@ -104,6 +108,11 @@ export class VendorState {
     }
     if (bag.ready && bag.revision > pending.revision) {
       this.#feedback = pending.kind === "buy" ? "Purchased." : "Sold.";
+      this.#pending = null;
+    } else if (snapshot.tick > pending.tick && snapshot.acknowledgedSequence > pending.acknowledged &&
+        snapshot.inventoryRevision === pending.revision) {
+      // Events are lossy: an acknowledged trade that left the bag unchanged was refused.
+      this.#feedback = "The vendor did not trade. Your items are unchanged.";
       this.#pending = null;
     }
   }
@@ -133,7 +142,7 @@ export class VendorState {
   }
 
   #send(kind: PendingTrade["kind"], npc: number, bag: BagState, feedback: string): void {
-    this.#pending = { kind, npc, revision: bag.revision };
+    this.#pending = { kind, npc, revision: bag.revision, tick: this.#tick, acknowledged: this.#acknowledged };
     this.#feedback = feedback;
   }
 }

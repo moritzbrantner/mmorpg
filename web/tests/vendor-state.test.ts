@@ -119,3 +119,22 @@ test("refusals addressed to the vendor read as trade feedback; other units' refu
     expect(vendor.pending).toBe(false);
   }
 });
+
+test("a refused trade whose feedback was lost unlocks once a later projection acknowledges it", () => {
+  const bags = new BagState();
+  const vendor = new VendorState();
+  const first = projection(0, { acknowledgedSequence: 3 });
+  bags.update(first);
+  vendor.update(first, bags);
+  expect(vendor.sell(nearestVendor(first, catalog), 0, bags)).not.toBeNull();
+  const waiting = projection(1, { acknowledgedSequence: 3, inventory: null });
+  bags.update(waiting);
+  vendor.update(waiting, bags);
+  expect(vendor.pending).toBe(true);
+  const acknowledged = projection(2, { acknowledgedSequence: 4, inventory: null });
+  bags.update(acknowledged);
+  vendor.update(acknowledged, bags);
+  expect(vendor.pending).toBe(false);
+  expect(vendor.feedback).toContain("did not trade");
+  expect(vendor.canTrade(nearestVendor(acknowledged, catalog), bags)).toBe(true);
+});
