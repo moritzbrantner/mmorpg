@@ -2,6 +2,7 @@ import type { WorldCommand } from "../../command-wire";
 import type { ZoneSnapshot } from "../../replication";
 import type { ContentCatalog } from "../catalog";
 import { BagState } from "./bag-state";
+import { itemStatsText } from "./character-pane";
 
 export type BagsElements = {
   panel: HTMLElement;
@@ -9,6 +10,8 @@ export type BagsElements = {
   close: HTMLButtonElement;
   slots: HTMLElement;
   quantity: HTMLInputElement;
+  /** Offers EquipItem for a selected stack whose catalog item has an equipment slot. */
+  equip: HTMLButtonElement;
   selection: HTMLElement;
   status: HTMLElement;
   feedback: HTMLElement;
@@ -35,6 +38,14 @@ export class BagsPanel {
       elements.slots.append(button);
       return button;
     });
+    elements.equip.addEventListener("click", () => {
+      const command = this.#selected === null ? null : this.#state.equip(this.#selected);
+      if (command) {
+        this.#send(command);
+        this.#selected = null;
+      }
+      this.#render();
+    });
     elements.toggle.addEventListener("click", () => this.toggle());
     elements.close.addEventListener("click", () => this.close());
     elements.panel.addEventListener("keydown", (event) => {
@@ -48,6 +59,9 @@ export class BagsPanel {
   }
 
   load(catalog: ContentCatalog): void { this.#catalog = catalog; }
+
+  /** The received bag, equipment and stat cache this panel keeps current. */
+  get state(): BagState { return this.#state; }
 
   reset(snapshot: ZoneSnapshot | null = null): void {
     this.#state.reset(snapshot);
@@ -89,14 +103,14 @@ export class BagsPanel {
     if (!this.#state.update(snapshot)) {
       return;
     }
-    if (revision !== this.#state.revision || !this.#state.canMove) {
+    if (revision !== this.#state.revision || !this.#state.canMoveItems) {
       this.#selected = null;
     }
     this.#render();
   }
 
   #click(slot: number): void {
-    if (!this.#state.canMove) {
+    if (!this.#state.canMoveItems) {
       return;
     }
     if (this.#selected === slot) {
@@ -122,17 +136,25 @@ export class BagsPanel {
   }
 
   #render(): void {
-    const { status, feedback, selection, quantity } = this.#elements;
+    const { status, feedback, selection, quantity, equip } = this.#elements;
     if (status.textContent !== this.#state.status) {
       status.textContent = this.#state.status;
     }
     if (feedback.textContent !== this.#state.feedback) {
       feedback.textContent = this.#state.feedback;
     }
-    quantity.disabled = this.#selected === null || !this.#state.canMove;
+    quantity.disabled = this.#selected === null || !this.#state.canMoveItems;
     const hint = this.#selected === null ? "Choose an occupied slot." : `Move from slot ${this.#selected + 1}. Choose a quantity and destination.`;
     if (selection.textContent !== hint) {
       selection.textContent = hint;
+    }
+    const selectedStack = this.#selected === null ? null : this.#state.slots?.[this.#selected];
+    const selectedItem = selectedStack ? this.#catalog?.items.get(selectedStack.itemId) : null;
+    equip.hidden = !selectedItem?.slot;
+    equip.disabled = !this.#state.canChangeEquipment;
+    const equipText = selectedItem?.slot ? `Equip ${selectedItem.name}` : "Equip";
+    if (equip.textContent !== equipText) {
+      equip.textContent = equipText;
     }
     for (const [slot, button] of this.#buttons.entries()) {
       const stack = this.#state.slots?.[slot];
@@ -148,7 +170,13 @@ export class BagsPanel {
       if (button.textContent !== text) {
         button.textContent = text;
       }
-      button.disabled = !this.#state.canMove;
+      const stats = item ? itemStatsText(item.stats) : "";
+      if (stats) {
+        button.title = stats;
+      } else {
+        button.removeAttribute("title");
+      }
+      button.disabled = !this.#state.canMoveItems;
       button.setAttribute("aria-pressed", String(this.#selected === slot));
     }
   }

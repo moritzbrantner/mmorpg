@@ -205,6 +205,16 @@ const worldView = new WorldView(renderer, camera, {
     selection: requireElement<HTMLElement>("#bag-selection"),
     status: requireElement<HTMLElement>("#bag-status"),
     feedback: requireElement<HTMLElement>("#bag-feedback"),
+    equip: requireElement<HTMLButtonElement>("#bag-equip"),
+  },
+  character: {
+    panel: requireElement<HTMLElement>("#character-panel"),
+    toggle: requireElement<HTMLButtonElement>("#character-toggle"),
+    close: requireElement<HTMLButtonElement>("#character-close"),
+    status: requireElement<HTMLElement>("#character-status"),
+    slots: requireElement<HTMLElement>("#equipment-slots"),
+    stats: requireElement<HTMLElement>("#character-stats"),
+    feedback: requireElement<HTMLElement>("#character-feedback"),
   },
 });
 const controls = new GameControls({
@@ -917,8 +927,11 @@ function runAction(action: GameAction): void {
     case "ui.toggleBags":
       worldView.toggleBags();
       return;
+    case "ui.toggleCharacter":
+      worldView.toggleCharacter();
+      return;
     case "ui.closePanel":
-      if (!worldView.closeLoot()) {
+      if (!worldView.closeLoot() && !worldView.closeCharacter()) {
         worldView.closeBags();
       }
       return;

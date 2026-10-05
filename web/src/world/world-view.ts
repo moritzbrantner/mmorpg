@@ -28,6 +28,7 @@ import { SceneryFrame, buildSceneryScene, sceneryResourcePrefix, type ScenerySce
 import { SkyLayer } from "./sky";
 import { UnitAnimators, placeWithModel, unitIdentity, unitModel, unitNodeIds, type UnitContext, type UnitLook } from "./unit-nodes";
 import { BagsPanel, type BagsElements } from "./units/bags-panel";
+import { CharacterPane, type CharacterElements } from "./units/character-pane";
 import { useAbilitySlot } from "./units/abilities";
 import { ClassHud } from "./units/class-hud";
 import { CombatHud } from "./units/combat-hud";
@@ -59,6 +60,7 @@ export type WorldViewElements = {
   experienceStatus: HTMLElement;
   progressionFeedback: HTMLElement;
   bags: BagsElements;
+  character: CharacterElements;
   loot: LootElements;
   /** Action bar, unit frames, cast bars and combat text. */
   classHud: HTMLElement;
@@ -141,6 +143,7 @@ export class WorldView {
   readonly #classHud: ClassHud;
   readonly #effects = new SpellEffects();
   readonly #bags: BagsPanel;
+  readonly #character: CharacterPane;
   readonly #loot: LootPanel;
   readonly #intents: Intent[] = [];
   readonly #secondaryClick = new SecondaryClick();
@@ -184,8 +187,14 @@ export class WorldView {
     });
     this.#progressionHud = new ProgressionHud(elements.experienceBar, elements.experienceStatus, elements.progressionFeedback);
     this.#bags = new BagsPanel(elements.bags, (command) => this.queueIntent(() => command));
-    this.#loot = new LootPanel(elements.loot, (intent) => this.queueIntent(intent), () => { this.#bags.close(); });
+    // The pane shares the bags' received sheet: one revision covers bag and equipment.
+    this.#character = new CharacterPane(elements.character, this.#bags.state, (command) => this.queueIntent(() => command));
+    this.#loot = new LootPanel(elements.loot, (intent) => this.queueIntent(intent), () => {
+      this.#bags.close();
+      this.#character.close(false);
+    });
     elements.bags.toggle.addEventListener("click", () => this.#loot.close(false));
+    elements.character.toggle.addEventListener("click", () => this.#loot.close(false));
     this.#outbox = new MovementOutbox(this.#input({ held: IDLE_INTENT, jumps: 0 }));
   }
 
@@ -198,6 +207,7 @@ export class WorldView {
     const started = performance.now();
     this.#catalog = world.catalog;
     this.#bags.load(world.catalog);
+    this.#character.load(world.catalog);
     this.#loot.load(world.catalog);
     const scenery = world.scenery.scenery;
     this.#presentationFingerprint = scenery.presentationFingerprint;
@@ -223,6 +233,7 @@ export class WorldView {
     this.#effects.clear();
     this.#anchors = new Map();
     this.#bags.reset(projection);
+    this.#character.reset(projection);
     this.#loot.reset(projection);
     this.#shownArea = null;
     this.#flyTo = null;
@@ -251,6 +262,7 @@ export class WorldView {
     this.#classHud.reset();
     this.#effects.clear();
     this.#bags.reset();
+    this.#character.reset();
     this.#loot.reset();
     this.#endDrag();
     this.#sky.show(false);
@@ -267,12 +279,19 @@ export class WorldView {
     this.#bags.toggle();
   }
 
+  toggleCharacter(): void {
+    this.#loot.close(false);
+    this.#character.toggle();
+  }
+
   closeLoot(): boolean { return this.#loot.close(); }
 
   closeBags(): boolean { return this.#bags.close(); }
 
-  /** Whether bags or loot are open: a non-blocking overlay over gameplay controls. */
-  get panelOpen(): boolean { return this.#bags.open || this.#loot.open; }
+  closeCharacter(): boolean { return this.#character.close(); }
+
+  /** Whether bags, the character pane or loot are open: a non-blocking overlay over gameplay controls. */
+  get panelOpen(): boolean { return this.#bags.open || this.#character.open || this.#loot.open; }
 
   toggleOverlay(): void {
     this.#overlay.toggle();
@@ -317,6 +336,7 @@ export class WorldView {
     const receivedProjections = source.advance(deltaSeconds);
     for (const received of receivedProjections) {
       this.#bags.update(received);
+      this.#character.update(received);
       this.#loot.update(received);
     }
     const projection = source.latestProjection();
@@ -383,6 +403,7 @@ export class WorldView {
     this.#classHud.update(projection, catalog, now);
     this.#progressionHud.update(projection, now);
     this.#bags.update(projection);
+    this.#character.update(projection);
     this.#loot.update(projection);
     this.#lastSelf = { x: self.x, z: self.z, facing: self.facing };
     if (this.#framePending) {
