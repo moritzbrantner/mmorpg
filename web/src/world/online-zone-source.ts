@@ -113,6 +113,9 @@ export class OnlineZoneSource implements WorldSource {
   #character: JoinCharacter = DEFAULT_JOIN_CHARACTER;
   /** Projections accepted since the last `advance`, in tick order. */
   #received: ZoneSnapshot[] = [];
+  /** The sequence the class choice went out under, until a projection acknowledges it. */
+  #classSequence: number | null = null;
+  #classAcknowledged = false;
 
   constructor(options: OnlineZoneOptions) {
     this.#route = options.route;
@@ -253,13 +256,14 @@ export class OnlineZoneSource implements WorldSource {
       link.welcome = welcome;
       this.#welcome = welcome;
       // Like the native client, the admitted player chooses its class with its first command.
-      const { classId, sex } = classChoiceCodes(this.#character);
-      this.#outbox.submit(encodeCommand({ kind: "choose-class", classId, sex }), "reliable");
+      this.#outbox.submit(this.#classChoice(), "reliable");
       try {
         this.#flush();
       } catch (error) {
         this.#linkFailed(link, new Error(describe(error)));
+        return;
       }
+      this.#classSequence = this.#outbox.awaiting;
       return;
     }
     if (phase.kind !== "reconnecting") {
@@ -274,8 +278,14 @@ export class OnlineZoneSource implements WorldSource {
     link.welcome = welcome;
     this.#welcome = welcome;
     this.#resetHistory = true;
-    // Start the resumed connection stopped, keeping the last facing; nothing queued before is replayed.
-    this.#outbox.restart(encodeCommand({ kind: "move", forward: 0, strafe: 0, facing: this.#facing }));
+    // Start the resumed connection stopped, keeping the last facing; nothing queued before is replayed,
+    // except a class choice no projection acknowledged yet, which goes out first.
+    const stop = encodeCommand({ kind: "move", forward: 0, strafe: 0, facing: this.#facing });
+    const classPending = !this.#classAcknowledged;
+    this.#outbox.restart(classPending ? this.#classChoice() : stop);
+    if (classPending) {
+      this.#outbox.submit(stop, "latest");
+    }
     try {
       this.#flush();
     } catch (error) {
@@ -283,6 +293,9 @@ export class OnlineZoneSource implements WorldSource {
       return;
     }
     phase.barrier = this.#outbox.awaiting;
+    if (classPending) {
+      this.#classSequence = phase.barrier;
+    }
   }
 
   #receive(link: Link, datagram: Uint8Array): void {
@@ -338,6 +351,10 @@ export class OnlineZoneSource implements WorldSource {
     this.#latestAt = this.#clock.now();
     this.#received.push(snapshot);
     this.#outbox.acknowledge(snapshot.acknowledgedSequence);
+    if (this.#classSequence !== null && snapshot.acknowledgedSequence >= this.#classSequence) {
+      this.#classAcknowledged = true;
+      this.#classSequence = null;
+    }
     this.#flush();
     const phase = this.#phase;
     if (phase.kind === "joining") {
@@ -471,5 +488,12 @@ export class OnlineZoneSource implements WorldSource {
     this.#resumeAvailable = true;
     this.#resetHistory = false;
     this.#received = [];
+    this.#classSequence = null;
+    this.#classAcknowledged = false;
+  }
+
+  #classChoice(): Uint8Array {
+    const { classId, sex } = classChoiceCodes(this.#character);
+    return encodeCommand({ kind: "choose-class", classId, sex });
   }
 }

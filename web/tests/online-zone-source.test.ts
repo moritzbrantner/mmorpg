@@ -161,6 +161,23 @@ describe("OnlineZoneSource", () => {
     expect(() => source.sendCommand(MOVE_EAST)).toThrow("snapshot hash mismatch");
   });
 
+  test("a class choice no projection acknowledged is chosen again first on the resumed connection", async () => {
+    const { clock, host, source } = online({ graceTicks: 300n });
+    let dropClassChoice = true;
+    host.toHost = (datagram) => (dropClassChoice && datagram.byteLength === 12 && datagram[9] === 11 ? [] : [datagram]);
+    const player = await clock.until(source.join());
+    await frame(clock, source, 3 * TICK_MS);
+    expect(host.applied).toEqual([]);
+    dropClassChoice = false;
+    host.lose(player);
+    await clock.advance(0);
+    await frame(clock, source, RECONNECT_SETTLE_MS);
+    await frame(clock, source);
+    await frame(clock, source);
+    expect(source.linkState()).toBe("connected");
+    expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[2, CLASS_CHOICE], [3, "050100000000"]]);
+  });
+
   test("a lost connection resumes the same player on a new epoch, stopped, without replaying intent", async () => {
     const { clock, host, source } = online({ graceTicks: 300n });
     const player = await clock.until(source.join());
