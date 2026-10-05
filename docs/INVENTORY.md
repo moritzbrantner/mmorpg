@@ -118,7 +118,7 @@ projection carries the viewer's melee damage range (see
 [PROTOCOL.md](PROTOCOL.md)). Starter admission equips nothing; the gear drops
 from humanoids ([LOOT.md](LOOT.md)). The browser decodes the equipment and its
 stats with the bag and keeps them under the same revision rules; the character
-pane is #129.
+pane below shows them.
 
 
 ## Browser Bags panel (#84)
@@ -137,6 +137,25 @@ Stale ticks/revisions and another viewer/zone/content identity cannot replace th
 cache. Entry binds the current source identity and leave/reset removes prior
 slots, selection and feedback. A fresh entry still gets a fresh starter bag;
 character/world persistence belongs to #30/#40.
+
+## Browser Character pane (#129)
+
+Open **Character** or press C from the world canvas. The pane lists the six
+equipment slots in wire order (main hand, off hand, head, chest, legs, feet)
+with catalog names and stats (for example `+2 Strength, +2 Agility`), empty
+slots as Empty, then the Stamina, Strength, Agility and Intellect totals of the
+self sheet and the viewer's projected Health `current / max` and Damage
+`min–max`. In Bags, selecting a stack whose catalog item has an equipment slot
+offers **Equip** (`EquipItem { bag_slot }`); an occupied pane slot offers
+**Unequip** (`UnequipItem { equipment_slot }`). Bag slot tooltips show item stats.
+
+The pane reads the Bags panel's received cache: bag and equipment share one
+revision, so the same retain/pause rules apply, and slots, totals, health and
+damage stay unchanged while an intent is pending. The client never predicts a
+swap or a health change. `NotEquippable`, `InventoryFull` on unequip, dead
+players and the existing inventory refusals appear as readable feedback in both
+panels. Escape or **Close** closes the pane; Escape closes Loot first, then the
+pane, then Bags. Opening Loot closes Bags and the pane.
 
 Catalog JSON format v2 includes `itemCatalogRevision` (decimal string) and an
 ordered `items` array of `{id, name, maxStack}` from core; format v4 adds each
