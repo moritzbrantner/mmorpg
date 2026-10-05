@@ -80,8 +80,10 @@ test("equip and unequip send intent while the received sheet stays unchanged unt
   expect(state.pending).toBe(false);
   expect(state.feedback).toBe("Equipment updated.");
   expect(state.unequip(0)).toEqual({ kind: "unequip-item", equipmentSlot: 0 });
-  // A double click cannot queue a second change from the same sheet.
+  // A double click cannot queue a second change from the same sheet, nor can a bag move overtake it.
   expect(state.unequip(0)).toBeNull();
+  expect(state.canMoveItems).toBe(false);
+  expect(state.move(0, 2, 1)).toBeNull();
   expect(characterPaneModel(state, HEALTHY_VIEWER, catalog).slots[0]?.canUnequip).toBe(false);
   expect(state.equipment?.[0]).toBe(2);
   state.update(projection(2, 3n, "bagged"));
@@ -132,6 +134,10 @@ test("refusals read for the pending equipment change and leave items unchanged",
   }
   const moving = new BagState();
   moving.update(projection(0, 1n, "bagged"));
+  expect(moving.move(0, 2, 1)).not.toBeNull();
+  // Bag moves may follow each other, but equipment waits for their answer.
+  expect(moving.canMoveItems).toBe(true);
+  expect(moving.equip(1)).toBeNull();
   moving.move(0, 1, 1);
   moving.update(refusal(1, 1n, "inventory-full"));
   expect(moving.feedback).toBe("That stack is full. Your items are unchanged.");

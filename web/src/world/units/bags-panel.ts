@@ -103,14 +103,14 @@ export class BagsPanel {
     if (!this.#state.update(snapshot)) {
       return;
     }
-    if (revision !== this.#state.revision || !this.#state.canMove) {
+    if (revision !== this.#state.revision || !this.#state.canMoveItems) {
       this.#selected = null;
     }
     this.#render();
   }
 
   #click(slot: number): void {
-    if (!this.#state.canMove) {
+    if (!this.#state.canMoveItems) {
       return;
     }
     if (this.#selected === slot) {
@@ -143,7 +143,7 @@ export class BagsPanel {
     if (feedback.textContent !== this.#state.feedback) {
       feedback.textContent = this.#state.feedback;
     }
-    quantity.disabled = this.#selected === null || !this.#state.canMove;
+    quantity.disabled = this.#selected === null || !this.#state.canMoveItems;
     const hint = this.#selected === null ? "Choose an occupied slot." : `Move from slot ${this.#selected + 1}. Choose a quantity and destination.`;
     if (selection.textContent !== hint) {
       selection.textContent = hint;
@@ -176,7 +176,7 @@ export class BagsPanel {
       } else {
         button.removeAttribute("title");
       }
-      button.disabled = !this.#state.canMove;
+      button.disabled = !this.#state.canMoveItems;
       button.setAttribute("aria-pressed", String(this.#selected === slot));
     }
   }

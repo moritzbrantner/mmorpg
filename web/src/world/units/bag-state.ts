@@ -58,6 +58,8 @@ export class BagState {
    * same sheet would only be refused and misreport the first one's result.
    */
   get canChangeEquipment(): boolean { return this.canMove && this.#pending === null; }
+  /** Bag moves may follow each other, but not an equipment change awaiting its answer. */
+  get canMoveItems(): boolean { return this.canMove && (this.#pending === null || this.#pending === "move"); }
   get status(): string {
     if (!this.ready) {
       return "Waiting for your bag…";
@@ -119,7 +121,7 @@ export class BagState {
 
   move(source: number, destination: number, quantity: number): WorldCommand | null {
     const stack = this.#slots?.[source];
-    if (!this.canMove || !Number.isInteger(source) || source < 0 || source >= 16 ||
+    if (!this.canMoveItems || !Number.isInteger(source) || source < 0 || source >= 16 ||
         !Number.isInteger(destination) || destination < 0 || destination >= 16 ||
         !stack || !Number.isInteger(quantity) || quantity < 1 || quantity > stack.quantity) {
       return null;
