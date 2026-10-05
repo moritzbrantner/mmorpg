@@ -793,7 +793,8 @@ kbd {
 .bag-quantity input { width: 5rem; font: inherit; padding: .4rem; }
 #bag-feedback, #loot-feedback, #character-feedback { min-height: 1.2rem; color: var(--gold-bright); }
 @media (max-width: 480px) {
-  .bags-panel, .loot-panel, .character-panel { top: 9.5rem; max-height: calc(100dvh - 10.5rem); }
+  /* Below the four stacked toolbar buttons. */
+  .bags-panel, .loot-panel, .character-panel { top: 12.5rem; max-height: calc(100dvh - 13.5rem); }
   .bag-slots { gap: .25rem; }
   .bags-panel, .loot-panel, .character-panel { padding: .7rem; }
 }

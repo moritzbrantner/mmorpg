@@ -105,4 +105,5 @@
   .selection-sidebar { grid-template-columns: minmax(0, 1fr); }
   .equipment-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .world-toolbar { flex-direction: column; gap: .3rem; align-items: end; }
+  .world-toolbar :is(#bags-toggle, #character-toggle, #return-to-characters) { min-height: 2.3rem; padding-block: .3rem; }
 }
