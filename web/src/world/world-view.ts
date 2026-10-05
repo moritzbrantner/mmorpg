@@ -357,7 +357,9 @@ export class WorldView {
     for (const { intent, onSent } of this.#intents.splice(0)) {
       const command = latest ? intent(latest) : null;
       if (command) {
-        onSent?.(source.sendCommand(command));
+        // Send first: an optional call would skip evaluating its argument when there is no callback.
+        const sequence = source.sendCommand(command);
+        onSent?.(sequence);
       }
     }
     for (const command of this.#outbox.update(this.#input(input), now)) {
