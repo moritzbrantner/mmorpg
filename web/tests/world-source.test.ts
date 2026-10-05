@@ -16,7 +16,7 @@ import {
 import { FakeWorldSource } from "./support/fake-world-source";
 import { encodeTestSnapshot } from "./support/snapshot-encoder";
 import { playerEntity, testSnapshot } from "./support/snapshots";
-import { worldSourceContract } from "./support/world-source-contract";
+import { immediate, worldSourceContract } from "./support/world-source-contract";
 
 /** Records what `LocalZoneSource` asks of the WASM zone; returns well-formed projections. */
 class RecordingZone implements LocalZoneHandle {
@@ -65,26 +65,26 @@ class RecordingZone implements LocalZoneHandle {
   }
 }
 
-worldSourceContract("FakeWorldSource", () => new FakeWorldSource(), () => {
+worldSourceContract("FakeWorldSource", () => immediate(new FakeWorldSource()), () => {
   const source = new FakeWorldSource();
   source.refuseJoins = true;
-  return { source, repair: () => { source.refuseJoins = false; } };
+  return { ...immediate(source), repair: () => { source.refuseJoins = false; } };
 });
-worldSourceContract("LocalZoneSource over a recording zone", () => new LocalZoneSource(new RecordingZone()), () => {
+worldSourceContract("LocalZoneSource over a recording zone", () => immediate(new LocalZoneSource(new RecordingZone())), () => {
   const zone = new RecordingZone();
   zone.corruptProjections = true;
-  return { source: new LocalZoneSource(zone), repair: () => { zone.corruptProjections = false; } };
+  return { ...immediate(new LocalZoneSource(zone)), repair: () => { zone.corruptProjections = false; } };
 });
 
 describe("LocalZoneSource", () => {
-  test("sends encoded commands with strictly increasing sequences per player", () => {
+  test("sends encoded commands with strictly increasing sequences per player", async () => {
     const zone = new RecordingZone();
     const source = new LocalZoneSource(zone);
-    const first = source.join({ classId: "arcanist", sex: "female" });
+    const first = await source.join({ classId: "arcanist", sex: "female" });
     source.sendCommand({ kind: "move", forward: 1, strafe: -1, facing: 16_384 });
     source.sendCommand({ kind: "jump" });
     source.leave();
-    const second = source.join();
+    const second = await source.join();
     source.sendCommand({ kind: "jump" });
     // Joining spent sequence 1 on the class choice; the default is a male Warden.
     expect(zone.joins).toEqual([[first, 2, 0], [second, 0, 1]]);
@@ -96,12 +96,12 @@ describe("LocalZoneSource", () => {
     expect(zone.left).toEqual([first]);
   });
 
-  test("runs fixed ticks from a bounded accumulator only while joined", () => {
+  test("runs fixed ticks from a bounded accumulator only while joined", async () => {
     const zone = new RecordingZone();
     const source = new LocalZoneSource(zone);
     source.advance(1);
     expect(zone.ticks).toBe(0);
-    source.join();
+    await source.join();
     source.advance(0.5 / 30);
     expect(zone.ticks).toBe(0);
     source.advance(0.5 / 30 + 1e-9);
@@ -111,10 +111,10 @@ describe("LocalZoneSource", () => {
     expect(source.latestProjection()?.tick).toBe(BigInt(1 + MAX_CATCH_UP_TICKS));
   });
 
-  test("samples interpolate one tick behind the latest projection", () => {
+  test("samples interpolate one tick behind the latest projection", async () => {
     const zone = new RecordingZone();
     const source = new LocalZoneSource(zone);
-    source.join();
+    await source.join();
     source.advance(2 / 30 + 1e-9);
     expect(zone.ticks).toBe(2);
     expect(source.sample()[0]?.position[0]).toBeCloseTo(21, 3);
@@ -122,23 +122,23 @@ describe("LocalZoneSource", () => {
     expect(source.sample()[0]?.position[0]).toBeCloseTo(31.5, 3);
   });
 
-  test("a projection addressed to another player is rejected", () => {
+  test("a projection addressed to another player is rejected", async () => {
     const zone = new RecordingZone();
     zone.viewerOverride = 99;
-    expect(() => new LocalZoneSource(zone).join()).toThrow("another player");
+    await expect(new LocalZoneSource(zone).join()).rejects.toThrow("another player");
   });
 
-  test("a rejected first projection removes the unit it just added from the zone", () => {
+  test("a rejected first projection removes the unit it just added from the zone", async () => {
     for (const [fault, message] of [["corrupt", "Truncated snapshot"], ["misaddressed", "another player"]] as const) {
       const zone = new RecordingZone();
       if (fault === "corrupt") zone.corruptProjections = true;
       else zone.viewerOverride = 99;
       const source = new LocalZoneSource(zone);
-      expect(() => source.join()).toThrow(message);
+      await expect(source.join()).rejects.toThrow(message);
       expect(zone.left).toEqual([1]);
       zone.corruptProjections = false;
       zone.viewerOverride = null;
-      expect(source.join()).toBe(2);
+      expect(await source.join()).toBe(2);
       source.sendCommand({ kind: "jump" });
       expect(zone.submitted).toEqual([{ player: 2, sequence: 2, bytes: "0502" }]);
     }

@@ -15,7 +15,7 @@ import type { Prop } from "../src/world/scenery";
 import { buildSceneryScene } from "../src/world/scenery-nodes";
 import { terrainSurfaceY } from "../src/world/terrain-mesh";
 import { localZoneModule } from "./support/local-zone-module";
-import { worldSourceContract } from "./support/world-source-contract";
+import { immediate, worldSourceContract } from "./support/world-source-contract";
 
 // Builds crates/mmorpg-wasm for wasm32 and runs wasm-bindgen, like `bun run build`.
 const wasm = await localZoneModule();
@@ -246,9 +246,9 @@ describe("WASM local zone host", () => {
     expect(() => zone.projection(player)).toThrow();
   });
 
-  test("camera-relative movement moves the decoded viewer in the expected direction", () => {
+  test("camera-relative movement moves the decoded viewer in the expected direction", async () => {
     const { source } = createLocalWorld(wasm);
-    source.join();
+    await source.join();
     const spawn = self(source).position;
     source.sendCommand({ kind: "move", forward: 1, strafe: 0, facing: EAST });
     run(source, 10);
@@ -269,9 +269,9 @@ describe("WASM local zone host", () => {
     expect(self(source).position).toEqual(right);
   });
 
-  test("a grounded jump rises and physics brings the unit back down", () => {
+  test("a grounded jump rises and physics brings the unit back down", async () => {
     const { source } = createLocalWorld(wasm);
-    source.join();
+    await source.join();
     const ground = self(source).position[1];
     source.sendCommand({ kind: "jump" });
     run(source, 1);
@@ -286,9 +286,9 @@ describe("WASM local zone host", () => {
     expect(self(source).position[1]).toBe(ground);
   });
 
-  test("interpolated samples stay between authoritative ticks", () => {
+  test("interpolated samples stay between authoritative ticks", async () => {
     const { source } = createLocalWorld(wasm);
-    source.join();
+    await source.join();
     source.sendCommand({ kind: "move", forward: 1, strafe: 0, facing: EAST });
     run(source, 2);
     const before = self(source).position[0];
@@ -298,12 +298,12 @@ describe("WASM local zone host", () => {
     expect(sampled?.position[0]).toBeLessThan(before);
   });
 
-  test("scenery and areas come from the same content as the zone", () => {
+  test("scenery and areas come from the same content as the zone", async () => {
     const { source, scenery } = createLocalWorld(wasm);
     expect(scenery.scenery.contentRevision).toBe(7n);
     expect(scenery.scenery.source).toBe("mmorpg-scenery");
     expect(scenery.scenery.playerHalfExtents).toEqual([30, 90, 30]);
-    source.join();
+    await source.join();
     const [x, , z] = self(source).position;
     expect(scenery.areaAt(x, z)?.name).toBe("Greyhaven Outpost");
     expect(scenery.areaAt(-5_500, 0)?.name).toBe("Wolfrun Woods");
@@ -447,9 +447,9 @@ describe("WASM local zone combat intents", () => {
     ]);
   });
 
-  test("hub NPCs are visible, selectable and refuse to be attacked", () => {
+  test("hub NPCs are visible, selectable and refuse to be attacked", async () => {
     const { source, catalog } = createLocalWorld(wasm);
-    source.join();
+    await source.join();
     const projection = source.latestProjection();
     const npcs = projection?.entities.filter((entity) => entity.kind === "npc") ?? [];
     expect(npcs.length).toBeGreaterThan(0);
@@ -472,9 +472,9 @@ describe("WASM local zone combat intents", () => {
     expect(source.latestProjection()?.viewer.target).toBeNull();
   });
 
-  test("intents beyond the per-tick bound are reported, never a session error", () => {
+  test("intents beyond the per-tick bound are reported, never a session error", async () => {
     const { source } = createLocalWorld(wasm);
-    source.join();
+    await source.join();
     for (let press = 0; press < 20; press += 1) {
       expect(() => source.sendCommand({ kind: "stop-attack" })).not.toThrow();
     }
@@ -497,7 +497,7 @@ function refusingWasmSource() {
     tick: () => zone.tick(),
     projection: (player) => (corrupt ? zone.projection(player).subarray(1) : zone.projection(player)),
   };
-  return { source: new LocalZoneSource(handle), repair: () => { corrupt = false; } };
+  return { ...immediate(new LocalZoneSource(handle)), repair: () => { corrupt = false; } };
 }
 
-worldSourceContract("LocalZoneSource over the WASM zone", () => createLocalWorld(wasm).source, refusingWasmSource);
+worldSourceContract("LocalZoneSource over the WASM zone", () => immediate(createLocalWorld(wasm).source), refusingWasmSource);

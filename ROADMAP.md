@@ -22,7 +22,7 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
   - [x] Part A (browser): biome terrain and far ranges, procedural props and vegetation in static batches, lake, CSS sky, animated humanoids with class gear, camera polish, minimap, F3 statistics.
   - Part B: creature and NPC models, spell effects, selection circles, and fog, instancing, vertex colours and lighting once 3d-lab #82 and #84 are pinned.
 - Native client parity.
-- Browser online mode against a local zone host.
+- [x] Browser online mode against a local zone host.
 - Durable character record behind core command/query APIs ([#30](https://github.com/moritzbrantner/mmorpg/issues/30)), consumed by the composed save/load flow below.
 - Persist character progression together with versioned zone/world checkpoints so the demo can save, close, load and continue ([#40](https://github.com/moritzbrantner/mmorpg/issues/40)).
 - Zone chat and emotes.

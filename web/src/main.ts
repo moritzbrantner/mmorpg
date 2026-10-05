@@ -41,6 +41,10 @@ import {
 import { characterVisualProfile, type CharacterVisualProfile } from "./character-visuals";
 import type { LocalWorld } from "./world/local-world";
 import { loadLocalWorld } from "./world/wasm-runtime";
+import { webTransportConnector } from "./session/webtransport";
+import { onlineChoice, type ZoneServer } from "./world/online-config";
+import { OnlineZoneSource } from "./world/online-zone-source";
+import type { LinkState, ZoneWorld } from "./world/world-source";
 import { characterLook } from "./world/humanoid";
 import { WorldView, webGpuProjection } from "./world/world-view";
 import { attackToggle, nextTabTarget } from "./world/units/targeting";
@@ -63,6 +67,12 @@ const characterSelect = requireElement<HTMLElement>("#character-select");
 const enterWorldButton = requireElement<HTMLButtonElement>("#enter-world");
 const enterWorldLabel = requireElement<HTMLElement>("#enter-world-label");
 const enterWorldNote = requireElement<HTMLElement>("#enter-world-note");
+const onlineToggle = requireElement<HTMLElement>("#online-toggle");
+const playOnlineInput = requireElement<HTMLInputElement>("#play-online");
+const onlineServerLabel = requireElement<HTMLElement>("#online-server");
+const selectionNote = requireElement<HTMLElement>("#selection-note");
+const worldMode = requireElement<HTMLElement>("#world-mode");
+const connectionStatus = requireElement<HTMLElement>("#connection-status");
 const saveCharacterButton = requireElement<HTMLButtonElement>("#save-character");
 const loadCharacterButton = requireElement<HTMLButtonElement>("#load-character");
 const saveStatus = requireElement<HTMLElement>("#save-status");
@@ -117,12 +127,23 @@ const turntable = installCharacterTurntable(previewSurface, {
   reset: requireElement<HTMLButtonElement>("#reset-rotation"),
 }, () => entryState.phase === "character-selection");
 
-// The world: the shared Rust zone simulation, hosted locally through WASM.
-// Presentation reads only decoded player-scoped projections from `world.source`.
+// The world: the shared Rust zone simulation, hosted locally through WASM, or a
+// zone host reached over WebTransport when the page is configured for one
+// (`?server=…&certHash=…`). Both share the WASM module's scenery, and
+// presentation reads only decoded player-scoped projections from a source.
+const online = onlineChoice(window.location.search, {
+  server: import.meta.env.VITE_ZONE_SERVER,
+  certificateHash: import.meta.env.VITE_ZONE_CERT_HASH,
+});
 let world: LocalWorld | null = null;
+let onlineWorld: ZoneWorld | null = null;
+/** The world the player is in; null on the selection screen. */
+let activeWorld: ZoneWorld | null = null;
 let worldLoadError: string | null = null;
 /** Why the last entry failed or the world was left after an error; cleared by the next entry. */
 let worldFailure: string | null = null;
+/** The world a join is in flight for; selection stays put until it settles. */
+let joining: ZoneWorld | null = null;
 let jumps = 0;
 
 function loadCreatedRoster(): CharacterPreview[] {
@@ -220,14 +241,15 @@ const worldView = new WorldView(renderer, camera, {
 const controls = new GameControls({
   screen: () =>
     entryState.phase === "world"
-      ? { phase: "world", panelOpen: worldView.panelOpen, casting: Boolean(world?.source.latestProjection()?.viewer.cast) }
-      : { phase: "selection", creating: creationDraft !== null },
+      ? { phase: "world", panelOpen: worldView.panelOpen, casting: Boolean(activeWorld?.source.latestProjection()?.viewer.cast) }
+      // A pending join is modal like creation: Escape cancels it.
+      : { phase: "selection", creating: creationDraft !== null || joining !== null },
   onAction: (action) => runAction(action),
 });
 
 // Debug-only camera and public-source hooks for deterministic acceptance; `?debug` enables them.
 if (new URLSearchParams(window.location.search).has("debug")) {
-  Object.assign(window, { __valeDebug: { ...worldView.debugApi(), worldSource: () => world?.source ?? null } });
+  Object.assign(window, { __valeDebug: { ...worldView.debugApi(), worldSource: () => (activeWorld ?? chosenWorld())?.source ?? null } });
 }
 
 const selectionStageNodes: RendererSceneNode[] = [
@@ -552,15 +574,62 @@ function renderRoster(): void {
   createCharacterButton.title = createCharacterButton.disabled ? "All character slots are full." : "";
 }
 
+/** The zone host "Enter World" joins, when online play is chosen. */
+function chosenServer(): ZoneServer | null {
+  return online.kind === "online" && playOnlineInput.checked ? online.server : null;
+}
+
+/** The world "Enter World" joins; null while loading or when online play is misconfigured. */
+function chosenWorld(): ZoneWorld | null {
+  if (online.kind === "invalid") {
+    return null;
+  }
+  return chosenServer() ? onlineWorld : world;
+}
+
+function entryNote(character: CharacterPreview): string {
+  const server = chosenServer();
+  if (online.kind === "invalid") {
+    return `Online play is misconfigured: ${online.message}`;
+  }
+  if (!world) {
+    return worldLoadError ? `The zone simulation could not load: ${worldLoadError}` : "Loading the zone simulation…";
+  }
+  if (joining) {
+    return server ? `Connecting to ${server.label}…` : `Joining with ${character.name}…`;
+  }
+  return worldFailure ?? (server ? `Join ${server.label} with ${character.name}` : `Start ${character.name} in Greyhaven Outpost`);
+}
+
 function updateEntryButton(): void {
-  const character = selectedCharacter();
-  enterWorldButton.disabled = world === null;
-  enterWorldLabel.textContent = "Enter World";
-  enterWorldNote.textContent = world
-    ? worldFailure ?? `Start ${character.name} in Greyhaven Outpost`
-    : worldLoadError
-      ? `The zone simulation could not load: ${worldLoadError}`
-      : "Loading the zone simulation…";
+  const server = chosenServer();
+  enterWorldButton.disabled = chosenWorld() === null || joining !== null;
+  enterWorldLabel.textContent = joining ? "Entering…" : "Enter World";
+  enterWorldNote.textContent = entryNote(selectedCharacter());
+  playOnlineInput.disabled = joining !== null;
+  selectionNote.textContent = server
+    ? `Online: the zone host at ${server.label} runs this world for every page that joins it. World progress is not saved; returning to characters leaves the zone.`
+    : "Single-player demo: the shared Rust zone simulation runs in this browser. World progress is not saved yet; returning to characters leaves the zone.";
+}
+
+/** A zone host world over WebTransport, drawn with the scenery the page loaded. */
+function createOnlineWorld(local: LocalWorld, server: ZoneServer): ZoneWorld {
+  return {
+    ...local,
+    source: new OnlineZoneSource({
+      route: server.route,
+      // Projections must come from the content revision this scenery shows.
+      contentRevision: local.scenery.scenery.contentRevision,
+      connector: webTransportConnector(server.certificateHash),
+    }),
+  };
+}
+
+function showLinkState(state: LinkState): void {
+  const text = state === "reconnecting" ? "Reconnecting…" : "";
+  if (connectionStatus.textContent !== text) {
+    connectionStatus.textContent = text;
+  }
 }
 
 function refreshSelectionPresentation(): void {
@@ -577,7 +646,7 @@ function refreshSelectionPresentation(): void {
 }
 
 function selectCharacter(characterId: string): void {
-  if (creationDraft) {
+  if (creationDraft || joining) {
     return;
   }
   const character = characters.find((candidate) => candidate.id === characterId);
@@ -617,6 +686,9 @@ function syncCreationDraft(): void {
 }
 
 function openCharacterCreation(): void {
+  if (joining) {
+    return;
+  }
   if (characters.length >= MAX_CHARACTER_SLOTS) {
     rosterStatus.textContent = `All ${MAX_CHARACTER_SLOTS} character slots are full.`;
     return;
@@ -758,9 +830,10 @@ function frame(now: number) {
   requestAnimationFrame(frame);
   const deltaSeconds = frameDeltaSeconds(now, lastTime);
   lastTime = now;
-  if (entryState.phase === "world" && world) {
+  if (entryState.phase === "world" && activeWorld) {
     try {
-      worldView.frame(world, worldInput(), characterLook(selectedCharacter(), characterAppearance.hat), deltaSeconds, now);
+      worldView.frame(activeWorld, worldInput(), characterLook(selectedCharacter(), characterAppearance.hat), deltaSeconds, now);
+      showLinkState(activeWorld.source.linkState());
     } catch (error) {
       // Fail closed and visibly: leave the world and say why on the selection screen.
       console.error(error);
@@ -771,27 +844,37 @@ function frame(now: number) {
   renderSelection();
 }
 
-function enterWorld() {
-  if (creationDraft || !world || entryState.phase === "world") {
+/** Joins the chosen world, then switches the page to it. Never rejects: failures are shown on the selection screen. */
+async function enterWorld(): Promise<void> {
+  const target = chosenWorld();
+  if (creationDraft || !target || entryState.phase === "world" || joining) {
     return;
   }
+  const server = chosenServer();
   const next = enterPreviewWorld(entryState, selectedCharacter());
   // Join before switching the page: a refused join leaves the source unjoined, so
   // the page stays on selection, says why, and entry can be retried.
+  joining = target;
+  worldFailure = null;
+  updateEntryButton();
   try {
     const character = selectedCharacter();
-    world.source.join({ classId: character.classId, sex: character.sex });
+    await target.source.join({ classId: character.classId, sex: character.sex });
   } catch (error) {
     console.error(error);
     worldFailure = `Could not enter the world: ${errorMessage(error)}`;
-    updateEntryButton();
     return;
+  } finally {
+    joining = null;
+    updateEntryButton();
   }
-  worldFailure = null;
+  activeWorld = target;
+  worldMode.textContent = server ? `Greyhaven Vale · online · ${server.label}` : "Greyhaven Vale · local zone host";
+  showLinkState("connected");
   turntable.cancel();
   entryState = next;
   controls.retire("enteredWorld");
-  worldView.enter(worldInput(), world.source.latestProjection());
+  worldView.enter(worldInput(), target.source.latestProjection());
   characterSelect.hidden = true;
   for (const element of worldUi) {
     element.hidden = false;
@@ -805,12 +888,14 @@ function returnToCharacters(failure: string | null = null) {
   turntable.cancel();
   const character = selectedCharacter();
   try {
-    // Leaving removes the unit from the local zone; the next entry spawns a new one.
-    world?.source.leave();
+    // Leaving removes the unit (a zone host after its reconnect grace); the next entry spawns a new one.
+    activeWorld?.source.leave();
   } catch (error) {
     console.error(error);
     failure ??= `Could not leave the world cleanly: ${errorMessage(error)}`;
   }
+  activeWorld = null;
+  showLinkState("connected");
   worldFailure = failure;
   entryState = initialEntryState(character);
   controls.retire("leftWorld");
@@ -848,7 +933,7 @@ for (const button of hatButtons) {
 }
 saveCharacterButton.addEventListener("click", saveCurrentCharacter);
 loadCharacterButton.addEventListener("click", loadSavedCharacter);
-enterWorldButton.addEventListener("click", enterWorld);
+enterWorldButton.addEventListener("click", () => void enterWorld());
 returnButton.addEventListener("click", () => returnToCharacters());
 createCharacterButton.addEventListener("click", openCharacterCreation);
 for (const button of cancelCreationButtons) {
@@ -942,10 +1027,15 @@ function runAction(action: GameAction): void {
       worldView.toggleOverlay();
       return;
     case "ui.enterWorld":
-      enterWorld();
+      void enterWorld();
       return;
     case "ui.cancelCreation":
-      cancelCharacterCreation();
+      if (joining) {
+        // Cancelling rejects the pending join, which says so under Enter World.
+        joining.source.leave();
+      } else {
+        cancelCharacterCreation();
+      }
       return;
   }
 }
@@ -974,9 +1064,19 @@ new ResizeObserver(layoutPreview).observe(previewSurface);
 
 resize();
 requestAnimationFrame(frame);
+if (online.kind === "online") {
+  onlineToggle.hidden = false;
+  playOnlineInput.checked = online.preferred;
+  onlineServerLabel.textContent = online.server.label;
+}
+playOnlineInput.addEventListener("change", () => {
+  worldFailure = null;
+  updateEntryButton();
+});
 void loadLocalWorld().then((loaded) => {
   worldView.load(loaded);
   world = loaded;
+  onlineWorld = online.kind === "online" ? createOnlineWorld(loaded, online.server) : null;
   updateEntryButton();
 }, (error: unknown) => {
   worldLoadError = errorMessage(error);

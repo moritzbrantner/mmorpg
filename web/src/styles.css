@@ -243,6 +243,19 @@ button { font: inherit; }
 .enter-world span { display: block; font-family: Georgia, "Times New Roman", serif; font-size: 1rem; letter-spacing: .04em; }
 .enter-world small { display: block; margin-top: .12rem; color: #d5c79f; font-size: .62rem; letter-spacing: .05em; }
 .selection-note { margin: .65rem 0 0; color: #78867f; font-size: .61rem; line-height: 1.35; }
+.online-toggle {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-bottom: .65rem;
+  color: #e6ebe7;
+  font-size: .78rem;
+  cursor: pointer;
+}
+.online-toggle[hidden] { display: none; }
+.online-toggle input { accent-color: var(--gold); }
+.online-toggle input:focus-visible { outline: 2px solid #f5de97; outline-offset: 2px; }
+.online-toggle small { color: #91a098; font-size: .66rem; }
 
 .character-stage-fallback {
   position: absolute;
@@ -283,6 +296,16 @@ button { font: inherit; }
 }
 
 .topbar .eyebrow { margin: 0; }
+.connection-status {
+  margin: 0;
+  padding: .2rem .55rem;
+  border-radius: .35rem;
+  background: rgb(196 150 58 / 22%);
+  color: #f4dc9b;
+  font-size: .75rem;
+  font-weight: 650;
+}
+.connection-status:empty { display: none; }
 
 /* The sky behind the transparent world canvas; custom properties come from the sky layer. */
 .sky {

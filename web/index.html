@@ -125,14 +125,19 @@
 
           <footer id="selection-actions" class="selection-actions">
             <div class="world-destination"><small>Destination</small><strong id="character-location">Greyhaven Outpost</strong></div>
+            <label id="online-toggle" class="online-toggle" hidden>
+              <input id="play-online" type="checkbox" />
+              <span>Play online <small id="online-server"></small></span>
+            </label>
             <button id="enter-world" class="enter-world" type="button" disabled><span id="enter-world-label">Enter World</span><small id="enter-world-note">Loading the zone simulation…</small></button>
-            <p class="selection-note">Single-player demo: the shared Rust zone simulation runs in this browser. World progress is not saved yet; returning to characters leaves the zone.</p>
+            <p id="selection-note" class="selection-note">Single-player demo: the shared Rust zone simulation runs in this browser. World progress is not saved yet; returning to characters leaves the zone.</p>
           </footer>
         </div>
       </section>
 
       <header class="topbar" data-world-ui hidden>
-        <p class="eyebrow">Greyhaven Vale · local zone host</p>
+        <p id="world-mode" class="eyebrow">Greyhaven Vale · local zone host</p>
+        <p id="connection-status" class="connection-status" role="status" aria-live="polite"></p>
         <div class="world-toolbar"><button id="loot-toggle" type="button" aria-controls="loot-panel" aria-expanded="false">Loot</button><button id="bags-toggle" type="button" aria-controls="bags-panel" aria-expanded="false">Bags (B)</button><button id="character-toggle" type="button" aria-controls="character-panel" aria-expanded="false">Character (C)</button><button id="return-to-characters" type="button">Characters</button></div>
       </header>
       <aside id="minimap" class="minimap" data-world-ui aria-label="Minimap" hidden>

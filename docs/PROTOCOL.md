@@ -4,6 +4,12 @@ All multibyte fields are big-endian. Integers are unsigned unless marked `i8`/`i
 
 A yaw or facing is a `u16`: 65 536 steps are one full turn. Yaw 0 faces +Z and increasing yaw turns toward +X, so the facing direction is `(sin yaw, cos yaw)` in XZ. A character's right is the direction of `yaw − 90°`; facing +Z, right is −X.
 
+## Session envelope
+
+Commands and projections travel inside the pinned `game-server` session frames (protocol version 3), which `game-server` owns. A client datagram is a command frame `[version = 3, kind = 1, sequence: u32, length: u16, payload]`. A host datagram is a snapshot frame `[3, kind = 2, tick: u64, state hash: u64, length: u16, payload]` whose FNV-1a hash covers tick, payload length and payload, or one fragment of such a frame (kind 4, see [Datagram byte budget](#datagram-byte-budget)). The welcome is the host's first unidirectional stream: 46 bytes carrying player ID, tick rate, player capacity, current tick, connection epoch, the 16-byte reconnect token and the reconnect grace in ticks.
+
+The shared fixture `fixtures/protocol/session-frames-v3.hex` pins these frames and the browser route contract: `crates/mmorpg-game-server/tests/session_frames.rs` renders it from the pinned encoders and decodes it with the pinned decoders, and the browser (`web/tests/session-frames.test.ts`) decodes and encodes the same bytes. A `game-server` pin bump that changes a frame fails in both languages.
+
 ## Commands (wire version 5)
 
 The shared session runtime supplies player identity, connection epoch and command sequence separately. Core rejects zero, stale and duplicate sequences without changing state.
@@ -152,7 +158,7 @@ Positions are absolute `i16` units. Zone content keeps every collider bound and 
 
 ### Datagram byte budget
 
-The pinned `game-server` sends a session snapshot frame unchanged when it fits the connection's current WebTransport datagram size. Otherwise it sends bounded, tick-keyed fragments; the native client reassembles and verifies the session frame before decoding this v9 payload. A lost fragment loses that snapshot, and newer complete ticks supersede older incomplete ones. The reassembler is reset on reconnect. This transport behavior does not change the MMO projection policy: its current budget derives from the smallest negotiated datagram size:
+The pinned `game-server` sends a session snapshot frame unchanged when it fits the connection's current WebTransport datagram size. Otherwise it sends bounded, tick-keyed fragments; the native client and the browser's online mode reassemble and verifies the session frame before decoding this v9 payload. A lost fragment loses that snapshot, and newer complete ticks supersede older incomplete ones. The reassembler is reset on reconnect. This transport behavior does not change the MMO projection policy: its current budget derives from the smallest negotiated datagram size:
 
 | Term | Bytes | Source |
 | --- | ---: | --- |
