@@ -6,6 +6,7 @@ import {
   RECONNECT_SETTLE_MS,
   SNAPSHOT_TIMEOUT_MS,
   OnlineZoneSource,
+  MAX_RECEIVED_PROJECTIONS,
 } from "../src/world/online-zone-source";
 import { FakeZoneHost, ManualClock, TICK_MS, type FakeZoneHostOptions } from "./support/fake-zone-host";
 import { worldSourceContract } from "./support/world-source-contract";
@@ -176,6 +177,20 @@ describe("OnlineZoneSource", () => {
     await frame(clock, source);
     expect(source.linkState()).toBe("connected");
     expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[2, CLASS_CHOICE], [3, "050100000000"]]);
+  });
+
+  test("projections waiting for a paused page are bounded to the newest second", async () => {
+    const { clock, source } = online();
+    await clock.until(source.join());
+    source.advance();
+    // A backgrounded page stops calling advance while projections keep arriving.
+    await clock.advance(5 * MAX_RECEIVED_PROJECTIONS * TICK_MS);
+    const latest = source.latestProjection()!;
+    const received = source.advance();
+    expect(received.length).toBe(MAX_RECEIVED_PROJECTIONS);
+    expect(received.at(-1)).toBe(latest);
+    expect(received.every((view, index) => index === 0 || view.tick > received[index - 1]!.tick)).toBe(true);
+    expect(source.advance()).toEqual([]);
   });
 
   test("a clean close by the host is an interruption that resumes the same player", async () => {

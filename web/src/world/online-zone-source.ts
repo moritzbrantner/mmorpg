@@ -19,6 +19,11 @@ export const SNAPSHOT_TIMEOUT_MS = 5_000;
 export const RECONNECT_SETTLE_MS = 250;
 /** Presentation runs this many ticks behind the newest projection and holds it when projections stall. */
 export const INTERPOLATION_DELAY_TICKS = 2;
+/**
+ * At most this many projections (one second) wait for the next `advance`; a backgrounded page that
+ * stops rendering keeps only the newest, like lost datagrams, and the periodic sheets restore state.
+ */
+export const MAX_RECEIVED_PROJECTIONS = 30;
 
 export type OnlineZoneOptions = {
   route: SessionRoute;
@@ -350,6 +355,9 @@ export class OnlineZoneSource implements WorldSource {
     this.#latest = snapshot;
     this.#latestAt = this.#clock.now();
     this.#received.push(snapshot);
+    if (this.#received.length > MAX_RECEIVED_PROJECTIONS) {
+      this.#received.shift();
+    }
     this.#outbox.acknowledge(snapshot.acknowledgedSequence);
     if (this.#classSequence !== null && snapshot.acknowledgedSequence >= this.#classSequence) {
       this.#classAcknowledged = true;
