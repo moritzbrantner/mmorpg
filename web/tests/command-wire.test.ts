@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { encodeCommand, type Axis, type WorldCommand } from "../src/command-wire";
 import { entityKindFromCode } from "../src/entity-ref";
 
-const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v6.hex", import.meta.url), "utf8");
+const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v7.hex", import.meta.url), "utf8");
 
 function axis(raw: string | undefined): Axis {
   const value = Number(raw);
@@ -52,6 +52,8 @@ function command(fields: readonly string[]): WorldCommand {
       return { kind: "unequip-item", equipmentSlot: Number(first) };
     case "buy_item":
       return { kind: "buy-item", npc: Number(first), offer: Number(second), quantity: Number(third) };
+    case "chat":
+      return { kind: "chat", channel: first === "yell" ? "yell" : "say", text: Buffer.from(second ?? "", "hex").toString("utf8") };
     case "sell_item":
       return { kind: "sell-item", npc: Number(first), bagSlot: Number(second), quantity: Number(third) };
     default:
@@ -77,7 +79,7 @@ describe("Rust/browser command contract", () => {
     const commands = fixtureCommands();
     const kinds = new Set(commands.map(({ command }) => command.kind));
     expect([...kinds].sort()).toEqual([
-      "buy-item", "cancel-cast", "choose-class", "equip-item", "jump", "loot", "move", "move-item", "release-spirit",
+      "buy-item", "cancel-cast", "chat", "choose-class", "equip-item", "jump", "loot", "move", "move-item", "release-spirit",
       "select-target", "sell-item", "start-attack", "stop-attack", "unequip-item", "use-ability",
     ]);
     expect(commands.filter(({ command }) => command.kind === "move").length).toBeGreaterThanOrEqual(4);

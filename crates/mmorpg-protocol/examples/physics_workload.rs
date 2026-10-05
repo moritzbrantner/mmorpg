@@ -91,6 +91,8 @@ fn initial_zone(name: &str, count: usize) -> Result<ZoneSimulation, Box<dyn Erro
             inventory_changed_at: 0,
             equipment: mmorpg_core::Equipment::default(),
             combat: CanonicalPlayerCombat::default(),
+            chat_ready_at: 0,
+            chat: Vec::new(),
         });
     }
     Ok(ZoneSimulation::from_snapshot(

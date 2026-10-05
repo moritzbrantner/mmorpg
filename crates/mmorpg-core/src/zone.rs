@@ -112,6 +112,10 @@ pub(crate) struct PlayerState {
     pub(crate) cast: Option<crate::CastState>,
     /// Auras in slot order.
     pub(crate) auras: Vec<crate::Aura>,
+    /// The first tick the player may speak again.
+    pub(crate) chat_ready_at: u64,
+    /// Chat lines heard this tick.
+    pub(crate) chat: Vec<crate::ChatLine>,
 }
 
 impl PlayerState {
@@ -146,6 +150,8 @@ impl PlayerState {
             cooldowns: Vec::new(),
             cast: None,
             auras: Vec::new(),
+            chat_ready_at: 0,
+            chat: Vec::new(),
         }
     }
 
@@ -470,6 +476,7 @@ impl ZoneSimulation {
                 bag_slot,
                 quantity,
             }),
+            ZoneCommand::Chat { channel, text } => Some(PlayerIntent::Chat { channel, text }),
         };
         if let Some(intent) = intent {
             if player.intents.len() < MAX_PENDING_INTENTS {
@@ -512,6 +519,7 @@ impl ZoneSimulation {
         self.tick_work = ZoneTickWork::default();
         for player in self.players.values_mut() {
             player.events.clear();
+            player.chat.clear();
         }
         self.consume_intents()?;
         self.decide_creatures()?;

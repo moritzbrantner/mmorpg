@@ -1,14 +1,14 @@
 //! Command wire version 4 added ability use (tag 9), cast cancellation
 //! (tag 10) and the class choice (tag 11); version 5 added equipping
 //! (tag 12) and unequipping (tag 13); version 6 adds vendor purchases
-//! (tag 14) and sales (tag 15).
+//! (tag 14) and sales (tag 15); version 7 adds chat (tag 16).
 
 use mmorpg_core::{NpcId, ZoneCommand};
 
 use crate::ProtocolError;
 use crate::wire::{decode_entity_ref, encode_entity_ref};
 
-pub const COMMAND_WIRE_VERSION: u8 = 6;
+pub const COMMAND_WIRE_VERSION: u8 = 7;
 
 const MOVE_TAG: u8 = 1;
 const JUMP_TAG: u8 = 2;
@@ -25,6 +25,7 @@ const EQUIP_ITEM_TAG: u8 = 12;
 const UNEQUIP_ITEM_TAG: u8 = 13;
 const BUY_ITEM_TAG: u8 = 14;
 const SELL_ITEM_TAG: u8 = 15;
+const CHAT_TAG: u8 = 16;
 /// Version, tag, NPC (u32), offer or bag slot (u8), quantity (u16).
 const TRADE_COMMAND_BYTES: usize = 9;
 const USE_ABILITY_COMMAND_BYTES: usize = 8;
@@ -89,6 +90,11 @@ pub fn encode_command(command: ZoneCommand) -> Vec<u8> {
             bag_slot,
             quantity,
         } => encode_trade(SELL_ITEM_TAG, npc, bag_slot, quantity),
+        ZoneCommand::Chat { channel, text } => {
+            let mut payload = vec![COMMAND_WIRE_VERSION, CHAT_TAG];
+            crate::chat::encode_text(&mut payload, channel, &text);
+            payload
+        }
         ZoneCommand::MoveItem {
             source,
             destination,
@@ -262,6 +268,16 @@ pub fn decode_command(payload: &[u8]) -> Result<ZoneCommand, ProtocolError> {
                 quantity,
             })
         }
+        CHAT_TAG => {
+            let mut offset = BARE_COMMAND_BYTES;
+            let (channel, text) = crate::chat::decode_text(payload, &mut offset)?;
+            if offset != payload.len() {
+                return Err(ProtocolError::new(
+                    "chat command payload has trailing bytes",
+                ));
+            }
+            Ok(ZoneCommand::Chat { channel, text })
+        }
         CANCEL_CAST_TAG => bare(ZoneCommand::CancelCast),
         JUMP_TAG => bare(ZoneCommand::Jump),
         START_ATTACK_TAG => bare(ZoneCommand::StartAttack),
@@ -283,47 +299,47 @@ mod tests {
             strafe: 1,
             facing: 0xabcd,
         };
-        assert_eq!(encode_command(movement), [6, 1, 0xff, 1, 0xab, 0xcd]);
-        assert_eq!(encode_command(ZoneCommand::Jump), [6, 2]);
+        assert_eq!(encode_command(movement), [7, 1, 0xff, 1, 0xab, 0xcd]);
+        assert_eq!(encode_command(ZoneCommand::Jump), [7, 2]);
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(Some(EntityRef::Creature(
                 CreatureId::new(0x0102_0304)
             )))),
-            [6, 3, 2, 1, 2, 3, 4]
+            [7, 3, 2, 1, 2, 3, 4]
         );
         assert_eq!(
             encode_command(ZoneCommand::SelectTarget(None)),
-            [6, 3, 0, 0, 0, 0, 0]
+            [7, 3, 0, 0, 0, 0, 0]
         );
-        assert_eq!(encode_command(ZoneCommand::StartAttack), [6, 4]);
-        assert_eq!(encode_command(ZoneCommand::StopAttack), [6, 5]);
-        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [6, 6]);
+        assert_eq!(encode_command(ZoneCommand::StartAttack), [7, 4]);
+        assert_eq!(encode_command(ZoneCommand::StopAttack), [7, 5]);
+        assert_eq!(encode_command(ZoneCommand::ReleaseSpirit), [7, 6]);
         assert_eq!(
             encode_command(ZoneCommand::UseAbility {
                 ability: 9,
                 target: Some(EntityRef::Creature(CreatureId::new(0x0102_0304))),
             }),
-            [6, 9, 9, 2, 1, 2, 3, 4]
+            [7, 9, 9, 2, 1, 2, 3, 4]
         );
         assert_eq!(
             encode_command(ZoneCommand::UseAbility {
                 ability: 3,
                 target: None,
             }),
-            [6, 9, 3, 0, 0, 0, 0, 0]
+            [7, 9, 3, 0, 0, 0, 0, 0]
         );
-        assert_eq!(encode_command(ZoneCommand::CancelCast), [6, 10]);
+        assert_eq!(encode_command(ZoneCommand::CancelCast), [7, 10]);
         assert_eq!(
             encode_command(ZoneCommand::ChooseClass { class: 2, sex: 1 }),
-            [6, 11, 2, 1]
+            [7, 11, 2, 1]
         );
         assert_eq!(
             encode_command(ZoneCommand::EquipItem { bag_slot: 3 }),
-            [6, 12, 3]
+            [7, 12, 3]
         );
         assert_eq!(
             encode_command(ZoneCommand::UnequipItem { equipment_slot: 5 }),
-            [6, 13, 5]
+            [7, 13, 5]
         );
         assert_eq!(
             encode_command(ZoneCommand::BuyItem {
@@ -331,7 +347,7 @@ mod tests {
                 offer: 6,
                 quantity: 0x0a0b,
             }),
-            [6, 14, 1, 2, 3, 4, 6, 0x0a, 0x0b]
+            [7, 14, 1, 2, 3, 4, 6, 0x0a, 0x0b]
         );
         assert_eq!(
             encode_command(ZoneCommand::SellItem {
@@ -339,7 +355,7 @@ mod tests {
                 bag_slot: 15,
                 quantity: 2,
             }),
-            [6, 15, 0, 0, 0, 3, 15, 0, 2]
+            [7, 15, 0, 0, 0, 3, 15, 0, 2]
         );
         for command in [
             movement,
@@ -493,9 +509,17 @@ mod tests {
                 bag_slot: u8::MAX,
                 quantity: 0,
             },
+            ZoneCommand::Chat {
+                channel: mmorpg_core::ChatChannel::Say,
+                text: mmorpg_core::ChatText::new("Hail, Greyhaven!").unwrap(),
+            },
+            ZoneCommand::Chat {
+                channel: mmorpg_core::ChatChannel::Yell,
+                text: mmorpg_core::ChatText::new("Grüße!").unwrap(),
+            },
         ];
         let mut fixture = String::from(
-            "# Command wire v6 golden fixture, verified by mmorpg-protocol and web tests.\n",
+            "# Command wire v7 golden fixture, verified by mmorpg-protocol and web tests.\n",
         );
         for command in commands {
             let hex = encode_command(command)
@@ -536,6 +560,19 @@ mod tests {
                     bag_slot,
                     quantity,
                 } => format!("sell_item {} {bag_slot} {quantity}", npc.get()),
+                ZoneCommand::Chat { channel, text } => {
+                    let channel = match channel {
+                        mmorpg_core::ChatChannel::Say => "say",
+                        mmorpg_core::ChatChannel::Yell => "yell",
+                    };
+                    // The text is hex so the line stays whitespace-separated.
+                    let text = text
+                        .as_str()
+                        .bytes()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>();
+                    format!("chat {channel} {text}")
+                }
                 ZoneCommand::StartAttack => "start_attack".to_owned(),
                 ZoneCommand::StopAttack => "stop_attack".to_owned(),
                 ZoneCommand::ReleaseSpirit => "release_spirit".to_owned(),
@@ -563,7 +600,7 @@ mod tests {
 
     #[test]
     fn commands_match_the_shared_golden_fixture() {
-        let checked_in = include_str!("../../../fixtures/protocol/commands-v6.hex");
+        let checked_in = include_str!("../../../fixtures/protocol/commands-v7.hex");
         if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
             print!("{}", command_fixture());
         }
@@ -579,12 +616,13 @@ mod tests {
     }
 
     #[test]
-    fn actual_legacy_v2_to_v5_command_fixtures_are_rejected() {
+    fn actual_legacy_v2_to_v6_command_fixtures_are_rejected() {
         for line in include_str!("../../../fixtures/protocol/commands-v2.hex")
             .lines()
             .chain(include_str!("../../../fixtures/protocol/commands-v3.hex").lines())
             .chain(include_str!("../../../fixtures/protocol/commands-v4.hex").lines())
             .chain(include_str!("../../../fixtures/protocol/commands-v5.hex").lines())
+            .chain(include_str!("../../../fixtures/protocol/commands-v6.hex").lines())
             .filter(|line| !line.starts_with('#') && !line.is_empty())
         {
             let hex = line.split_whitespace().next().unwrap();
@@ -627,8 +665,23 @@ mod tests {
             bag_slot: 1,
             quantity: 1,
         });
+        let chat = encode_command(ZoneCommand::Chat {
+            channel: mmorpg_core::ChatChannel::Say,
+            text: mmorpg_core::ChatText::new("hi").unwrap(),
+        });
+        assert_eq!(chat, [7, 16, 0, 2, b'h', b'i']);
+        for invalid in [
+            vec![7, 16, 2, 2, b'h', b'i'],
+            vec![7, 16, 0, 0],
+            vec![7, 16, 0, 2, 0xff, 0xfe],
+            vec![7, 16, 0, 2, b'\n', b'i'],
+            vec![7, 16, 0, 2, b' ', b' '],
+            vec![7, 16, 0, 81].into_iter().chain([b'a'; 81]).collect(),
+        ] {
+            assert!(decode_command(&invalid).is_err(), "{invalid:?}");
+        }
         for encoded in [
-            &movement, &select, &loot, &ability, &class, &equip, &unequip, &buy, &sell,
+            &movement, &select, &loot, &ability, &class, &equip, &unequip, &buy, &sell, &chat,
         ] {
             for length in 0..encoded.len() {
                 assert!(decode_command(&encoded[..length]).is_err(), "{length}");
@@ -639,18 +692,18 @@ mod tests {
         }
         for tag in [2, 4, 5, 6, 10] {
             assert_eq!(
-                decode_command(&[6, tag, 0]).unwrap_err().to_string(),
+                decode_command(&[7, tag, 0]).unwrap_err().to_string(),
                 "command payload must be exactly 2 bytes",
                 "tag {tag} has no body"
             );
         }
-        for unknown in [0, 16, u8::MAX] {
+        for unknown in [0, 17, u8::MAX] {
             assert_eq!(
-                decode_command(&[6, unknown]).unwrap_err().to_string(),
+                decode_command(&[7, unknown]).unwrap_err().to_string(),
                 "unknown command tag"
             );
         }
-        for version in [1, 2, 3, 4, 5, 7] {
+        for version in [1, 2, 3, 4, 5, 6, 8] {
             let mut other = movement.clone();
             other[0] = version;
             assert_eq!(
@@ -672,19 +725,19 @@ mod tests {
             );
         }
         assert_eq!(
-            decode_command(&[6, 3, 4, 0, 0, 0, 1])
+            decode_command(&[7, 3, 4, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "unknown entity kind"
         );
         assert_eq!(
-            decode_command(&[6, 9, 1, 4, 0, 0, 0, 1])
+            decode_command(&[7, 9, 1, 4, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "unknown entity kind"
         );
         assert_eq!(
-            decode_command(&[6, 3, 0, 0, 0, 0, 1])
+            decode_command(&[7, 3, 0, 0, 0, 0, 1])
                 .unwrap_err()
                 .to_string(),
             "an absent entity must have ID 0"

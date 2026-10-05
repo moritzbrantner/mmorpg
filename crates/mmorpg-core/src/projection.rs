@@ -152,6 +152,8 @@ pub struct ZoneSnapshot {
     pub loot: Option<crate::LootView>,
     /// Feedback the viewer received this tick.
     pub events: Vec<ZoneEvent>,
+    /// Chat lines the viewer heard this tick, in delivery order.
+    pub chat: Vec<crate::ChatLine>,
     pub entities: Vec<EntitySnapshot>,
 }
 
@@ -258,6 +260,7 @@ impl ZoneSimulation {
                     _ => None,
                 },
                 events: viewer.events.clone(),
+                chat: viewer.chat.clone(),
                 entities,
             },
             stats,

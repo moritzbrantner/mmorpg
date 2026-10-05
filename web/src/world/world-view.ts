@@ -33,6 +33,7 @@ import { ClassHud } from "./units/class-hud";
 import { CombatHud } from "./units/combat-hud";
 import { LootPanel, type LootElements } from "./units/loot-panel";
 import { VendorPanel, type VendorElements } from "./units/vendor-panel";
+import { ChatFrame, type ChatElements } from "./units/chat-frame";
 import { nearestAnimal, projectedUnit, type ProjectedUnit } from "./units/projected-units";
 import { ProgressionHud } from "./units/progression-hud";
 import { SpellEffects, allEffectNodes, type Anchor } from "./units/spell-effects";
@@ -64,6 +65,7 @@ export type WorldViewElements = {
   character: CharacterElements;
   loot: LootElements;
   vendor: VendorElements;
+  chat: ChatElements;
   /** Action bar, unit frames, cast bars and combat text. */
   classHud: HTMLElement;
 };
@@ -148,6 +150,7 @@ export class WorldView {
   readonly #character: CharacterPane;
   readonly #loot: LootPanel;
   readonly #vendor: VendorPanel;
+  readonly #chat: ChatFrame;
   readonly #intents: { intent: Intent; onSent: ((sequence: number | null) => void) | undefined }[] = [];
   readonly #secondaryClick = new SecondaryClick();
   #scene: SceneryScene | null = null;
@@ -204,6 +207,8 @@ export class WorldView {
       this.#character.close(false);
       this.#bags.close();
     });
+    // Leaving the chat field hands the keyboard back to the world.
+    this.#chat = new ChatFrame(elements.chat, (command) => this.queueIntent(() => command), () => elements.canvas.focus());
     elements.bags.toggle.addEventListener("click", () => {
       this.#loot.close(false);
       this.#vendor.close(false);
@@ -254,6 +259,7 @@ export class WorldView {
     this.#character.reset(projection);
     this.#loot.reset(projection);
     this.#vendor.reset(projection);
+    this.#chat.reset();
     this.#shownArea = null;
     this.#flyTo = null;
     this.#framePending = true;
@@ -286,6 +292,7 @@ export class WorldView {
     this.#character.reset();
     this.#loot.reset();
     this.#vendor.reset();
+    this.#chat.reset();
     this.#endDrag();
     this.#sky.show(false);
     this.#overlay.hide();
@@ -313,6 +320,11 @@ export class WorldView {
   }
 
   closeVendor(): boolean { return this.#vendor.close(); }
+
+  /** Focuses the chat field; typing there releases held movement. */
+  openChat(): void {
+    this.#chat.open();
+  }
 
   closeLoot(): boolean { return this.#loot.close(); }
 
@@ -371,6 +383,7 @@ export class WorldView {
       this.#character.update(received);
       this.#loot.update(received);
       this.#vendor.update(received);
+      this.#chat.update(received);
     }
     const projection = source.latestProjection();
     if (!projection) {

@@ -66,6 +66,8 @@ pub enum ErrorCode {
     InvalidVendor,
     /// The copper balance does not cover the purchase.
     NotEnoughMoney,
+    /// The speaker spoke within the last second.
+    ChatThrottled,
 }
 
 /// One feedback event addressed to a player.

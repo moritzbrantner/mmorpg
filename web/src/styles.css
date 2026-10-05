@@ -838,3 +838,48 @@ kbd {
 .vendor-list { display: grid; gap: .35rem; margin: 0; padding: 0; list-style: none; }
 .vendor-list li { display: flex; align-items: center; justify-content: space-between; gap: .6rem; min-height: 2.4rem; padding: .25rem .5rem; border: 1px solid var(--panel-border); border-radius: .35rem; font-size: .8rem; overflow-wrap: anywhere; }
 .vendor-list button { flex: none; padding: .3rem .6rem; }
+
+/* Zone chat: received lines and a text field in the bottom-right corner. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.chat-frame {
+  position: fixed;
+  z-index: 3;
+  right: 1rem;
+  bottom: 1rem;
+  width: min(22rem, calc(100vw - 2rem));
+  display: grid;
+  gap: .35rem;
+}
+.chat-log {
+  max-height: 9rem;
+  margin: 0;
+  padding: .45rem .6rem;
+  overflow-y: auto;
+  list-style: none;
+  border-radius: .6rem;
+  background: rgb(9 14 20 / 62%);
+  font-size: .8rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.chat-log:empty { display: none; }
+.chat-yell { color: #f0a36b; }
+.chat-system { color: var(--gold-bright); }
+.chat-form input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: .45rem .6rem;
+  border: 1px solid var(--panel-border);
+  border-radius: .5rem;
+  background: rgb(9 14 20 / 80%);
+  color: #edf4ee;
+  font: inherit;
+  font-size: .85rem;
+}
+.chat-form input:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 1px; }
+/* Smaller screens keep only the field until it is focused; the action dock owns the corner. */
+@media (max-width: 60rem), (max-height: 480px) {
+  .chat-frame { bottom: auto; top: 50%; width: min(18rem, calc(100vw - 2rem)); }
+  .chat-frame:not(:focus-within) .chat-log { display: none; }
+  .chat-frame:not(:focus-within) .chat-form input { opacity: .7; }
+}

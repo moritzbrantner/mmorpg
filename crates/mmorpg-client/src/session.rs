@@ -511,6 +511,7 @@ mod tests {
             equipment: None,
             loot: None,
             events: Vec::new(),
+            chat: Vec::new(),
             entities: Vec::new(),
         };
         outbox.observe(&snapshot);

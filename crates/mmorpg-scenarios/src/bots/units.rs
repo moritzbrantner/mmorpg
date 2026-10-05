@@ -260,6 +260,7 @@ pub const fn error_code_name(code: ErrorCode) -> &'static str {
         ErrorCode::NotEquippable => "not_equippable",
         ErrorCode::InvalidVendor => "invalid_vendor",
         ErrorCode::NotEnoughMoney => "not_enough_money",
+        ErrorCode::ChatThrottled => "chat_throttled",
     }
 }
 
@@ -289,6 +290,7 @@ fn parse_error_code(name: &str) -> Option<ErrorCode> {
         "not_equippable" => ErrorCode::NotEquippable,
         "invalid_vendor" => ErrorCode::InvalidVendor,
         "not_enough_money" => ErrorCode::NotEnoughMoney,
+        "chat_throttled" => ErrorCode::ChatThrottled,
         _ => return None,
     })
 }

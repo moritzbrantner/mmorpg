@@ -247,6 +247,12 @@ const worldView = new WorldView(renderer, camera, {
     sales: requireElement<HTMLElement>("#vendor-sales"),
     feedback: requireElement<HTMLElement>("#vendor-feedback"),
   },
+  chat: {
+    frame: requireElement<HTMLElement>("#chat"),
+    log: requireElement<HTMLElement>("#chat-log"),
+    form: requireElement<HTMLFormElement>("#chat-form"),
+    input: requireElement<HTMLInputElement>("#chat-input"),
+  },
 });
 const controls = new GameControls({
   screen: () =>
@@ -1027,6 +1033,9 @@ function runAction(action: GameAction): void {
       return;
     case "ui.toggleVendor":
       worldView.toggleVendor();
+      return;
+    case "ui.openChat":
+      worldView.openChat();
       return;
     case "ui.closePanel":
       if (!worldView.closeLoot() && !worldView.closeVendor() && !worldView.closeCharacter()) {

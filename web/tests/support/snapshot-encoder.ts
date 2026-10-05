@@ -1,7 +1,7 @@
 import { entityKindCode, type EntityRef } from "../../src/entity-ref";
 import type { AuraState, CastState, ZoneEvent, ZoneSnapshot } from "../../src/replication";
 
-const FIXED_BYTES = 104;
+const FIXED_BYTES = 105;
 /** Bag 64, equipment 12 and stat totals 8. */
 const SHEET_BYTES = 84;
 const AURA_KINDS = ["damage-over-time", "heal-over-time", "absorb", "root", "snare", "stun", "haste"];
@@ -12,7 +12,7 @@ const ENTITY_BYTES = 21;
 const ERROR_CODES = [
   "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target", "too-many-intents", "invalid-inventory-move", "inventory-full", "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
   "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
-  "not-equippable", "invalid-vendor", "not-enough-money",
+  "not-equippable", "invalid-vendor", "not-enough-money", "chat-throttled",
 ];
 
 function flagByte(flags: readonly boolean[]): number {
@@ -20,7 +20,7 @@ function flagByte(flags: readonly boolean[]): number {
 }
 
 /**
- * Test-only player-visible snapshot v11 encoder (docs/PROTOCOL.md); Rust owns the real one.
+ * Test-only player-visible snapshot v12 encoder (docs/PROTOCOL.md); Rust owns the real one.
  * Like it, positions must fit i16 and velocities saturate to i8.
  */
 export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
@@ -29,7 +29,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     lootBytes = snapshot.loot.item === null ? 17 : 21;
   }
   const lists = 3 * snapshot.cooldowns.length + 6 * (snapshot.auras.length + snapshot.targetDetail.auras.length);
-  const size = FIXED_BYTES + lists + (snapshot.inventory === null ? 0 : SHEET_BYTES) + lootBytes + EVENT_BYTES * snapshot.events.length + ENTITY_BYTES * snapshot.entities.length;
+  const chat = (snapshot.chat ?? []).map((line) => ({ ...line, bytes: new TextEncoder().encode(line.text) }));
+  const chatBytes = chat.reduce((total, line) => total + 6 + line.bytes.length, 0);
+  const size = FIXED_BYTES + lists + (snapshot.inventory === null ? 0 : SHEET_BYTES) + lootBytes + EVENT_BYTES * snapshot.events.length + chatBytes + ENTITY_BYTES * snapshot.entities.length;
   const bytes = new Uint8Array(size);
   const view = new DataView(bytes.buffer);
   let offset = 0;
@@ -41,9 +43,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u8(value === null ? 0 : entityKindCode(value.kind));
     u32(value?.id ?? 0);
   };
-  u8(11);
+  u8(12);
   u8(2);
-  u16(11);
+  u16(12);
   u32(snapshot.zoneId);
   u64(snapshot.tick);
   u64(snapshot.contentRevision);
@@ -126,6 +128,14 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
   u8(snapshot.events.length);
   for (const event of snapshot.events) {
     encodeEvent(event, u8, u16, entity);
+  }
+  u8(chat.length);
+  for (const line of chat) {
+    u32(line.speaker);
+    u8(line.channel === "say" ? 0 : 1);
+    u8(line.bytes.length);
+    bytes.set(line.bytes, offset);
+    offset += line.bytes.length;
   }
   u16(snapshot.entities.length);
   for (const record of snapshot.entities) {

@@ -41,6 +41,7 @@ fn facing_snapshot(tick: u64, position: [i32; 3], facing: u16) -> ZoneSnapshot {
         cooldowns: Vec::new(),
         auras: Vec::new(),
         events: Vec::new(),
+        chat: Vec::new(),
         entities: vec![EntitySnapshot {
             kind: EntityKind::Player,
             id: 1,

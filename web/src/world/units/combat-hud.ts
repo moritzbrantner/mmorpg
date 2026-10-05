@@ -31,6 +31,7 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "not-equippable": "That item cannot be equipped.",
   "invalid-vendor": "That vendor does not sell that.",
   "not-enough-money": "You do not have enough copper.",
+  "chat-throttled": "You can speak once per second.",
 };
 
 const RESOURCE_NAMES = { rage: "Rage", focus: "Focus", mana: "Mana" } as const;

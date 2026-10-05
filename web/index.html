@@ -174,6 +174,10 @@
         <ul id="vendor-sales" class="vendor-list" aria-label="Your items"></ul>
         <p id="vendor-feedback" aria-live="polite"></p>
       </aside>
+      <section id="chat" class="chat-frame" data-world-ui aria-label="Chat" hidden>
+        <ol id="chat-log" class="chat-log" role="log" aria-live="polite" aria-label="Chat messages"></ol>
+        <form id="chat-form" class="chat-form"><label class="visually-hidden" for="chat-input">Chat message</label><input id="chat-input" type="text" autocomplete="off" spellcheck="false" placeholder="Enter to chat · /y to yell" /></form>
+      </section>
       <aside id="loot-panel" class="loot-panel" aria-label="Corpse loot" hidden>
         <div class="bags-heading"><h2 id="loot-title">Corpse loot</h2><button id="loot-close" type="button" aria-label="Close loot">Close</button></div>
         <p id="loot-rewards" aria-live="polite"></p>
@@ -208,7 +212,7 @@
       </section>
       <section id="debug-overlay" class="debug-overlay" aria-label="Debug statistics" hidden></section>
       <section class="hud" data-world-ui aria-label="Controls" hidden>
-        <p><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Tab</kbd> target · <kbd>1</kbd>–<kbd>4</kbd> abilities · <kbd>Esc</kbd> cancels a cast · <kbd>F</kbd> or right-click attack · left-drag look · right-drag turn · wheel zoom · <kbd>B</kbd> bags · <kbd>C</kbd> character · <kbd>V</kbd> vendor · <kbd>F3</kbd> stats · <kbd>Esc</kbd> characters</p>
+        <p><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Tab</kbd> target · <kbd>1</kbd>–<kbd>4</kbd> abilities · <kbd>Esc</kbd> cancels a cast · <kbd>F</kbd> or right-click attack · left-drag look · right-drag turn · wheel zoom · <kbd>B</kbd> bags · <kbd>C</kbd> character · <kbd>V</kbd> vendor · <kbd>Enter</kbd> chat · <kbd>F3</kbd> stats · <kbd>Esc</kbd> characters</p>
         <p id="objective">Explore Greyhaven Vale. Quests are not in this build yet.</p>
         <p id="unit-status" aria-live="polite"></p>
         <p id="combat-feedback" aria-live="polite"></p>

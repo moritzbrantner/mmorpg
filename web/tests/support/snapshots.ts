@@ -24,7 +24,7 @@ export function testSnapshot(
     Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events" | "inventoryRevision" | "inventory" | "equipment" | "stats" | "loot" | "cooldowns" | "auras" | "targetDetail">>,
 ): ZoneSnapshot {
   return {
-    loot: null, inventoryRevision: 1n, inventory: null, equipment: null, stats: null, viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [],
+    loot: null, inventoryRevision: 1n, inventory: null, equipment: null, stats: null, viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [], chat: [],
     cooldowns: [], auras: [], targetDetail: { cast: null, auras: [] }, ...fields,
   };
 }

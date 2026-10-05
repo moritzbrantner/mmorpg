@@ -78,6 +78,7 @@ pub enum Action {
     UnequipItem,
     BuyItem,
     SellItem,
+    Chat,
     Loot,
     ChooseClass,
     UseAbility,
@@ -101,6 +102,7 @@ impl Action {
             Self::UnequipItem => "unequip_item",
             Self::BuyItem => "buy_item",
             Self::SellItem => "sell_item",
+            Self::Chat => "chat",
             Self::Loot => "loot",
             Self::ChooseClass => "choose_class",
             Self::UseAbility => "use_ability",
@@ -124,6 +126,7 @@ impl Action {
             | Self::UnequipItem
             | Self::BuyItem
             | Self::SellItem
+            | Self::Chat
             | Self::Loot
             | Self::ChooseClass
             | Self::UseAbility
@@ -147,6 +150,7 @@ impl Action {
             | Self::UnequipItem
             | Self::BuyItem
             | Self::SellItem
+            | Self::Chat
             | Self::Loot
             | Self::ChooseClass
             | Self::UseAbility
@@ -190,6 +194,10 @@ pub struct Step {
     pub npc: Option<u32>,
     /// `buy_item`: the offer index in the vendor's stock, passed through unchanged.
     pub offer: Option<u8>,
+    /// `chat`: `say` or `yell`.
+    pub channel: Option<String>,
+    /// `chat`: the line; the runner refuses text core would refuse.
+    pub text: Option<String>,
     /// `unequip_item`: the equipment slot (0 main hand … 5 feet), passed
     /// through unchanged.
     pub equipment_slot: Option<u8>,
@@ -221,6 +229,7 @@ pub enum ExpectKind {
     Event,
     Unit,
     Resource,
+    Chat,
 }
 
 impl ExpectKind {
@@ -243,13 +252,14 @@ impl ExpectKind {
             Self::Event => "event",
             Self::Unit => "unit",
             Self::Resource => "resource",
+            Self::Chat => "chat",
         }
     }
 
     /// Kinds that may wait for a condition within a window (`by_tick`).
     const fn allows_window(self) -> bool {
         match self {
-            Self::Sees | Self::Event | Self::Unit | Self::Resource => true,
+            Self::Sees | Self::Event | Self::Unit | Self::Resource | Self::Chat => true,
             Self::NotSees
             | Self::Position
             | Self::Acknowledged
@@ -305,6 +315,8 @@ pub struct Expectation {
     pub state: Option<UnitState>,
     /// The bot's exact class resource (`resource` expectations).
     pub resource: Option<u16>,
+    /// `chat`: the line heard from bot `target`, or `count` lines in total.
+    pub text: Option<String>,
 }
 
 /// Parses and validates a scenario at the file trust boundary.
@@ -388,6 +400,16 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
         }
         if step.offer.is_some() != (step.action == Action::BuyItem) {
             return Err(format!("{at}: offer is required only for buy_item"));
+        }
+        let is_chat = step.action == Action::Chat;
+        if step.channel.is_some() != is_chat || step.text.is_some() != is_chat {
+            return Err(format!("{at}: channel and text are required only for chat"));
+        }
+        if is_chat {
+            chat_channel(step.channel.as_deref().unwrap_or_default())
+                .ok_or_else(|| format!("{at}: channel must be say or yell"))?;
+            mmorpg_core::ChatText::new(step.text.as_deref().unwrap_or_default())
+                .map_err(|error| format!("{at}: {error}"))?;
         }
         if [step.creature.is_some(), step.died_at.is_some()]
             .iter()
@@ -495,6 +517,10 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                     && expectation.item.is_some()
             }
             ExpectKind::Copper => expectation.copper.is_some(),
+            ExpectKind::Chat => {
+                (expectation.text.is_some() && expectation.target.is_some())
+                    != (expectation.count.is_some() && expectation.text.is_none())
+            }
             ExpectKind::Loot => {
                 expectation.sheet.is_some()
                     && (expectation.sheet == Some(false)
@@ -696,6 +722,7 @@ impl Runner<'_> {
             | Action::UnequipItem
             | Action::BuyItem
             | Action::SellItem
+            | Action::Chat
             | Action::Loot
             | Action::ChooseClass
             | Action::UseAbility
@@ -828,6 +855,18 @@ impl Runner<'_> {
                 (
                     ZoneCommand::EquipItem { bag_slot },
                     format!(" bag_slot={bag_slot}"),
+                )
+            }
+            Action::Chat => {
+                let channel = step.channel.as_deref().unwrap_or_default();
+                let text = step.text.as_deref().unwrap_or_default();
+                (
+                    ZoneCommand::Chat {
+                        channel: chat_channel(channel).ok_or("chat channel is invalid")?,
+                        text: mmorpg_core::ChatText::new(text)
+                            .map_err(|error| error.to_string())?,
+                    },
+                    format!(" channel={channel} text={text:?}"),
                 )
             }
             Action::BuyItem => {
@@ -1293,6 +1332,36 @@ impl Runner<'_> {
                     Err(format!("got {shown}"))
                 }
             }
+            ExpectKind::Chat => {
+                let heard: Vec<String> = view
+                    .chat
+                    .iter()
+                    .map(|line| {
+                        let verb = match line.channel {
+                            mmorpg_core::ChatChannel::Say => "says",
+                            mmorpg_core::ChatChannel::Yell => "yells",
+                        };
+                        format!(
+                            "{} {verb} {:?}",
+                            self.player_name(line.speaker),
+                            line.text.as_str()
+                        )
+                    })
+                    .collect();
+                let shown = format!("chat[{}]", heard.join(", "));
+                let matched = match (&expectation.text, &expectation.target, expectation.count) {
+                    (Some(text), Some(speaker), _) => view.chat.iter().any(|line| {
+                        Some(line.speaker) == self.player_of(speaker) && line.text.as_str() == text
+                    }),
+                    (None, _, Some(count)) => view.chat.len() == count,
+                    _ => false,
+                };
+                if matched {
+                    Ok(shown)
+                } else {
+                    Err(format!("got {shown}"))
+                }
+            }
             ExpectKind::Health => {
                 let me = &view.viewer;
                 let shown = format!("health={}/{}", me.health, me.max_health);
@@ -1479,6 +1548,14 @@ fn player_of_entity(entity: &EntitySnapshot) -> Option<PlayerId> {
 
 /// The wire value of a class name; unknown names map to an invalid value
 /// so the zone, not the runner, refuses them.
+fn chat_channel(name: &str) -> Option<mmorpg_core::ChatChannel> {
+    match name {
+        "say" => Some(mmorpg_core::ChatChannel::Say),
+        "yell" => Some(mmorpg_core::ChatChannel::Yell),
+        _ => None,
+    }
+}
+
 fn class_code(name: &str) -> u8 {
     match name {
         "warden" => 0,
@@ -1523,6 +1600,7 @@ fn describe(expectation: &Expectation) -> String {
         ExpectKind::Inventory => format!("{bot} inventory"),
         ExpectKind::Equipment => format!("{bot} equipment"),
         ExpectKind::Copper => format!("{bot} copper"),
+        ExpectKind::Chat => format!("{bot} chat"),
         ExpectKind::Loot => format!("{bot} loot"),
         ExpectKind::Target => format!("{bot} target {}", unit_text(expectation)),
         ExpectKind::Event => {
