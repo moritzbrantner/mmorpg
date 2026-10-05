@@ -222,6 +222,18 @@ describe("WASM local zone host", () => {
     expect(source.latestProjection()?.equipment).toEqual(Array(6).fill(null));
     expect(source.latestProjection()?.inventory?.[1]).toEqual({ itemId: 2, quantity: 1 });
   });
+  test("a spoken line comes back to the speaker, and a second within a second is refused", async () => {
+    const { source } = createLocalWorld(wasm);
+    const player = await source.join();
+    source.sendCommand({ kind: "chat", channel: "say", text: "Hail, Greyhaven!" });
+    source.sendCommand({ kind: "chat", channel: "yell", text: "Too soon" });
+    run(source, 1);
+    expect(source.latestProjection()?.chat).toEqual([{ speaker: player, channel: "say", text: "Hail, Greyhaven!" }]);
+    expect(source.latestProjection()?.events).toContainEqual({ kind: "error", code: "chat-throttled", target: null });
+    run(source, 1);
+    expect(source.latestProjection()?.chat).toEqual([]);
+  });
+
   test("the real vendor sells and buys back at the inn's counter", () => {
     const { source, catalog } = createLocalWorld(wasm);
     source.join();

@@ -1,9 +1,10 @@
 /**
- * Command wire version 6, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
- * `fixtures/protocol/commands-v6.hex` holds both encoders to the same bytes.
+ * Command wire version 7, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
+ * `fixtures/protocol/commands-v7.hex` holds both encoders to the same bytes.
  * The session supplies player identity and sequence separately.
  */
 import { entityKindCode, isU32, type EntityRef } from "./entity-ref";
+import { chatTextError } from "./replication";
 
 export type Axis = -1 | 0 | 1;
 
@@ -29,9 +30,11 @@ export type WorldCommand =
   /** Buys `quantity` units of the vendor NPC's offer at index `offer`. */
   | { kind: "buy-item"; npc: number; offer: number; quantity: number }
   /** Sells `quantity` units from one of the player's own bag slots to the vendor NPC. */
-  | { kind: "sell-item"; npc: number; bagSlot: number; quantity: number };
+  | { kind: "sell-item"; npc: number; bagSlot: number; quantity: number }
+  /** Says (20 m) or yells (60 m) one line of 1–80 UTF-8 bytes; the zone rate-limits speakers. */
+  | { kind: "chat"; channel: "say" | "yell"; text: string };
 
-const COMMAND_WIRE_VERSION = 6;
+const COMMAND_WIRE_VERSION = 7;
 const MOVE_TAG = 1;
 const JUMP_TAG = 2;
 const SELECT_TARGET_TAG = 3;
@@ -47,6 +50,7 @@ const EQUIP_ITEM_TAG = 12;
 const UNEQUIP_ITEM_TAG = 13;
 const BUY_ITEM_TAG = 14;
 const SELL_ITEM_TAG = 15;
+const CHAT_TAG = 16;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
@@ -147,6 +151,14 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       return encodeTrade(BUY_ITEM_TAG, command.npc, command.offer, command.quantity);
     case "sell-item":
       return encodeTrade(SELL_ITEM_TAG, command.npc, command.bagSlot, command.quantity);
+    case "chat": {
+      const problem = chatTextError(command.text);
+      if (problem !== null) {
+        throw new Error(problem);
+      }
+      const text = new TextEncoder().encode(command.text);
+      return Uint8Array.from([COMMAND_WIRE_VERSION, CHAT_TAG, command.channel === "say" ? 0 : 1, text.length, ...text]);
+    }
     case "equip-item":
       if (!isU8(command.bagSlot)) {
         throw new Error("Bag slots must be u8.");

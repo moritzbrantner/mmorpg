@@ -164,4 +164,5 @@ const REFUSALS: Record<ErrorCode, string | null> = {
   "not-equippable": null,
   "invalid-vendor": null,
   "not-enough-money": null,
+  "chat-throttled": null,
 };

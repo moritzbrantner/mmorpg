@@ -95,7 +95,8 @@ export type ErrorCode =
   | "invalid-class"
   | "not-equippable"
   | "invalid-vendor"
-  | "not-enough-money";
+  | "not-enough-money"
+  | "chat-throttled";
 
 /** Feedback the viewer received in the projection's tick; cosmetic and lossy. */
 export type ZoneEvent =
@@ -150,27 +151,64 @@ export type ZoneSnapshot = {
   /** Complete eligible selected corpse sheet; null means no current sheet. */
   loot: LootView | null;
   events: readonly ZoneEvent[];
+  /** Chat lines the viewer heard this tick, in delivery order; cosmetic and lossy like events. */
+  chat: readonly ChatLine[];
   /** Priority order: the viewer, its target, then nearest first. */
   entities: readonly EntityState[];
 };
 
+/** A line the viewer heard: player `speaker` said or yelled `text`. */
+export type ChatLine = { speaker: number; channel: "say" | "yell"; text: string };
+
+/**
+ * The core chat text rule: 1–80 UTF-8 bytes, at least one non-whitespace character and no control
+ * characters. Returns null when `text` is not a valid line.
+ */
+export function chatTextError(text: string): string | null {
+  const length = new TextEncoder().encode(text).length;
+  if (length === 0 || length > MAX_CHAT_BYTES) {
+    return "Chat lines are 1 to 80 bytes.";
+  }
+  if (/\p{Cc}/u.test(text)) {
+    return "Chat lines cannot contain control characters.";
+  }
+  // Rust's `str::trim` removes Unicode White_Space, which differs from JavaScript's `trim` (U+FEFF).
+  if (/^\p{White_Space}*$/u.test(text)) {
+    return "Chat lines cannot be blank.";
+  }
+  return null;
+}
+
+function decodeChatText(bytes: Uint8Array): string {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("Chat text is not UTF-8");
+  }
+  if (chatTextError(text) !== null) {
+    throw new Error("Invalid chat text");
+  }
+  return text;
+}
+
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 11;
-const SCHEMA_VERSION = 11;
+const WIRE_VERSION = 12;
+const SCHEMA_VERSION = 12;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
 /**
  * Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 27, self abilities 20 (class,
  * resource, global cooldown, cast, melee damage range, two list counts), target 12 (target-of-target,
- * its cast, aura count), sheet revision 8/presence 1, loot presence 1, two counts.
+ * its cast, aura count), sheet revision 8/presence 1, loot presence 1, event, chat and entity counts.
  */
-const FIXED_BYTES = 104;
+const FIXED_BYTES = 105;
 const ENTITY_BYTES = 21;
 const MAX_EVENTS = 16;
-/** (1 077 − 104) / 21: records that fit without events, sheets, cooldowns or auras. */
+/** (1 077 − 105) / 21: records that fit without events, sheets, cooldowns or auras. */
 const MAX_ENTITIES = 46;
 const MAX_COOLDOWNS = 4;
 const MAX_AURAS = 8;
@@ -182,8 +220,10 @@ const ERROR_CODES: readonly ErrorCode[] = [
   "too-many-intents", "invalid-inventory-move", "inventory-full",
   "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
   "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
-  "not-equippable", "invalid-vendor", "not-enough-money",
+  "not-equippable", "invalid-vendor", "not-enough-money", "chat-throttled",
 ];
+const MAX_CHAT = 4;
+const MAX_CHAT_BYTES = 80;
 const EQUIPMENT_SLOTS = 6;
 
 type ItemShape = { maxStack: number; slot: number | null; stats: readonly [number, number, number, number] };
@@ -279,6 +319,11 @@ class Reader {
 
   u64(): bigint {
     return this.#view.getBigUint64(this.#advance(8));
+  }
+
+  bytes(length: number): Uint8Array {
+    const at = this.#advance(length);
+    return new Uint8Array(this.#view.buffer, this.#view.byteOffset + at, length);
   }
 
   entity(): EntityRef | null {
@@ -642,6 +687,19 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   for (let index = 0; index < eventCount; index += 1) {
     events.push(decodeEvent(reader));
   }
+  const chatCount = reader.u8();
+  if (chatCount > MAX_CHAT) {
+    throw new Error("Snapshot exceeds the chat capacity");
+  }
+  const chat: ChatLine[] = [];
+  for (let index = 0; index < chatCount; index += 1) {
+    const speaker = reader.u32();
+    const channel = ["say", "yell"][reader.u8()] as ChatLine["channel"] | undefined;
+    if (channel === undefined) {
+      throw new Error("Unknown chat channel");
+    }
+    chat.push({ speaker, channel, text: decodeChatText(reader.bytes(reader.u8())) });
+  }
   const count = reader.u16();
   if (count > MAX_ENTITIES || view.byteLength !== reader.offset + count * ENTITY_BYTES) {
     throw new Error("Invalid snapshot length or entity count");
@@ -675,7 +733,7 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
       classChoice, resource, cast, globalCooldown, damage,
     },
     cooldowns, auras, targetOfTarget, targetDetail, inventoryRevision, inventory, equipment, stats, loot, events,
-    entities,
+    chat, entities,
   };
 }
 

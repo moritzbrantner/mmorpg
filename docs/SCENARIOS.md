@@ -76,7 +76,7 @@ Step outcome tags are `joined`, `applied`, `ignored_stale`, `disconnected`, `res
 | `event` | `event`, `tick` or `by_tick`, optional `entity` | carries a feedback event of that kind (`damage_dealt`, `damage_taken`, `miss`, `died`, `evade`, `error:<code>`) about `entity`: whom the bot hit, who hit it, who died, who evaded, or the target an error concerned |
 | `unit` | `entity` (not `none`), `state`, `tick` or `by_tick` | shows the unit `alive`, `dead` (a corpse or a dead player), `absent`, `in_combat`, `evading`, `targets_viewer` or `tapped_by_other` |
 
-Error codes are `no_target`, `out_of_range`, `target_dead`, `not_attackable`, `you_are_dead`, `not_dead`, `invalid_target`, `too_many_intents`, `invalid_inventory_move`, `inventory_full`, `invalid_loot`, `not_loot_owner`, `empty_loot`, `money_overflow`, `no_class`, `not_learned`, `not_ready`, `not_enough_resource`, `stunned`, `already_casting`, `invalid_class`, `not_equippable`, `invalid_vendor` and `not_enough_money`. Units are named `bot:<name>`, `creature:<id>` (the spawn ID of the vale content) or `npc:<id>`.
+Error codes are `no_target`, `out_of_range`, `target_dead`, `not_attackable`, `you_are_dead`, `not_dead`, `invalid_target`, `too_many_intents`, `invalid_inventory_move`, `inventory_full`, `invalid_loot`, `not_loot_owner`, `empty_loot`, `money_overflow`, `no_class`, `not_learned`, `not_ready`, `not_enough_resource`, `stunned`, `already_casting`, `invalid_class`, `not_equippable`, `invalid_vendor`, `not_enough_money` and `chat_throttled`. Units are named `bot:<name>`, `creature:<id>` (the spawn ID of the vale content) or `npc:<id>`.
 
 A `jump`, `start_attack`, `stop_attack` or `release_spirit` step submits that bare command; `select_target` submits `SelectTarget` for its `entity`. Like `move`, every command takes optional `seq` and `connection_epoch` overrides. A well-formed command the zone refuses, such as attacking without a target, is still `applied`: the refusal arrives as an `error:<code>` event in the next snapshot. `select_target` of a bot that has not joined yet is `rejected:unknown_entity` and sends nothing.
 
@@ -172,3 +172,12 @@ with feedback events. `vendor-resume` is refused out of reach on the spawn
 plaza, walks to Innkeeper Bram Tolliver, sells its Torn Fur, is refused for
 lacking copper and at a guard, sells the Worn Dagger and buys it back after a
 connection resume, checking copper and the bag sheet at each step.
+
+### Chat vocabulary
+
+`chat` steps require `channel` (`say` or `yell`) and `text`; the runner refuses
+text core would refuse. `chat` expectations check the lines a bot heard at a
+tick (or within a `by_tick` window): `target` (the speaking bot) with `text`, or
+`count` for the number of lines heard. `zone-chat` covers say and yell ranges
+with a bot about 32 m away, the speaker hearing itself, the once-per-second
+rate limit and its `chat_throttled` error.
