@@ -372,14 +372,16 @@ export class OnlineZoneSource implements WorldSource {
     if (link !== this.#link) {
       return;
     }
-    const phase = this.#phase;
-    if (phase.kind === "connected" && end.kind === "lost") {
-      this.#resume(`The connection to the zone host was lost: ${end.message}`);
+    const reason = end.kind === "closed"
+      ? `The zone host ended the session (code ${end.code}${end.reason ? `: ${end.reason}` : ""}).`
+      : `The connection to the zone host was lost: ${end.message}`;
+    // A page cannot tell a host's clean close from a lost path, so a connected session treats both as
+    // an interruption and lets the host refuse a resume it will not grant (docs/NATIVE_CLIENT.md).
+    if (this.#phase.kind === "connected") {
+      this.#resume(reason);
       return;
     }
-    this.#linkFailed(link, new Error(end.kind === "closed"
-      ? `The zone host ended the session (code ${end.code}${end.reason ? `: ${end.reason}` : ""}).`
-      : `The connection to the zone host was lost: ${end.message}`));
+    this.#linkFailed(link, new Error(reason));
   }
 
   /** A session failed: a join is refused, and anything later fails the source closed. */

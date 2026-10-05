@@ -187,6 +187,15 @@ export class FakeZoneHost {
     }
   }
 
+  /** The host closes `playerId`'s session cleanly: the client sees a closed session; the player enters its grace. */
+  closeSession(playerId: number): void {
+    const link = this.#sessions.get(playerId)?.link;
+    if (link) {
+      this.#disconnect(link);
+      link.end({ kind: "closed", code: 0, reason: "" });
+    }
+  }
+
   /** One authoritative tick: expire, move, then publish each connected player's projection. */
   step(): void {
     const current = this.tick;

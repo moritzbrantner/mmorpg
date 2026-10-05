@@ -178,6 +178,20 @@ describe("OnlineZoneSource", () => {
     expect(host.applied.map(({ sequence, payload }) => [sequence, payload])).toEqual([[2, CLASS_CHOICE], [3, "050100000000"]]);
   });
 
+  test("a clean close by the host is an interruption that resumes the same player", async () => {
+    const { clock, host, source } = online({ graceTicks: 300n });
+    const player = await clock.until(source.join());
+    await frame(clock, source, 3 * TICK_MS);
+    host.closeSession(player);
+    await clock.advance(0);
+    expect(source.linkState()).toBe("reconnecting");
+    await frame(clock, source, RECONNECT_SETTLE_MS);
+    await frame(clock, source);
+    expect(source.linkState()).toBe("connected");
+    expect(host.connectionEpoch(player)).toBe(2);
+    expect(host.players()).toEqual([player]);
+  });
+
   test("a lost connection resumes the same player on a new epoch, stopped, without replaying intent", async () => {
     const { clock, host, source } = online({ graceTicks: 300n });
     const player = await clock.until(source.join());
