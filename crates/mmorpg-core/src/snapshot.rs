@@ -56,6 +56,16 @@ pub enum PlayerIntent {
     UnequipItem {
         equipment_slot: u8,
     },
+    BuyItem {
+        npc: crate::NpcId,
+        offer: u8,
+        quantity: u16,
+    },
+    SellItem {
+        npc: crate::NpcId,
+        bag_slot: u8,
+        quantity: u16,
+    },
 }
 
 /// A creature's decision state.

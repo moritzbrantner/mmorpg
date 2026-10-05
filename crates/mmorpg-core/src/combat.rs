@@ -89,6 +89,8 @@ impl ZoneSimulation {
             | PlayerIntent::MoveItem { .. }
             | PlayerIntent::EquipItem { .. }
             | PlayerIntent::UnequipItem { .. }
+            | PlayerIntent::BuyItem { .. }
+            | PlayerIntent::SellItem { .. }
             | PlayerIntent::Loot(_)
                 if !alive =>
             {
@@ -132,6 +134,24 @@ impl ZoneSimulation {
                     equipment.unequip(bag, equipment_slot)
                 })?,
             PlayerIntent::Loot(claim) => self.claim_loot(player_id, claim)?,
+            PlayerIntent::BuyItem {
+                npc,
+                offer,
+                quantity,
+            } => self.trade(
+                player_id,
+                npc,
+                crate::vendor::Trade::Buy { offer, quantity },
+            )?,
+            PlayerIntent::SellItem {
+                npc,
+                bag_slot,
+                quantity,
+            } => self.trade(
+                player_id,
+                npc,
+                crate::vendor::Trade::Sell { bag_slot, quantity },
+            )?,
             PlayerIntent::SelectTarget(None) => {
                 self.update_player(player_id, |player| {
                     player.target = None;

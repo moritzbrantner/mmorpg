@@ -29,6 +29,7 @@ pub mod rng;
 mod snapshot;
 pub mod trig;
 pub mod unit;
+mod vendor;
 mod zone;
 
 pub use ability::{
@@ -79,6 +80,11 @@ pub use snapshot::{
     CanonicalPlayerCombat, CanonicalPlayerSnapshot, CanonicalZoneSnapshot, CreatureAi,
     CreatureLife, PlayerIntent, ThreatEntry,
 };
+pub use vendor::{
+    MAX_VENDOR_OFFERS, VENDOR_CATALOG_REVISION, VENDOR_REACH_UNITS, VendorOffer, VendorStock,
+    VendorStockError, VendorTradeError, sell_price, settle_purchase, settle_sale,
+    starter_vendor_stock,
+};
 pub use zone::{MAX_PENDING_INTENTS, ZoneSimulation, ZoneTickWork};
 
 use std::error::Error;
@@ -89,7 +95,7 @@ pub type PlayerId = u32;
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
 /// Core schema of canonical and player-visible snapshots.
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 10;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 11;
 /// Inclusive XZ radius of player-scoped relevance (45 m).
 pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
 /// Deterministic relevance cap of one player projection: the viewer, its
@@ -172,6 +178,18 @@ pub enum ZoneCommand {
     /// lowest empty bag slot.
     UnequipItem {
         equipment_slot: u8,
+    },
+    /// Buys `quantity` units of offer `offer` (stock index) from vendor `npc`.
+    BuyItem {
+        npc: NpcId,
+        offer: u8,
+        quantity: u16,
+    },
+    /// Sells `quantity` units from one of the player's own bag slots to vendor `npc`.
+    SellItem {
+        npc: NpcId,
+        bag_slot: u8,
+        quantity: u16,
     },
 }
 

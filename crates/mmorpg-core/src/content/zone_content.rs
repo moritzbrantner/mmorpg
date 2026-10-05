@@ -15,8 +15,8 @@ use super::{MAX_CONTENT_COORDINATE_UNITS, ZoneDefinition};
 use crate::ability::{AbilityId, AbilityUser, ability_by_id};
 use crate::unit::{CORPSE_TICKS, MAX_SWING_DAMAGE, MAX_UNIT_LEVEL};
 use crate::{
-    CreatureId, CreatureTemplateId, LootOutcome, LootTable, MAX_PLAYERS_PER_ZONE, NpcId,
-    PLAYER_HALF_EXTENTS_UNITS, ZoneAreas, ZoneError,
+    CreatureId, CreatureTemplateId, LootOutcome, LootTable, MAX_PLAYERS_PER_ZONE, NpcId, NpcRole,
+    PLAYER_HALF_EXTENTS_UNITS, VendorStock, ZoneAreas, ZoneError,
 };
 
 /// Immutable, validated zone content, shared between zones through `Arc`.
@@ -34,6 +34,8 @@ pub struct ZoneContent {
     loot_tables: Vec<(CreatureTemplateId, LootTable)>,
     ability_revision: u64,
     creature_abilities: Vec<(CreatureTemplateId, AbilityId)>,
+    vendor_revision: u64,
+    vendors: Vec<(NpcId, VendorStock)>,
 }
 
 /// A body as `(centre, half extents)` in units.
@@ -126,6 +128,8 @@ impl ZoneContent {
             loot_tables: Vec::new(),
             ability_revision: 0,
             creature_abilities: Vec::new(),
+            vendor_revision: 0,
+            vendors: Vec::new(),
         };
         content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
@@ -150,6 +154,8 @@ impl ZoneContent {
             loot_tables: Vec::new(),
             ability_revision: 0,
             creature_abilities: Vec::new(),
+            vendor_revision: 0,
+            vendors: Vec::new(),
         };
         content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
@@ -345,7 +351,83 @@ impl ZoneContent {
             .map(|index| self.creature_abilities[index].1)
     }
 
+    /// Binds vendor stock to NPCs with the `Vendor` role and the vendor
+    /// rules (sale values) to recovery identity, without changing the
+    /// simulation seed. Revision zero is reserved for content without
+    /// vendors; its fingerprint omits them, so its zones refuse every trade.
+    pub fn with_vendors(
+        mut self,
+        revision: u64,
+        mut vendors: Vec<(NpcId, VendorStock)>,
+    ) -> Result<Self, ZoneError> {
+        if revision == 0 {
+            return Err(ZoneError::new("vendor catalog revision must be nonzero"));
+        }
+        if vendors.len() > MAX_NPCS {
+            return Err(ZoneError::new("zone vendor content capacity reached"));
+        }
+        vendors.sort_by_key(|(npc, _)| *npc);
+        if vendors.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return Err(ZoneError::new("duplicate vendor npc id"));
+        }
+        if vendors
+            .iter()
+            .any(|(npc, _)| self.npc(*npc).is_none_or(|npc| npc.role != NpcRole::Vendor))
+        {
+            return Err(ZoneError::new("vendor stock names no vendor npc"));
+        }
+        self.vendor_revision = revision;
+        self.vendors = vendors;
+        self.fingerprint = self.compute_fingerprint();
+        Ok(self)
+    }
+
+    #[must_use]
+    pub const fn vendor_revision(&self) -> u64 {
+        self.vendor_revision
+    }
+
+    /// Ordered by NPC ID.
+    #[must_use]
+    pub fn vendors(&self) -> &[(NpcId, VendorStock)] {
+        &self.vendors
+    }
+
+    /// The stock `npc` sells, if content binds one.
+    #[must_use]
+    pub fn vendor_stock(&self, npc: NpcId) -> Option<&VendorStock> {
+        self.vendors
+            .binary_search_by_key(&npc, |(npc, _)| *npc)
+            .ok()
+            .map(|index| &self.vendors[index].1)
+    }
+
     fn compute_fingerprint(&self) -> u64 {
+        let fingerprint = self.compute_ability_fingerprint();
+        if self.vendor_revision == 0 {
+            return fingerprint;
+        }
+        let mut hash = Fnv1a::new();
+        hash.bytes(b"mmorpg.zone-content/v5");
+        hash.u64(fingerprint);
+        hash.u64(self.vendor_revision);
+        for item in crate::ITEM_CATALOG {
+            hash.u16(item.id.get());
+            hash.u32(crate::sell_price(item.id));
+        }
+        hash.len(self.vendors.len());
+        for (npc, stock) in &self.vendors {
+            hash.u32(npc.get());
+            hash.len(stock.offers().len());
+            for offer in stock.offers() {
+                hash.u16(offer.item.get());
+                hash.u32(offer.price);
+            }
+        }
+        hash.finish()
+    }
+
+    fn compute_ability_fingerprint(&self) -> u64 {
         let fingerprint = self.compute_loot_fingerprint();
         if self.ability_revision == 0 {
             return fingerprint;

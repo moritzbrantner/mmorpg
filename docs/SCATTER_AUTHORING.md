@@ -111,9 +111,10 @@ clearing without moving the player. Browser acceptance saves its frame and
 bounded scene-work evidence under `artifacts/browser/outpost-grass-*`.
 
 The authoring captures and adoption checksums above describe revision 4. Corpse
-loot activation (revision 5), class abilities (revision 6) and equipment
-(revision 7) change only live content identity metadata: Greyhaven revision 7,
-fingerprint `5a8f35c63f4c8849`, snapshot v10/command v5. Live scenery hash is
-`0fe3301031a84e94` and complete browser export fingerprint is `f0fb12bc8aa317f8`.
+loot activation (revision 5), class abilities (revision 6), equipment
+(revision 7) and the vendor (revision 8) change only live content identity
+metadata: Greyhaven revision 8, fingerprint `8340ebef46d8b6f3`, snapshot
+v11/command v6. Live scenery hash is `1a280f015e7d1787` and complete browser
+export fingerprint is `3adc38f34d3f72e7`.
 All authored masks, placements, heights and source revision-4 provenance remain
 unchanged; none of these identity changes requires recapturing geometry.

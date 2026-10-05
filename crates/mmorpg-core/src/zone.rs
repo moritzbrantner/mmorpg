@@ -447,6 +447,24 @@ impl ZoneSimulation {
             ZoneCommand::UnequipItem { equipment_slot } => {
                 Some(PlayerIntent::UnequipItem { equipment_slot })
             }
+            ZoneCommand::BuyItem {
+                npc,
+                offer,
+                quantity,
+            } => Some(PlayerIntent::BuyItem {
+                npc,
+                offer,
+                quantity,
+            }),
+            ZoneCommand::SellItem {
+                npc,
+                bag_slot,
+                quantity,
+            } => Some(PlayerIntent::SellItem {
+                npc,
+                bag_slot,
+                quantity,
+            }),
         };
         if let Some(intent) = intent {
             if player.intents.len() < MAX_PENDING_INTENTS {

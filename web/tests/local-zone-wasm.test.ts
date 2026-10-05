@@ -342,7 +342,7 @@ describe("WASM local zone host", () => {
     const actual = provider.scenery.props.filter((prop) => prop.kind === "grass-tuft" && prop.position[0] >= -3500 && prop.position[0] <= 3500 && prop.position[2] >= -1300 && prop.position[2] <= 5300);
     expect(actual).toEqual(expected);
     expect(actual.length).toBe(55);
-    expect(provider.scenery.presentationFingerprint).toBe("f0fb12bc8aa317f8");
+    expect(provider.scenery.presentationFingerprint).toBe("3adc38f34d3f72e7");
     expect(provider.scenery.contentRevision).toBe(7n);
   });
 

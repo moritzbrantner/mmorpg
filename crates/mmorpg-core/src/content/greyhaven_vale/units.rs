@@ -250,3 +250,8 @@ pub fn creature_abilities() -> Vec<(CreatureTemplateId, crate::AbilityId)> {
         ),
     ]
 }
+
+/// Innkeeper Bram Tolliver (NPC 3) sells the starter stock.
+pub(crate) fn vendors() -> Vec<(NpcId, crate::VendorStock)> {
+    vec![(NpcId::new(3), crate::starter_vendor_stock())]
+}

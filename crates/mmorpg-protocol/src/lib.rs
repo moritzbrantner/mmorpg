@@ -24,7 +24,7 @@ pub use projection::{
 use std::error::Error;
 use std::fmt;
 
-pub const SNAPSHOT_WIRE_VERSION: u8 = 10;
+pub const SNAPSHOT_WIRE_VERSION: u8 = 11;
 
 /// Smallest WebTransport datagram payload measured over the pinned stack:
 /// QUIC's 1,200-byte initial MTU before path MTU discovery, observed as 1,161
