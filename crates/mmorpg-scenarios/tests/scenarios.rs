@@ -355,6 +355,14 @@ fn invalid_scenarios_are_rejected_at_load() {
             "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"resource\"\nbot = \"a\"\ntick = 1",
             "missing its required field",
         ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"chat\"\nbot = \"a\"\ntarget = \"a\"\ntext = \"hi\"\nemote = \"wavve\"\ntick = 1",
+            "missing its required field",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"chat\"\nbot = \"a\"\ntarget = \"a\"\ntext = \"hi\"\nemote = \"wave\"\ntick = 1",
+            "missing its required field",
+        ),
     ] {
         let error = bots::load(text).unwrap_err();
         assert!(error.contains(message), "{error}");

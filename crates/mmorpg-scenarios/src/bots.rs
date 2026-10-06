@@ -532,16 +532,19 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             }
             ExpectKind::Copper => expectation.copper.is_some(),
             ExpectKind::Chat => {
-                let heard = expectation.target.is_some()
-                    && (expectation.text.is_some()
-                        != expectation
-                            .emote
-                            .as_deref()
-                            .is_some_and(|name| emote_named(name).is_some()));
-                let counted = expectation.count.is_some()
-                    && expectation.text.is_none()
-                    && expectation.emote.is_none();
-                heard != counted
+                let known_emote = expectation
+                    .emote
+                    .as_deref()
+                    .is_none_or(|name| emote_named(name).is_some());
+                let fields = [
+                    expectation.text.is_some(),
+                    expectation.emote.is_some(),
+                    expectation.count.is_some(),
+                ];
+                // Exactly one of text, emote or count; a heard line also names its speaker.
+                known_emote
+                    && fields.iter().filter(|&&set| set).count() == 1
+                    && (expectation.count.is_some() || expectation.target.is_some())
             }
             ExpectKind::Loot => {
                 expectation.sheet.is_some()
