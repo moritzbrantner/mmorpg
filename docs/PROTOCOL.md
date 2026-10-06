@@ -68,7 +68,7 @@ An entity reference is 5 bytes: kind (`u8`) then ID (`u32`). Kind 1 is a player 
 | --- | --- | --- |
 | 0 | 1 | Wire version: 13 |
 | 1 | 1 | Scope: 1 canonical, 2 player-visible |
-| 2 | 2 | Core schema version: 12 |
+| 2 | 2 | Core schema version: 13 |
 | 4 | 4 | Zone ID |
 | 8 | 8 | Simulation tick |
 
