@@ -10,7 +10,7 @@ Commands and projections travel inside the pinned `game-server` session frames (
 
 The shared fixture `fixtures/protocol/session-frames-v3.hex` pins these frames and the browser route contract: `crates/mmorpg-game-server/tests/session_frames.rs` renders it from the pinned encoders and decodes it with the pinned decoders, and the browser (`web/tests/session-frames.test.ts`) decodes and encodes the same bytes. A `game-server` pin bump that changes a frame fails in both languages.
 
-## Commands (wire version 7)
+## Commands (wire version 8)
 
 The shared session runtime supplies player identity, connection epoch and command sequence separately. Core rejects zero, stale and duplicate sequences without changing state.
 
@@ -54,9 +54,9 @@ The fifteen discrete intents (every command but `Move` and `Jump`) are queued in
 
 `Loot` names a creature spawn and its observed death tick. Core checks life, owner, expiry, authoritative 3D reach and remaining rewards during the tick, then atomically settles money and items. Refusals preserve rewards; no client supplies reward amounts. See [LOOT.md](LOOT.md).
 
-Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, known entity kinds, ID 0 for the absent reference, and only version 7. Versions 1–6 are rejected.
+Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, known entity kinds, ID 0 for the absent reference, and only version 8. Versions 1–7 are rejected.
 
-The shared command fixture is `fixtures/protocol/commands-v7.hex`: one encoded command per line followed by its fields, covering every tag. `mmorpg-protocol` renders and verifies it, and the browser encoder (`web/src/command-wire.ts`) must produce the same bytes.
+The shared command fixture is `fixtures/protocol/commands-v8.hex`: one encoded command per line followed by its fields, covering every tag. `mmorpg-protocol` renders and verifies it, and the browser encoder (`web/src/command-wire.ts`) must produce the same bytes.
 
 ## Entity references
 
@@ -66,7 +66,7 @@ An entity reference is 5 bytes: kind (`u8`) then ID (`u32`). Kind 1 is a player 
 
 | Offset | Width | Field |
 | --- | --- | --- |
-| 0 | 1 | Wire version: 12 |
+| 0 | 1 | Wire version: 13 |
 | 1 | 1 | Scope: 1 canonical, 2 player-visible |
 | 2 | 2 | Core schema version: 12 |
 | 4 | 4 | Zone ID |

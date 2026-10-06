@@ -201,7 +201,7 @@ bun test
 bun run build
 ```
 
-Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v12.hex`, `fixtures/protocol/commands-v7.hex` and the `game-server` session frames in `fixtures/protocol/session-frames-v3.hex`.
+Committed Rust and Bun lockfiles make local and CI resolution reproduce the same dependency graphs. Rust and browser tests both consume `fixtures/protocol/player-snapshot-v13.hex`, `fixtures/protocol/commands-v8.hex` and the `game-server` session frames in `fixtures/protocol/session-frames-v3.hex`.
 
 The browser's online mode has its own end-to-end check against a real zone host (needs cargo, OpenSSL, a built `web/dist` and Playwright Chromium, like `scripts/smoke-browser.py`):
 
