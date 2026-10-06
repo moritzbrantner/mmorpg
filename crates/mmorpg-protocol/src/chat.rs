@@ -1,7 +1,8 @@
-//! Chat lines on the wire: speaker (`u32`), channel (`u8`: 0 say, 1 yell),
-//! text length (`u8`, 1–80) and the UTF-8 text, validated like core.
+//! Chat lines on the wire: speaker (`u32`), then the message: channel (`u8`:
+//! 0 say, 1 yell) with text length (`u8`, 1–80) and the UTF-8 text, validated
+//! like core, or 2 (emote) with the emote ID (`u8`, 1–5).
 
-use mmorpg_core::{ChatChannel, ChatLine, ChatText, MAX_CHAT_BYTES};
+use mmorpg_core::{ChatChannel, ChatLine, ChatMessage, ChatText, Emote, MAX_CHAT_BYTES};
 
 use crate::ProtocolError;
 use crate::wire::{read_u8, take};
@@ -38,17 +39,40 @@ pub(crate) fn decode_text(
     Ok((channel, text))
 }
 
+const EMOTE_CODE: u8 = 2;
+
+/// A message as a record and a pending intent carry it.
+pub(crate) fn encode_message(payload: &mut Vec<u8>, message: ChatMessage) {
+    match message {
+        ChatMessage::Say(text) => encode_text(payload, ChatChannel::Say, &text),
+        ChatMessage::Yell(text) => encode_text(payload, ChatChannel::Yell, &text),
+        ChatMessage::Emote(emote) => payload.extend_from_slice(&[EMOTE_CODE, emote.code()]),
+    }
+}
+
+pub(crate) fn decode_message(
+    payload: &[u8],
+    offset: &mut usize,
+) -> Result<ChatMessage, ProtocolError> {
+    if payload.get(*offset) == Some(&EMOTE_CODE) {
+        *offset += 1;
+        return decode_emote(payload, offset).map(ChatMessage::Emote);
+    }
+    let (channel, text) = decode_text(payload, offset)?;
+    Ok(channel.message(text))
+}
+
+pub(crate) fn decode_emote(payload: &[u8], offset: &mut usize) -> Result<Emote, ProtocolError> {
+    Emote::from_code(read_u8(payload, offset)?).ok_or_else(|| ProtocolError::new("unknown emote"))
+}
+
 pub(crate) fn encode_line(payload: &mut Vec<u8>, line: &ChatLine) {
     payload.extend_from_slice(&line.speaker.to_be_bytes());
-    encode_text(payload, line.channel, &line.text);
+    encode_message(payload, line.message);
 }
 
 pub(crate) fn decode_line(payload: &[u8], offset: &mut usize) -> Result<ChatLine, ProtocolError> {
     let speaker = u32::from_be_bytes(take(payload, offset)?);
-    let (channel, text) = decode_text(payload, offset)?;
-    Ok(ChatLine {
-        speaker,
-        channel,
-        text,
-    })
+    let message = decode_message(payload, offset)?;
+    Ok(ChatLine { speaker, message })
 }

@@ -171,9 +171,9 @@ fn encode_player(
                 encode_trade_intent(payload, SELL_ITEM_INTENT, npc, bag_slot, quantity);
                 continue;
             }
-            PlayerIntent::Chat { channel, text } => {
+            PlayerIntent::Chat(message) => {
                 payload.push(CHAT_INTENT);
-                crate::chat::encode_text(payload, channel, &text);
+                crate::chat::encode_message(payload, message);
                 continue;
             }
         };
@@ -458,8 +458,9 @@ fn decode_player(
             continue;
         }
         if code == CHAT_INTENT {
-            let (channel, text) = crate::chat::decode_text(payload, offset)?;
-            intents.push(PlayerIntent::Chat { channel, text });
+            intents.push(PlayerIntent::Chat(crate::chat::decode_message(
+                payload, offset,
+            )?));
             continue;
         }
         if code == BUY_ITEM_INTENT || code == SELL_ITEM_INTENT {

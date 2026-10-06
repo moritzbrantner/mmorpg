@@ -840,13 +840,19 @@ mod tests {
             chat: vec![
                 mmorpg_core::ChatLine {
                     speaker: 7,
-                    channel: mmorpg_core::ChatChannel::Say,
-                    text: mmorpg_core::ChatText::new("Hail, Greyhaven!").unwrap(),
+                    message: mmorpg_core::ChatMessage::Say(
+                        mmorpg_core::ChatText::new("Hail, Greyhaven!").unwrap(),
+                    ),
                 },
                 mmorpg_core::ChatLine {
                     speaker: 4_000_000_000,
-                    channel: mmorpg_core::ChatChannel::Yell,
-                    text: mmorpg_core::ChatText::new("Grüße!").unwrap(),
+                    message: mmorpg_core::ChatMessage::Yell(
+                        mmorpg_core::ChatText::new("Grüße!").unwrap(),
+                    ),
+                },
+                mmorpg_core::ChatLine {
+                    speaker: 9,
+                    message: mmorpg_core::ChatMessage::Emote(mmorpg_core::Emote::Cheer),
                 },
             ],
             entities: vec![
@@ -931,7 +937,7 @@ mod tests {
 
     fn fixture_bytes() -> Vec<u8> {
         hex(include_str!(
-            "../../../fixtures/protocol/player-snapshot-v12.hex"
+            "../../../fixtures/protocol/player-snapshot-v13.hex"
         ))
     }
 
@@ -949,8 +955,8 @@ mod tests {
     const EQUIPMENT: usize = INVENTORY + 9 + INVENTORY_RECORD_BYTES;
     const STATS: usize = EQUIPMENT + EQUIPMENT_RECORD_BYTES;
     const EVENTS: usize = INVENTORY + 8 + 1 + SELF_SHEET_BYTES + 1;
-    /// The fixture's two chat records: 6 + 16 and 6 + 8 bytes.
-    const CHAT_BYTES: usize = 22 + 14;
+    /// The fixture's chat records: 6 + 16 and 6 + 8 bytes, then a 6-byte emote.
+    const CHAT_BYTES: usize = 22 + 14 + 6;
     const CHAT: usize = EVENTS + 1 + EVENT_COUNT * EVENT_RECORD_BYTES;
     const ENTITY_COUNT: usize = CHAT + 1 + CHAT_BYTES;
     const FIRST_ENTITY: usize = ENTITY_COUNT + 2;
@@ -980,14 +986,17 @@ mod tests {
                 + 4 * ENTITY_RECORD_BYTES
         );
         assert_eq!(encoded, fixture_bytes());
-        assert_eq!(encoded[CHAT], 2, "two chat lines follow the events");
+        assert_eq!(
+            encoded[CHAT], 3,
+            "two chat lines and an emote follow the events"
+        );
         assert_eq!(decode_snapshot(&encoded).unwrap(), snapshot);
         assert_eq!(encoded[CLASS], 5, "Arcanist, female");
         assert_eq!(encoded[EVENTS], 14);
         assert_eq!(encoded[FIRST_ENTITY], 1, "the viewer's record leads");
         // The previous version's fixture is rejected, never reinterpreted.
         let legacy = hex(include_str!(
-            "../../../fixtures/protocol/player-snapshot-v11.hex"
+            "../../../fixtures/protocol/player-snapshot-v12.hex"
         ));
         assert_eq!(
             decode_snapshot(&legacy).unwrap_err().to_string(),
@@ -1023,7 +1032,7 @@ mod tests {
         // A dead target has no target detail.
         snapshot.target_detail = TargetDetail::default();
         let expected = hex(include_str!(
-            "../../../fixtures/protocol/player-loot-v12.hex"
+            "../../../fixtures/protocol/player-loot-v13.hex"
         ));
         if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
             let bytes = encode_snapshot(&snapshot).unwrap();
@@ -1077,6 +1086,7 @@ mod tests {
             include_str!("../../../fixtures/protocol/player-loot-v9.hex"),
             include_str!("../../../fixtures/protocol/player-loot-v10.hex"),
             include_str!("../../../fixtures/protocol/player-loot-v11.hex"),
+            include_str!("../../../fixtures/protocol/player-loot-v12.hex"),
         ] {
             assert!(decode_snapshot(&hex(legacy)).is_err());
         }
@@ -1482,8 +1492,9 @@ mod tests {
         chatty.chat = vec![
             mmorpg_core::ChatLine {
                 speaker: u32::MAX,
-                channel: mmorpg_core::ChatChannel::Yell,
-                text: mmorpg_core::ChatText::new(&"€".repeat(26)).unwrap(),
+                message: mmorpg_core::ChatMessage::Yell(
+                    mmorpg_core::ChatText::new(&"€".repeat(26)).unwrap(),
+                ),
             };
             MAX_CHAT_PER_TICK
         ];
