@@ -1,4 +1,9 @@
-//! Zone chat (#68): bounded `/say` and `/yell` lines as zone-local events.
+//! Zone chat (#68) and emotes (#69): bounded `/say` and `/yell` lines and a
+//! small typed emote vocabulary, as zone-local events on one path.
+//!
+//! An emote is delivered like a `/say` line: same range, the speaker's shared
+//! rate limit, the same ordering and per-tick cap. Core only names the emote;
+//! clients choose how to present it and gain no animation authority.
 //!
 //! A line is validated text of 1–[`MAX_CHAT_BYTES`] UTF-8 bytes without
 //! control characters. It is a sequenced intent resolved in tick step 1 in
@@ -24,6 +29,44 @@ pub const MAX_CHAT_PER_TICK: usize = 4;
 pub const SAY_RANGE_UNITS: i32 = 2_000;
 /// `/yell` reaches 60 m (inclusive, horizontal).
 pub const YELL_RANGE_UNITS: i32 = 6_000;
+
+/// The emote vocabulary. Wire IDs are stable; unknown IDs are malformed.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Emote {
+    Wave,
+    Bow,
+    Cheer,
+    Laugh,
+    Point,
+}
+
+impl Emote {
+    pub const ALL: [Self; 5] = [Self::Wave, Self::Bow, Self::Cheer, Self::Laugh, Self::Point];
+
+    /// Wire value: 1 wave, 2 bow, 3 cheer, 4 laugh, 5 point.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Wave => 1,
+            Self::Bow => 2,
+            Self::Cheer => 3,
+            Self::Laugh => 4,
+            Self::Point => 5,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Wave),
+            2 => Some(Self::Bow),
+            3 => Some(Self::Cheer),
+            4 => Some(Self::Laugh),
+            5 => Some(Self::Point),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ChatChannel {
@@ -55,6 +98,43 @@ impl ChatChannel {
             0 => Some(Self::Say),
             1 => Some(Self::Yell),
             _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn message(self, text: ChatText) -> ChatMessage {
+        match self {
+            Self::Say => ChatMessage::Say(text),
+            Self::Yell => ChatMessage::Yell(text),
+        }
+    }
+}
+
+/// What one speaker delivers: a line on a channel, or an emote.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ChatMessage {
+    Say(ChatText),
+    Yell(ChatText),
+    Emote(Emote),
+}
+
+impl ChatMessage {
+    /// Emotes reach as far as `/say`.
+    #[must_use]
+    pub const fn range_units(self) -> i32 {
+        match self {
+            Self::Say(_) | Self::Emote(_) => SAY_RANGE_UNITS,
+            Self::Yell(_) => YELL_RANGE_UNITS,
+        }
+    }
+
+    /// Wire value: 0 say, 1 yell, 2 emote.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Say(_) => 0,
+            Self::Yell(_) => 1,
+            Self::Emote(_) => 2,
         }
     }
 }
@@ -109,23 +189,21 @@ impl fmt::Debug for ChatText {
     }
 }
 
-/// One line a player heard this tick.
+/// One line or emote a player heard this tick.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ChatLine {
     pub speaker: PlayerId,
-    pub channel: ChatChannel,
-    pub text: ChatText,
+    pub message: ChatMessage,
 }
 
 impl ZoneSimulation {
-    /// Tick step 1 of `Chat`: refuses a speaker that spoke within the last
-    /// [`CHAT_INTERVAL_TICKS`], otherwise delivers the line to every player
-    /// in range, in ascending player ID order.
+    /// Tick step 1 of `Chat` and `Emote`: refuses a speaker that spoke or
+    /// emoted within the last [`CHAT_INTERVAL_TICKS`], otherwise delivers the
+    /// message to every player in range, in ascending player ID order.
     pub(crate) fn speak(
         &mut self,
         speaker: PlayerId,
-        channel: ChatChannel,
-        text: ChatText,
+        message: ChatMessage,
         now: u64,
     ) -> Result<(), ZoneError> {
         let Some(state) = self.players.get(&speaker) else {
@@ -142,7 +220,7 @@ impl ZoneSimulation {
             return Ok(());
         }
         let from = self.player_position(speaker)?;
-        let range = i128::from(channel.range_units());
+        let range = i128::from(message.range_units());
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         let mut hearers = Vec::new();
         for id in ids {
@@ -155,11 +233,7 @@ impl ZoneSimulation {
                 hearers.push(id);
             }
         }
-        let line = ChatLine {
-            speaker,
-            channel,
-            text,
-        };
+        let line = ChatLine { speaker, message };
         for id in hearers {
             if let Some(hearer) = self.players.get_mut(&id)
                 && hearer.chat.len() < MAX_CHAT_PER_TICK
@@ -200,6 +274,16 @@ mod tests {
         // Twenty-seven three-byte characters exceed the byte bound.
         assert!(ChatText::new(&"€".repeat(27)).is_err());
         assert!(ChatText::new(&"€".repeat(26)).is_ok());
+    }
+
+    #[test]
+    fn emote_codes_round_trip_and_reject_unknown_ids() {
+        for emote in Emote::ALL {
+            assert_eq!(Emote::from_code(emote.code()), Some(emote));
+        }
+        for unknown in [0, 6, 255] {
+            assert_eq!(Emote::from_code(unknown), None);
+        }
     }
 
     #[test]

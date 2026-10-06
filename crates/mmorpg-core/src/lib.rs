@@ -41,8 +41,8 @@ pub use ability::{
 pub use areas::{Area, AreaId, MAX_AREA_NAME_BYTES, MAX_ZONE_AREAS, ZoneAreas};
 pub use aura::{Aura, CastState, Cooldown};
 pub use chat::{
-    CHAT_INTERVAL_TICKS, ChatChannel, ChatLine, ChatText, MAX_CHAT_BYTES, MAX_CHAT_PER_TICK,
-    SAY_RANGE_UNITS, YELL_RANGE_UNITS,
+    CHAT_INTERVAL_TICKS, ChatChannel, ChatLine, ChatMessage, ChatText, Emote, MAX_CHAT_BYTES,
+    MAX_CHAT_PER_TICK, SAY_RANGE_UNITS, YELL_RANGE_UNITS,
 };
 pub use class::{ClassChoice, PlayerClass, ResourceKind, Sex};
 pub use content::greyhaven_vale::{self, greyhaven_vale_definition};
@@ -100,7 +100,7 @@ pub type PlayerId = u32;
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
 /// Core schema of canonical and player-visible snapshots.
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 12;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 13;
 /// Inclusive XZ radius of player-scoped relevance (45 m).
 pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
 /// Deterministic relevance cap of one player projection: the viewer, its
@@ -201,6 +201,8 @@ pub enum ZoneCommand {
         channel: ChatChannel,
         text: ChatText,
     },
+    /// Performs one emote for the players in `/say` range (#69).
+    Emote(Emote),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

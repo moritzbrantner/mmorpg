@@ -476,7 +476,8 @@ impl ZoneSimulation {
                 bag_slot,
                 quantity,
             }),
-            ZoneCommand::Chat { channel, text } => Some(PlayerIntent::Chat { channel, text }),
+            ZoneCommand::Chat { channel, text } => Some(PlayerIntent::Chat(channel.message(text))),
+            ZoneCommand::Emote(emote) => Some(PlayerIntent::Chat(crate::ChatMessage::Emote(emote))),
         };
         if let Some(intent) = intent {
             if player.intents.len() < MAX_PENDING_INTENTS {

@@ -6,8 +6,9 @@ mod support;
 use std::sync::Arc;
 
 use mmorpg_core::{
-    CHAT_INTERVAL_TICKS, ChatChannel, ChatLine, ChatText, ErrorCode, MAX_CHAT_PER_TICK,
-    SAY_RANGE_UNITS, YELL_RANGE_UNITS, ZoneCommand, ZoneEvent, ZoneId, ZoneSimulation,
+    CHAT_INTERVAL_TICKS, ChatChannel, ChatLine, ChatMessage, ChatText, ErrorCode,
+    MAX_CHAT_PER_TICK, SAY_RANGE_UNITS, YELL_RANGE_UNITS, ZoneCommand, ZoneEvent, ZoneId,
+    ZoneSimulation,
 };
 use support::arena;
 
@@ -48,7 +49,12 @@ fn heard(zone: &ZoneSimulation, player: u32) -> Vec<(u32, String)> {
         .unwrap()
         .chat
         .iter()
-        .map(|line| (line.speaker, line.text.as_str().to_owned()))
+        .map(|line| match line.message {
+            ChatMessage::Say(text) | ChatMessage::Yell(text) => {
+                (line.speaker, text.as_str().to_owned())
+            }
+            ChatMessage::Emote(emote) => (line.speaker, format!("*{emote:?}*")),
+        })
         .collect()
 }
 
@@ -88,8 +94,8 @@ fn say_and_yell_reach_their_inclusive_ranges_and_the_speaker() {
     }
     assert!(heard(&zone, 5).is_empty());
     assert_eq!(
-        zone.snapshot_for_player(4).unwrap().chat[0].channel,
-        ChatChannel::Yell
+        zone.snapshot_for_player(4).unwrap().chat[0].message,
+        ChatMessage::Yell(text("To arms"))
     );
 }
 
@@ -161,8 +167,7 @@ fn pending_lines_heard_lines_and_the_rate_limit_continue_after_recovery() {
         state.players[0].chat[0],
         ChatLine {
             speaker: 1,
-            channel: ChatChannel::Say,
-            text: text("before")
+            message: ChatMessage::Say(text("before"))
         }
     );
     let mut recovered =
