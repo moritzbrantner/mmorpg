@@ -181,3 +181,9 @@ tick (or within a `by_tick` window): `target` (the speaking bot) with `text`, or
 `count` for the number of lines heard. `zone-chat` covers say and yell ranges
 with a bot about 32 m away, the speaker hearing itself, the once-per-second
 rate limit and its `chat_throttled` error.
+
+`emote` steps require `emote` (`wave`, `bow`, `cheer`, `laugh` or `point`) and
+send it as a zone-local emote. In a `chat` expectation, `target` with `emote`
+instead of `text` checks that the bot heard that emote from that speaker; `count`
+includes emotes. `zone-emote` covers the 20 m emote range, the speaker seeing its
+own emote and the rate limit an emote shares with chat, across a reconnect.

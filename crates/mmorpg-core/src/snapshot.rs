@@ -66,10 +66,8 @@ pub enum PlayerIntent {
         bag_slot: u8,
         quantity: u16,
     },
-    Chat {
-        channel: crate::ChatChannel,
-        text: crate::ChatText,
-    },
+    /// A chat line or an emote (#69).
+    Chat(crate::ChatMessage),
 }
 
 /// A creature's decision state.

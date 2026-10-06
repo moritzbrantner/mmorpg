@@ -10,36 +10,37 @@ Commands and projections travel inside the pinned `game-server` session frames (
 
 The shared fixture `fixtures/protocol/session-frames-v3.hex` pins these frames and the browser route contract: `crates/mmorpg-game-server/tests/session_frames.rs` renders it from the pinned encoders and decodes it with the pinned decoders, and the browser (`web/tests/session-frames.test.ts`) decodes and encodes the same bytes. A `game-server` pin bump that changes a frame fails in both languages.
 
-## Commands (wire version 7)
+## Commands (wire version 8)
 
 The shared session runtime supplies player identity, connection epoch and command sequence separately. Core rejects zero, stale and duplicate sequences without changing state.
 
 | Command | Bytes | Layout |
 | --- | ---: | --- |
-| Move | 6 | `[version = 7, tag = 1, forward: i8, strafe: i8, facing: u16]` |
-| Jump | 2 | `[version = 7, tag = 2]` |
-| SelectTarget | 7 | `[version = 7, tag = 3, kind: u8, id: u32]` |
-| StartAttack | 2 | `[version = 7, tag = 4]` |
-| StopAttack | 2 | `[version = 7, tag = 5]` |
-| ReleaseSpirit | 2 | `[version = 7, tag = 6]` |
-| MoveItem | 6 | `[version = 7, tag = 7, source_slot: u8, destination_slot: u8, quantity: u16]` |
-| Loot | 14 | `[version = 7, tag = 8, creature_id: u32, died_at: u64]` |
-| UseAbility | 8 | `[version = 7, tag = 9, ability: u8, kind: u8, id: u32]` |
-| CancelCast | 2 | `[version = 7, tag = 10]` |
-| ChooseClass | 4 | `[version = 7, tag = 11, class: u8, sex: u8]` |
-| EquipItem | 3 | `[version = 7, tag = 12, bag_slot: u8]` |
-| UnequipItem | 3 | `[version = 7, tag = 13, equipment_slot: u8]` |
-| BuyItem | 9 | `[version = 7, tag = 14, npc: u32, offer: u8, quantity: u16]` |
-| SellItem | 9 | `[version = 7, tag = 15, npc: u32, bag_slot: u8, quantity: u16]` |
-| Chat | 4 + n | `[version = 7, tag = 16, channel: u8, length: u8, text: n bytes]` |
+| Move | 6 | `[version = 8, tag = 1, forward: i8, strafe: i8, facing: u16]` |
+| Jump | 2 | `[version = 8, tag = 2]` |
+| SelectTarget | 7 | `[version = 8, tag = 3, kind: u8, id: u32]` |
+| StartAttack | 2 | `[version = 8, tag = 4]` |
+| StopAttack | 2 | `[version = 8, tag = 5]` |
+| ReleaseSpirit | 2 | `[version = 8, tag = 6]` |
+| MoveItem | 6 | `[version = 8, tag = 7, source_slot: u8, destination_slot: u8, quantity: u16]` |
+| Loot | 14 | `[version = 8, tag = 8, creature_id: u32, died_at: u64]` |
+| UseAbility | 8 | `[version = 8, tag = 9, ability: u8, kind: u8, id: u32]` |
+| CancelCast | 2 | `[version = 8, tag = 10]` |
+| ChooseClass | 4 | `[version = 8, tag = 11, class: u8, sex: u8]` |
+| EquipItem | 3 | `[version = 8, tag = 12, bag_slot: u8]` |
+| UnequipItem | 3 | `[version = 8, tag = 13, equipment_slot: u8]` |
+| BuyItem | 9 | `[version = 8, tag = 14, npc: u32, offer: u8, quantity: u16]` |
+| SellItem | 9 | `[version = 8, tag = 15, npc: u32, bag_slot: u8, quantity: u16]` |
+| Chat | 4 + n | `[version = 8, tag = 16, channel: u8, length: u8, text: n bytes]` |
+| Emote | 3 | `[version = 8, tag = 17, emote: u8]` |
 
-Version 7 adds chat; tags 1–15 retain their field layouts.
+Version 8 adds emotes; tags 1–16 retain their field layouts.
 
 - `Move` is held intent relative to `facing`. `forward` and `strafe` are each in `[-1, 1]`; positive strafe is the character's right. The server rotates the intent into one of eight headings (multiples of 45° relative to `facing`) through its integer trigonometry table. Horizontal speed is 21 units/tick (6.3 m/s) when `forward ≥ 0` and 13 units/tick when `forward < 0`. Zero intent stops horizontal movement; vertical velocity always stays with physics. Dead units cannot move: death clears the held intent and a pending jump, and while dead `Move` and `Jump` consume their sequence without holding any intent, so the released spirit stands until the next `Move`. Dead units cannot move: death clears the held intent and a pending jump, and while dead `Move` and `Jump` consume their sequence without holding any intent, so the released spirit stands until the next `Move`.
 - `Jump` is edge-triggered. It is recorded as pending and evaluated during the next tick before physics steps: when a thin probe directly below the feet touches any body other than the character (ground, geometry or another unit), vertical velocity becomes 16 units/tick. The tick always consumes the pending jump, so a mid-air jump has no effect and is not buffered until landing.
 - `SelectTarget` carries an [entity reference](#entity-references): kind 1 player, 2 creature or 3 NPC with its ID, or kind 0 with ID 0 to clear the selection. `StartAttack` starts auto-attacking the selected target, `StopAttack` stops it, and `ReleaseSpirit` returns a dead player to the graveyard with half health.
 
-The fourteen discrete intents (every command but `Move` and `Jump`) are queued in sequence order (at most 16 per player between ticks) and resolved during the next tick in `(player id, sequence)` order, never inside `apply_command`. A well-formed intent that is not allowed right now, such as attacking without a target or out of range, or selecting a unit that is not visible, is accepted and answered with an `Error` [event](#events); it never closes the session. An intent that finds the queue full is accepted the same way: it consumes its sequence, is dropped, and the next tick answers with one `too many intents` error. Only malformed payloads and stale or duplicate sequences fail.
+The fifteen discrete intents (every command but `Move` and `Jump`) are queued in sequence order (at most 16 per player between ticks) and resolved during the next tick in `(player id, sequence)` order, never inside `apply_command`. A well-formed intent that is not allowed right now, such as attacking without a target or out of range, or selecting a unit that is not visible, is accepted and answered with an `Error` [event](#events); it never closes the session. An intent that finds the queue full is accepted the same way: it consumes its sequence, is dropped, and the next tick answers with one `too many intents` error. Only malformed payloads and stale or duplicate sequences fail.
 
 `MoveItem` names only slots in the sender’s own bag. Slot/quantity values that fit the wire but cannot be applied are tick-time feedback, not session errors; there is no item grant command. `EquipItem` equips the item in one of the sender's bag slots into its catalog equipment slot, and `UnequipItem` moves the item in equipment slot 0 main hand, 1 off hand, 2 head, 3 chest, 4 legs or 5 feet to the lowest empty bag slot; every `u8` fits the wire and invalid slots are tick-time feedback. See [INVENTORY.md](INVENTORY.md#equipment).
 
@@ -49,11 +50,13 @@ The fourteen discrete intents (every command but `Move` and `Jump`) are queued i
 
 `Chat` says (channel 0) or yells (channel 1) one line of `length` UTF-8 bytes. The text must be 1–80 bytes, contain no control character and not be only whitespace; anything else is a malformed payload that fails the command. In tick step 1 a speaker who spoke within the last 30 ticks is refused with a `chat throttled` error; otherwise every player whose position is within 20 m (say) or 60 m (yell) of the speaker, horizontally and inclusively, the speaker included, hears the line in that tick's projection, in ascending player ID order and at most four lines per player per tick. Lines are not stored or replayed: like events, a lost datagram loses them.
 
+`Emote` performs emote 1 wave, 2 bow, 3 cheer, 4 laugh or 5 point; any other ID is a malformed payload that fails the command. An emote is delivered exactly like a `/say` line: it shares the speaker's once-per-second limit with `Chat` (a refusal is the same `chat throttled` error), reaches every player within 20 m, the speaker included, in ascending player ID order, and counts toward the same four-per-tick bound. Core only names the emote; clients choose how to present it.
+
 `Loot` names a creature spawn and its observed death tick. Core checks life, owner, expiry, authoritative 3D reach and remaining rewards during the tick, then atomically settles money and items. Refusals preserve rewards; no client supplies reward amounts. See [LOOT.md](LOOT.md).
 
-Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, known entity kinds, ID 0 for the absent reference, and only version 7. Versions 1–6 are rejected.
+Decoding is strict: exact lengths per tag, known tags only, `forward`/`strafe` in range, known entity kinds, ID 0 for the absent reference, and only version 8. Versions 1–7 are rejected.
 
-The shared command fixture is `fixtures/protocol/commands-v7.hex`: one encoded command per line followed by its fields, covering every tag. `mmorpg-protocol` renders and verifies it, and the browser encoder (`web/src/command-wire.ts`) must produce the same bytes.
+The shared command fixture is `fixtures/protocol/commands-v8.hex`: one encoded command per line followed by its fields, covering every tag. `mmorpg-protocol` renders and verifies it, and the browser encoder (`web/src/command-wire.ts`) must produce the same bytes.
 
 ## Entity references
 
@@ -63,9 +66,9 @@ An entity reference is 5 bytes: kind (`u8`) then ID (`u32`). Kind 1 is a player 
 
 | Offset | Width | Field |
 | --- | --- | --- |
-| 0 | 1 | Wire version: 12 |
+| 0 | 1 | Wire version: 13 |
 | 1 | 1 | Scope: 1 canonical, 2 player-visible |
-| 2 | 2 | Core schema version: 12 |
+| 2 | 2 | Core schema version: 13 |
 | 4 | 4 | Zone ID |
 | 8 | 8 | Simulation tick |
 
@@ -145,7 +148,7 @@ Events are cosmetic: a lost datagram may lose them. Health/XP, copper, complete 
 
 ### Chat
 
-After the events, a count (`u8`, at most 4) and that many lines the viewer heard this tick: speaker player ID (`u32`), channel (`u8`: 0 say, 1 yell), text length (`u8`, 1–80) and the UTF-8 text, validated like the command. Four 80-byte lines take at most 344 bytes, so the viewer and its target still fit beside every other section.
+After the events, a count (`u8`, at most 4) and that many lines the viewer heard this tick: speaker player ID (`u32`) and channel (`u8`). Channels 0 (say) and 1 (yell) continue with the text length (`u8`, 1–80) and the UTF-8 text, validated like the command; channel 2 (emote) continues with the emote ID (`u8`, 1–5). Four 80-byte lines take at most 344 bytes, so the viewer and its target still fit beside every other section.
 
 ### Entity records
 
@@ -188,7 +191,7 @@ Decoders reject payloads above the byte budget, a wrong wire version, scope or s
 
 Decoders additionally reject class codes above 6, a resource that does not match the class or its maximum, a global cooldown above 45, casts with unknown abilities or a wrong total, channel flag or progress, more than 4 cooldowns or out-of-order, unknown or over-long cooldowns, more than 8 auras, auras whose kind or time left does not match the catalog, ability state without a class or on a dead viewer, target detail without a target, and unknown abilities in ability events.
 
-The shared fixture is `fixtures/protocol/player-snapshot-v12.hex`: a level-4 Arcanist wearing an Apprentice Wand, a Cloth Hood and a Padded Tunic (3 stamina, 6 intellect: 110 maximum health and a 9–12 melee range) casting Firebolt behind an Arcane Barrier at a rooted Mirefin Lurker that casts Muck Bolt, next to an NPC and a corpse tapped by another player, with a sparse self bag, one event of every kind and two chat lines (a say and a yell with non-ASCII text). Rust encoding and browser decoding both verify these exact bytes. `player-loot-v12.hex` additionally pins an owned eligible corpse with two copper and two Torn Fur. The v8–v11 fixtures remain as rejection evidence.
+The shared fixture is `fixtures/protocol/player-snapshot-v13.hex`: a level-4 Arcanist wearing an Apprentice Wand, a Cloth Hood and a Padded Tunic (3 stamina, 6 intellect: 110 maximum health and a 9–12 melee range) casting Firebolt behind an Arcane Barrier at a rooted Mirefin Lurker that casts Muck Bolt, next to an NPC and a corpse tapped by another player, with a sparse self bag, one event of every kind, two chat lines (a say and a yell with non-ASCII text) and an emote. Rust encoding and browser decoding both verify these exact bytes. `player-loot-v13.hex` additionally pins an owned eligible corpse with two copper and two Torn Fur. The v8–v12 fixtures remain as rejection evidence.
 
 ## Canonical scope
 
@@ -356,4 +359,8 @@ Version 10 and earlier snapshots/checkpoints, version 5 and earlier commands and
 
 Version 12 adds the chat section after the events of player projections (one count byte when empty, so the fixed part is 105 bytes), pending intent code 14 and the per-player chat rate limit and heard lines to canonical records, and error code 25. Command version 7 adds tag 16 and rejects v6. Content, catalogs and the entity record are unchanged; whole entity records now fill a projection to at most 1,074 bytes.
 
-Version 11 and earlier snapshots/checkpoints, version 6 and earlier commands and old recovery bundles fail closed. Historical fixtures remain rejection evidence. This change provides no automatic migration; arrange an explicit migration or fresh development recovery state before upgrading a standalone host.
+## Zone emotes: snapshot v13 and command v8
+
+Version 13 adds channel 2 (emote) to chat records in player projections and canonical heard lines, and to pending chat intents (code 14) in canonical records. Command version 8 adds tag 17 and rejects v7. Content, catalogs, the entity record and the projection budget are unchanged; an emote record (6 bytes) is smaller than any chat line.
+
+Version 12 and earlier snapshots/checkpoints, version 7 and earlier commands and old recovery bundles fail closed. Historical fixtures remain rejection evidence. This change provides no automatic migration; arrange an explicit migration or fresh development recovery state before upgrading a standalone host.

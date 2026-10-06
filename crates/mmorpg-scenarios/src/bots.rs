@@ -79,6 +79,7 @@ pub enum Action {
     BuyItem,
     SellItem,
     Chat,
+    Emote,
     Loot,
     ChooseClass,
     UseAbility,
@@ -103,6 +104,7 @@ impl Action {
             Self::BuyItem => "buy_item",
             Self::SellItem => "sell_item",
             Self::Chat => "chat",
+            Self::Emote => "emote",
             Self::Loot => "loot",
             Self::ChooseClass => "choose_class",
             Self::UseAbility => "use_ability",
@@ -127,6 +129,7 @@ impl Action {
             | Self::BuyItem
             | Self::SellItem
             | Self::Chat
+            | Self::Emote
             | Self::Loot
             | Self::ChooseClass
             | Self::UseAbility
@@ -151,6 +154,7 @@ impl Action {
             | Self::BuyItem
             | Self::SellItem
             | Self::Chat
+            | Self::Emote
             | Self::Loot
             | Self::ChooseClass
             | Self::UseAbility
@@ -198,6 +202,8 @@ pub struct Step {
     pub channel: Option<String>,
     /// `chat`: the line; the runner refuses text core would refuse.
     pub text: Option<String>,
+    /// `emote`: `wave`, `bow`, `cheer`, `laugh` or `point`.
+    pub emote: Option<String>,
     /// `unequip_item`: the equipment slot (0 main hand … 5 feet), passed
     /// through unchanged.
     pub equipment_slot: Option<u8>,
@@ -317,6 +323,8 @@ pub struct Expectation {
     pub resource: Option<u16>,
     /// `chat`: the line heard from bot `target`, or `count` lines in total.
     pub text: Option<String>,
+    /// `chat`: the emote heard from bot `target`.
+    pub emote: Option<String>,
 }
 
 /// Parses and validates a scenario at the file trust boundary.
@@ -410,6 +418,12 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
                 .ok_or_else(|| format!("{at}: channel must be say or yell"))?;
             mmorpg_core::ChatText::new(step.text.as_deref().unwrap_or_default())
                 .map_err(|error| format!("{at}: {error}"))?;
+        }
+        if step.emote.is_some() != (step.action == Action::Emote) {
+            return Err(format!("{at}: emote is required only for emote"));
+        }
+        if let Some(name) = &step.emote {
+            emote_named(name).ok_or_else(|| format!("{at}: unknown emote {name:?}"))?;
         }
         if [step.creature.is_some(), step.died_at.is_some()]
             .iter()
@@ -518,8 +532,19 @@ fn validate(scenario: &BotScenario) -> Result<(), String> {
             }
             ExpectKind::Copper => expectation.copper.is_some(),
             ExpectKind::Chat => {
-                (expectation.text.is_some() && expectation.target.is_some())
-                    != (expectation.count.is_some() && expectation.text.is_none())
+                let known_emote = expectation
+                    .emote
+                    .as_deref()
+                    .is_none_or(|name| emote_named(name).is_some());
+                let fields = [
+                    expectation.text.is_some(),
+                    expectation.emote.is_some(),
+                    expectation.count.is_some(),
+                ];
+                // Exactly one of text, emote or count; a heard line also names its speaker.
+                known_emote
+                    && fields.iter().filter(|&&set| set).count() == 1
+                    && (expectation.count.is_some() || expectation.target.is_some())
             }
             ExpectKind::Loot => {
                 expectation.sheet.is_some()
@@ -723,6 +748,7 @@ impl Runner<'_> {
             | Action::BuyItem
             | Action::SellItem
             | Action::Chat
+            | Action::Emote
             | Action::Loot
             | Action::ChooseClass
             | Action::UseAbility
@@ -867,6 +893,13 @@ impl Runner<'_> {
                             .map_err(|error| error.to_string())?,
                     },
                     format!(" channel={channel} text={text:?}"),
+                )
+            }
+            Action::Emote => {
+                let name = step.emote.as_deref().unwrap_or_default();
+                (
+                    ZoneCommand::Emote(emote_named(name).ok_or("emote is invalid")?),
+                    format!(" emote={name}"),
                 )
             }
             Action::BuyItem => {
@@ -1337,23 +1370,46 @@ impl Runner<'_> {
                     .chat
                     .iter()
                     .map(|line| {
-                        let verb = match line.channel {
-                            mmorpg_core::ChatChannel::Say => "says",
-                            mmorpg_core::ChatChannel::Yell => "yells",
-                        };
-                        format!(
-                            "{} {verb} {:?}",
-                            self.player_name(line.speaker),
-                            line.text.as_str()
-                        )
+                        let speaker = self.player_name(line.speaker);
+                        match line.message {
+                            mmorpg_core::ChatMessage::Say(text) => {
+                                format!("{speaker} says {:?}", text.as_str())
+                            }
+                            mmorpg_core::ChatMessage::Yell(text) => {
+                                format!("{speaker} yells {:?}", text.as_str())
+                            }
+                            mmorpg_core::ChatMessage::Emote(emote) => {
+                                format!("{speaker} emotes {}", emote_name(emote))
+                            }
+                        }
                     })
                     .collect();
                 let shown = format!("chat[{}]", heard.join(", "));
-                let matched = match (&expectation.text, &expectation.target, expectation.count) {
-                    (Some(text), Some(speaker), _) => view.chat.iter().any(|line| {
-                        Some(line.speaker) == self.player_of(speaker) && line.text.as_str() == text
+                let from = |speaker: &String, line: &mmorpg_core::ChatLine| {
+                    Some(line.speaker) == self.player_of(speaker)
+                };
+                let matched = match (
+                    &expectation.text,
+                    &expectation.emote,
+                    &expectation.target,
+                    expectation.count,
+                ) {
+                    (Some(text), None, Some(speaker), _) => view.chat.iter().any(|line| {
+                        from(speaker, line)
+                            && matches!(
+                                line.message,
+                                mmorpg_core::ChatMessage::Say(heard)
+                                    | mmorpg_core::ChatMessage::Yell(heard)
+                                    if heard.as_str() == text
+                            )
                     }),
-                    (None, _, Some(count)) => view.chat.len() == count,
+                    (None, Some(name), Some(speaker), _) => view.chat.iter().any(|line| {
+                        from(speaker, line)
+                            && emote_named(name).is_some_and(|emote| {
+                                line.message == mmorpg_core::ChatMessage::Emote(emote)
+                            })
+                    }),
+                    (None, None, _, Some(count)) => view.chat.len() == count,
                     _ => false,
                 };
                 if matched {
@@ -1553,6 +1609,22 @@ fn chat_channel(name: &str) -> Option<mmorpg_core::ChatChannel> {
         "say" => Some(mmorpg_core::ChatChannel::Say),
         "yell" => Some(mmorpg_core::ChatChannel::Yell),
         _ => None,
+    }
+}
+
+fn emote_named(name: &str) -> Option<mmorpg_core::Emote> {
+    mmorpg_core::Emote::ALL
+        .into_iter()
+        .find(|&emote| emote_name(emote) == name)
+}
+
+fn emote_name(emote: mmorpg_core::Emote) -> &'static str {
+    match emote {
+        mmorpg_core::Emote::Wave => "wave",
+        mmorpg_core::Emote::Bow => "bow",
+        mmorpg_core::Emote::Cheer => "cheer",
+        mmorpg_core::Emote::Laugh => "laugh",
+        mmorpg_core::Emote::Point => "point",
     }
 }
 
