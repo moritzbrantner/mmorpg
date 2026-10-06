@@ -960,8 +960,8 @@ class BrowserAcceptance(unittest.TestCase):
         expect(panel).to_be_hidden()
         expect(self.page.locator("#character-select")).to_be_hidden()
 
-    def test_zone_chat_frame_says_yells_and_releases_held_movement(self):
-        """Enter opens the chat field, which releases held movement; lines come back from the zone."""
+    def test_zone_chat_frame_says_yells_emotes_and_releases_held_movement(self):
+        """Enter opens the chat field, which releases held movement; lines and emotes come back from the zone."""
         self.open("?debug")
         self.enter_world()
         chat = self.page.get_by_role("region", name="Chat", exact=True)
@@ -986,11 +986,18 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.keyboard.press("Enter")
         field.fill("/y Again")
         self.page.keyboard.press("Enter")
-        expect(log).to_contain_text("You can speak once per second.")
+        expect(log).to_contain_text("You can speak or emote once per second.")
         self.page.keyboard.press("Enter")
         field.fill("/dance")
         self.page.keyboard.press("Enter")
-        expect(log).to_contain_text("Use /s to say or /y to yell.")
+        expect(log).to_contain_text("Use /s to say, /y to yell, or /wave, /bow, /cheer, /laugh, /point.")
+        # An emote shares the once-per-second limit; after it, /wave comes back from the zone.
+        self.frames(35)
+        self.page.keyboard.press("Enter")
+        field.fill("/wave")
+        self.page.keyboard.press("Enter")
+        expect(log).to_contain_text("You wave.")
+        expect(log.locator(".chat-emote")).to_have_count(1)
         self.page.screenshot(path=str(ARTIFACTS / "chat-desktop.png"))
         self.page.keyboard.press("Enter")
         self.page.keyboard.press("Escape")

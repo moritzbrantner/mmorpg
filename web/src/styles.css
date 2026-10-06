@@ -864,6 +864,7 @@ kbd {
 }
 .chat-log:empty { display: none; }
 .chat-yell { color: #f0a36b; }
+.chat-emote { font-style: italic; color: #c9d6c1; }
 .chat-system { color: var(--gold-bright); }
 .chat-form input {
   width: 100%;

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodeSnapshot, findEntity, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
 import { NO_FLAGS, playerEntity, testSnapshot } from "./support/snapshots.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v12.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v13.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
 const player = (entityId, x, facing = 0) => playerEntity(entityId, [x, 90, 0], [21, 0, 0], facing);
 const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapshot({
@@ -25,9 +25,10 @@ const INVENTORY = TARGET_AURAS + 1 + 6;
 const EQUIPMENT = INVENTORY + 9 + 64;
 const STATS = EQUIPMENT + 12;
 const EVENTS = INVENTORY + 8 + 1 + 84 + 1;
-/** Two chat lines follow the events: 6 + 16 and 6 + 8 bytes. */
+/** Two chat lines and an emote follow the events: 6 + 16, 6 + 8 and 6 bytes. */
 const CHAT = EVENTS + 1 + 14 * 14;
-const ENTITY_COUNT = CHAT + 1 + 22 + 14;
+const EMOTE = CHAT + 1 + 22 + 14;
+const ENTITY_COUNT = EMOTE + 6;
 const FIRST_ENTITY = ENTITY_COUNT + 2;
 
 describe("Rust/browser snapshot contract", () => {
@@ -81,7 +82,7 @@ describe("Rust/browser snapshot contract", () => {
     }
   });
   test("decodes the same golden bytes as the Rust encoder", () => {
-    expect(fixture.length).toBe(105 + 2 * 3 + 2 * 6 + 84 + 14 * 14 + 22 + 14 + 4 * 21);
+    expect(fixture.length).toBe(105 + 2 * 3 + 2 * 6 + 84 + 14 * 14 + 22 + 14 + 6 + 4 * 21);
     expect(decodeSnapshot(fixture)).toEqual({
       zoneId: 42, tick: 99n, contentRevision: 4n, acknowledgedSequence: 81, viewerId: 7,
       viewer: {
@@ -121,6 +122,7 @@ describe("Rust/browser snapshot contract", () => {
       chat: [
         { speaker: 7, channel: "say", text: "Hail, Greyhaven!" },
         { speaker: 4_000_000_000, channel: "yell", text: "Grüße!" },
+        { speaker: 9, channel: "emote", emote: "cheer" },
       ],
       entities: [
         {
@@ -206,7 +208,9 @@ describe("Rust/browser snapshot contract", () => {
       [EVENTS + 1 + 6 * 14 + 13, 99, "error code"],
       [ENTITY_COUNT, 255, "count"],
       [CHAT, 5, "chat capacity"],
-      [CHAT + 5, 2, "chat channel"],
+      [CHAT + 5, 3, "chat channel"],
+      [EMOTE + 5, 0, "Unknown emote"],
+      [EMOTE + 5, 6, "Unknown emote"],
       [CHAT + 7, 0x0a, "chat text"],
       [FIRST_ENTITY, 0, "kind"],
       [FIRST_ENTITY, 4, "kind"],

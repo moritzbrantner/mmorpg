@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { encodeCommand, type Axis, type WorldCommand } from "../src/command-wire";
 import { entityKindFromCode } from "../src/entity-ref";
+import { EMOTES } from "../src/replication";
 
-const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v7.hex", import.meta.url), "utf8");
+const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v8.hex", import.meta.url), "utf8");
 
 function axis(raw: string | undefined): Axis {
   const value = Number(raw);
@@ -56,6 +57,8 @@ function command(fields: readonly string[]): WorldCommand {
       return { kind: "chat", channel: first === "yell" ? "yell" : "say", text: Buffer.from(second ?? "", "hex").toString("utf8") };
     case "sell_item":
       return { kind: "sell-item", npc: Number(first), bagSlot: Number(second), quantity: Number(third) };
+    case "emote":
+      return { kind: "emote", emote: EMOTES[Number(first) - 1]! };
     default:
       throw new Error(`Unknown fixture command ${name}`);
   }
@@ -79,7 +82,7 @@ describe("Rust/browser command contract", () => {
     const commands = fixtureCommands();
     const kinds = new Set(commands.map(({ command }) => command.kind));
     expect([...kinds].sort()).toEqual([
-      "buy-item", "cancel-cast", "chat", "choose-class", "equip-item", "jump", "loot", "move", "move-item", "release-spirit",
+      "buy-item", "cancel-cast", "chat", "choose-class", "emote", "equip-item", "jump", "loot", "move", "move-item", "release-spirit",
       "select-target", "sell-item", "start-attack", "stop-attack", "unequip-item", "use-ability",
     ]);
     expect(commands.filter(({ command }) => command.kind === "move").length).toBeGreaterThanOrEqual(4);
@@ -106,6 +109,7 @@ describe("Rust/browser command contract", () => {
       { kind: "use-ability", ability: 256, target: null },
       { kind: "use-ability", ability: -1, target: null },
       { kind: "use-ability", ability: 1, target: { kind: "creature", id: 2 ** 32 } },
+      { kind: "emote", emote: "dance" },
       { kind: "choose-class", classId: 0, sex: 256 },
       { kind: "choose-class", classId: 1.5, sex: 0 },
       { kind: "equip-item", bagSlot: 256 },

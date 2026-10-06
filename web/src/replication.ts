@@ -158,7 +158,13 @@ export type ZoneSnapshot = {
 };
 
 /** A line the viewer heard: player `speaker` said or yelled `text`. */
-export type ChatLine = { speaker: number; channel: "say" | "yell"; text: string };
+/** The core emote vocabulary (#69), in wire order: wire ID = index + 1. */
+export const EMOTES = ["wave", "bow", "cheer", "laugh", "point"] as const;
+export type EmoteName = (typeof EMOTES)[number];
+
+export type ChatLine =
+  | { speaker: number; channel: "say" | "yell"; text: string }
+  | { speaker: number; channel: "emote"; emote: EmoteName };
 
 /**
  * The core chat text rule: 1–80 UTF-8 bytes, at least one non-whitespace character and no control
@@ -195,8 +201,8 @@ function decodeChatText(bytes: Uint8Array): string {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 12;
-const SCHEMA_VERSION = 12;
+const WIRE_VERSION = 13;
+const SCHEMA_VERSION = 13;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
@@ -694,11 +700,19 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   const chat: ChatLine[] = [];
   for (let index = 0; index < chatCount; index += 1) {
     const speaker = reader.u32();
-    const channel = ["say", "yell"][reader.u8()] as ChatLine["channel"] | undefined;
+    const channel = ["say", "yell", "emote"][reader.u8()] as ChatLine["channel"] | undefined;
     if (channel === undefined) {
       throw new Error("Unknown chat channel");
     }
-    chat.push({ speaker, channel, text: decodeChatText(reader.bytes(reader.u8())) });
+    if (channel === "emote") {
+      const emote = EMOTES[reader.u8() - 1];
+      if (emote === undefined) {
+        throw new Error("Unknown emote");
+      }
+      chat.push({ speaker, channel, emote });
+    } else {
+      chat.push({ speaker, channel, text: decodeChatText(reader.bytes(reader.u8())) });
+    }
   }
   const count = reader.u16();
   if (count > MAX_ENTITIES || view.byteLength !== reader.offset + count * ENTITY_BYTES) {

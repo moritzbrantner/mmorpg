@@ -1,10 +1,10 @@
 /**
- * Command wire version 7, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
- * `fixtures/protocol/commands-v7.hex` holds both encoders to the same bytes.
+ * Command wire version 8, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
+ * `fixtures/protocol/commands-v8.hex` holds both encoders to the same bytes.
  * The session supplies player identity and sequence separately.
  */
 import { entityKindCode, isU32, type EntityRef } from "./entity-ref";
-import { chatTextError } from "./replication";
+import { chatTextError, EMOTES, type EmoteName } from "./replication";
 
 export type Axis = -1 | 0 | 1;
 
@@ -32,9 +32,10 @@ export type WorldCommand =
   /** Sells `quantity` units from one of the player's own bag slots to the vendor NPC. */
   | { kind: "sell-item"; npc: number; bagSlot: number; quantity: number }
   /** Says (20 m) or yells (60 m) one line of 1–80 UTF-8 bytes; the zone rate-limits speakers. */
-  | { kind: "chat"; channel: "say" | "yell"; text: string };
+  | { kind: "chat"; channel: "say" | "yell"; text: string }
+  | { kind: "emote"; emote: EmoteName };
 
-const COMMAND_WIRE_VERSION = 7;
+const COMMAND_WIRE_VERSION = 8;
 const MOVE_TAG = 1;
 const JUMP_TAG = 2;
 const SELECT_TARGET_TAG = 3;
@@ -51,6 +52,7 @@ const UNEQUIP_ITEM_TAG = 13;
 const BUY_ITEM_TAG = 14;
 const SELL_ITEM_TAG = 15;
 const CHAT_TAG = 16;
+const EMOTE_TAG = 17;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
@@ -151,6 +153,13 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       return encodeTrade(BUY_ITEM_TAG, command.npc, command.offer, command.quantity);
     case "sell-item":
       return encodeTrade(SELL_ITEM_TAG, command.npc, command.bagSlot, command.quantity);
+    case "emote": {
+      const code = EMOTES.indexOf(command.emote) + 1;
+      if (code === 0) {
+        throw new Error(`Unknown emote: ${command.emote}`);
+      }
+      return Uint8Array.of(COMMAND_WIRE_VERSION, EMOTE_TAG, code);
+    }
     case "chat": {
       const problem = chatTextError(command.text);
       if (problem !== null) {

@@ -1,21 +1,26 @@
 import type { WorldCommand } from "../../command-wire";
-import { chatTextError, type ZoneSnapshot } from "../../replication";
+import { chatTextError, EMOTES, type EmoteName, type ZoneSnapshot } from "../../replication";
 
 /** The chat log keeps the newest lines only. */
 export const MAX_CHAT_LOG_LINES = 50;
 
-export type ChatEntry = { key: number; text: string; kind: "say" | "yell" | "system" };
+export type ChatEntry = { key: number; text: string; kind: "say" | "yell" | "emote" | "system" };
 
 /**
- * Reads a typed line: `/y` or `/yell` yells, `/s`, `/say` or no prefix says. Returns the command, or
- * the reason the line cannot be sent; the zone still decides who hears it.
+ * Reads a typed line: `/y` or `/yell` yells, `/s`, `/say` or no prefix says, and `/wave`, `/bow`,
+ * `/cheer`, `/laugh` or `/point` emotes. Returns the command, or the reason the line cannot be sent;
+ * the zone still decides who sees it.
  */
 export function parseChatInput(raw: string): { command: WorldCommand } | { error: string } {
+  const emote = /^\/([a-z]+)\s*$/iu.exec(raw)?.[1]?.toLowerCase();
+  if (emote !== undefined && (EMOTES as readonly string[]).includes(emote)) {
+    return { command: { kind: "emote", emote: emote as EmoteName } };
+  }
   const match = /^\/(y|yell|s|say)(?:\s+|$)/iu.exec(raw);
   const channel = match && /^y/iu.test(match[1] ?? "") ? "yell" : "say";
   const text = match ? raw.slice(match[0].length) : raw;
   if (raw.startsWith("/") && !match) {
-    return { error: "Use /s to say or /y to yell." };
+    return { error: `Use /s to say, /y to yell, or /${EMOTES.join(", /")}.` };
   }
   const problem = chatTextError(text);
   return problem === null ? { command: { kind: "chat", channel, text } } : { error: problem };
@@ -51,14 +56,19 @@ export class ChatLog {
     this.#tick = snapshot.tick;
     let added = false;
     for (const line of snapshot.chat) {
-      const speaker = line.speaker === snapshot.viewerId ? "You" : `Player ${line.speaker}`;
-      const verb = line.channel === "yell" ? (speaker === "You" ? "yell" : "yells") : (speaker === "You" ? "say" : "says");
-      this.#push({ text: `${speaker} ${verb}: ${line.text}`, kind: line.channel });
+      const you = line.speaker === snapshot.viewerId;
+      const speaker = you ? "You" : `Player ${line.speaker}`;
+      if (line.channel === "emote") {
+        this.#push({ text: `${speaker} ${you ? line.emote : `${line.emote}s`}.`, kind: "emote" });
+      } else {
+        const verb = line.channel === "yell" ? (you ? "yell" : "yells") : (you ? "say" : "says");
+        this.#push({ text: `${speaker} ${verb}: ${line.text}`, kind: line.channel });
+      }
       added = true;
     }
     for (const event of snapshot.events) {
       if (event.kind === "error" && event.code === "chat-throttled") {
-        this.#push({ text: "You can speak once per second.", kind: "system" });
+        this.#push({ text: "You can speak or emote once per second.", kind: "system" });
         added = true;
       }
     }

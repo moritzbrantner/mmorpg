@@ -1,5 +1,5 @@
 import { entityKindCode, type EntityRef } from "../../src/entity-ref";
-import type { AuraState, CastState, ZoneEvent, ZoneSnapshot } from "../../src/replication";
+import { EMOTES, type AuraState, type CastState, type ZoneEvent, type ZoneSnapshot } from "../../src/replication";
 
 const FIXED_BYTES = 105;
 /** Bag 64, equipment 12 and stat totals 8. */
@@ -20,7 +20,7 @@ function flagByte(flags: readonly boolean[]): number {
 }
 
 /**
- * Test-only player-visible snapshot v12 encoder (docs/PROTOCOL.md); Rust owns the real one.
+ * Test-only player-visible snapshot v13 encoder (docs/PROTOCOL.md); Rust owns the real one.
  * Like it, positions must fit i16 and velocities saturate to i8.
  */
 export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
@@ -29,8 +29,10 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     lootBytes = snapshot.loot.item === null ? 17 : 21;
   }
   const lists = 3 * snapshot.cooldowns.length + 6 * (snapshot.auras.length + snapshot.targetDetail.auras.length);
-  const chat = (snapshot.chat ?? []).map((line) => ({ ...line, bytes: new TextEncoder().encode(line.text) }));
-  const chatBytes = chat.reduce((total, line) => total + 6 + line.bytes.length, 0);
+  const chat = snapshot.chat ?? [];
+  const chatText = (line: (typeof chat)[number]) =>
+    line.channel === "emote" ? null : new TextEncoder().encode(line.text);
+  const chatBytes = chat.reduce((total, line) => total + 6 + (chatText(line)?.length ?? 0), 0);
   const size = FIXED_BYTES + lists + (snapshot.inventory === null ? 0 : SHEET_BYTES) + lootBytes + EVENT_BYTES * snapshot.events.length + chatBytes + ENTITY_BYTES * snapshot.entities.length;
   const bytes = new Uint8Array(size);
   const view = new DataView(bytes.buffer);
@@ -43,9 +45,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u8(value === null ? 0 : entityKindCode(value.kind));
     u32(value?.id ?? 0);
   };
-  u8(12);
+  u8(13);
   u8(2);
-  u16(12);
+  u16(13);
   u32(snapshot.zoneId);
   u64(snapshot.tick);
   u64(snapshot.contentRevision);
@@ -132,10 +134,16 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
   u8(chat.length);
   for (const line of chat) {
     u32(line.speaker);
+    if (line.channel === "emote") {
+      u8(2);
+      u8(EMOTES.indexOf(line.emote) + 1);
+      continue;
+    }
+    const text = chatText(line)!;
     u8(line.channel === "say" ? 0 : 1);
-    u8(line.bytes.length);
-    bytes.set(line.bytes, offset);
-    offset += line.bytes.length;
+    u8(text.length);
+    bytes.set(text, offset);
+    offset += text.length;
   }
   u16(snapshot.entities.length);
   for (const record of snapshot.entities) {
