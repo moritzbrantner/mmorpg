@@ -1,4 +1,4 @@
-/** Player-visible protocol v11 only. Canonical recovery state never enters rendering. */
+/** Player-visible protocol v14 only. Canonical recovery state never enters rendering. */
 import { entityKindFromCode, sameEntity, type EntityKind, type EntityRef } from "./entity-ref";
 
 export type { EntityKind, EntityRef } from "./entity-ref";
@@ -96,7 +96,10 @@ export type ErrorCode =
   | "not-equippable"
   | "invalid-vendor"
   | "not-enough-money"
-  | "chat-throttled";
+  | "chat-throttled"
+  | "invalid-quest"
+  | "quest-log-full"
+  | "quest-incomplete";
 
 /** Feedback the viewer received in the projection's tick; cosmetic and lossy. */
 export type ZoneEvent =
@@ -110,9 +113,13 @@ export type ZoneEvent =
   | { kind: "aura-applied"; source: EntityRef; target: EntityRef; ability: number; ticks: number }
   | { kind: "aura-removed"; source: EntityRef; target: EntityRef; ability: number }
   | { kind: "interrupted"; source: EntityRef | null; target: EntityRef; ability: number }
-  | { kind: "absorbed"; source: EntityRef; target: EntityRef; amount: number };
+  | { kind: "absorbed"; source: EntityRef; target: EntityRef; amount: number }
+  /** Objective `objective` (its index) of `quest` reached `count`. */
+  | { kind: "quest-progress"; quest: number; objective: number; count: number }
+  /** The viewer turned `quest` in. */
+  | { kind: "quest-completed"; quest: number };
 
-/** Item catalog revision 2, validated against the core's immutable stack limits. */
+/** Item catalog revision 3, validated against the core's immutable stack limits. */
 export type InventorySlot = { itemId: number; quantity: number } | null;
 
 export type LootView = {
@@ -120,6 +127,20 @@ export type LootView = {
   diedAt: bigint;
   money: number;
   item: Exclude<InventorySlot, null> | null;
+  /** One unit of a quest item, dropped while a quest of the viewer needs it. */
+  questItem: Exclude<InventorySlot, null> | null;
+};
+
+/** An active quest and the current progress of each objective slot (collect counts included). */
+export type QuestEntry = { quest: number; progress: readonly [number, number, number] };
+/** `available` is `!`, `complete` is `?` and `in-progress` is a grey `?`. */
+export type QuestMarkerKind = "available" | "in-progress" | "complete";
+export type QuestMarker = { npc: number; marker: QuestMarkerKind };
+/** The viewer's quests: turned-in quests (bit `id - 1`), the log and the markers of quest NPCs. */
+export type QuestSheet = {
+  completed: number;
+  entries: readonly QuestEntry[];
+  markers: readonly QuestMarker[];
 };
 
 export type ZoneSnapshot = {
@@ -148,6 +169,8 @@ export type ZoneSnapshot = {
   equipment: readonly (number | null)[] | null;
   /** The equipment's stat totals, present exactly with the equipment. */
   stats: StatTotals | null;
+  /** Quest log, turned-in quests and NPC markers, present exactly with the bag. */
+  quests: QuestSheet | null;
   /** Complete eligible selected corpse sheet; null means no current sheet. */
   loot: LootView | null;
   events: readonly ZoneEvent[];
@@ -201,8 +224,8 @@ function decodeChatText(bytes: Uint8Array): string {
 export const TICK_HZ = 30;
 export const UNITS_PER_METRE = 100;
 const YAW_STEPS = 65_536;
-const WIRE_VERSION = 13;
-const SCHEMA_VERSION = 13;
+const WIRE_VERSION = 14;
+const SCHEMA_VERSION = 14;
 const PLAYER_SCOPE = 2;
 /** One datagram: the measured 1 161-byte floor minus the 20-byte session header and 64 bytes of margin. */
 const MAX_PROJECTION_BYTES = 1_077;
@@ -210,6 +233,7 @@ const MAX_PROJECTION_BYTES = 1_077;
  * Common prefix 16, revision 8, acknowledged sequence 4, viewer 4, self 27, self abilities 20 (class,
  * resource, global cooldown, cast, melee damage range, two list counts), target 12 (target-of-target,
  * its cast, aura count), sheet revision 8/presence 1, loot presence 1, event, chat and entity counts.
+ * The sheet (bag, equipment, stat totals, quests) and the corpse sheet follow their presence bytes.
  */
 const FIXED_BYTES = 105;
 const ENTITY_BYTES = 21;
@@ -226,8 +250,14 @@ const ERROR_CODES: readonly ErrorCode[] = [
   "too-many-intents", "invalid-inventory-move", "inventory-full",
   "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
   "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
-  "not-equippable", "invalid-vendor", "not-enough-money", "chat-throttled",
+  "not-equippable", "invalid-vendor", "not-enough-money", "chat-throttled", "invalid-quest", "quest-log-full",
+  "quest-incomplete",
 ];
+const MAX_QUESTS = 32;
+const MAX_QUEST_LOG = 10;
+const MAX_QUEST_OBJECTIVES = 3;
+const MAX_QUEST_NPCS = 8;
+const QUEST_MARKERS: readonly QuestMarkerKind[] = ["available", "in-progress", "complete"];
 const MAX_CHAT = 4;
 const MAX_CHAT_BYTES = 80;
 const EQUIPMENT_SLOTS = 6;
@@ -236,7 +266,7 @@ type ItemShape = { maxStack: number; slot: number | null; stats: readonly [numbe
 const bagItem = (maxStack: number): ItemShape => ({ maxStack, slot: null, stats: [0, 0, 0, 0] });
 const gear = (slot: number, ...stats: [number, number, number, number]): ItemShape => ({ maxStack: 1, slot, stats });
 /**
- * Item catalog revision 2 by ID: stack limit, equipment slot index and stamina/strength/agility/intellect;
+ * Item catalog revision 3 by ID: stack limit, equipment slot index and stamina/strength/agility/intellect;
  * `local-zone-wasm.test.ts` holds it to the WASM catalog export.
  */
 export const ITEM_SHAPES: ReadonlyMap<number, ItemShape> = new Map([
@@ -249,6 +279,7 @@ export const ITEM_SHAPES: ReadonlyMap<number, ItemShape> = new Map([
   [7, gear(3, 2, 0, 0, 0)],
   [8, gear(4, 1, 0, 0, 0)],
   [9, gear(5, 1, 0, 2, 0)],
+  [10, bagItem(10)],
 ]);
 const CLASSES: readonly ClassId[] = ["warden", "ranger", "arcanist"];
 const RESOURCES: readonly ResourceKind[] = ["rage", "focus", "mana"];
@@ -445,9 +476,72 @@ function decodeEvent(reader: Reader): ZoneEvent {
       const [from, to] = pair();
       return { kind: "absorbed", source: from, target: to, amount };
     }
+    case 14:
+    case 15: {
+      const quest = questId(flags);
+      if (source !== null || target !== null) {
+        throw new Error("Malformed event record");
+      }
+      if (kind === 15) {
+        noAmount();
+        return { kind: "quest-completed", quest };
+      }
+      const objective = amount >> 8;
+      const count = amount & 0xff;
+      if (objective >= MAX_QUEST_OBJECTIVES || count === 0) {
+        throw new Error("Malformed event record");
+      }
+      return { kind: "quest-progress", quest, objective, count };
+    }
     default:
       throw new Error("Unknown event kind");
   }
+}
+
+function questId(id: number): number {
+  if (id < 1 || id > MAX_QUESTS) {
+    throw new Error("Quest id is out of range");
+  }
+  return id;
+}
+
+/** Whether `quest` is turned in according to a completed mask. */
+export function questCompleted(completed: number, quest: number): boolean {
+  return quest >= 1 && quest <= MAX_QUESTS && ((completed >>> (quest - 1)) & 1) === 1;
+}
+
+/** Ordered in-range entries that are not also turned in; ordered distinct markers with known codes. */
+function decodeQuests(reader: Reader): QuestSheet {
+  const completed = reader.u32();
+  const count = reader.u8();
+  if (count > MAX_QUEST_LOG) {
+    throw new Error("Quest log exceeds its capacity");
+  }
+  const entries: QuestEntry[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const quest = questId(reader.u8());
+    const progress = [reader.u8(), reader.u8(), reader.u8()] as const;
+    const previous = entries.at(-1);
+    if ((previous && previous.quest >= quest) || questCompleted(completed, quest)) {
+      throw new Error("Inconsistent quest log");
+    }
+    entries.push({ quest, progress });
+  }
+  const markerCount = reader.u8();
+  if (markerCount > MAX_QUEST_NPCS) {
+    throw new Error("Quest sheet has too many markers");
+  }
+  const markers: QuestMarker[] = [];
+  for (let index = 0; index < markerCount; index += 1) {
+    const npc = reader.u16();
+    const marker = QUEST_MARKERS[reader.u8() - 1];
+    const previous = markers.at(-1);
+    if (marker === undefined || (previous && previous.npc >= npc)) {
+      throw new Error("Inconsistent quest marker");
+    }
+    markers.push({ npc, marker });
+  }
+  return { completed, entries, markers };
 }
 
 function knownAbility(id: number): number {
@@ -651,6 +745,7 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
   let inventory: InventorySlot[] | null = null;
   let equipment: (number | null)[] | null = null;
   let stats: StatTotals | null = null;
+  let quests: QuestSheet | null = null;
   if (hasInventory) {
     inventory = [];
     for (let slot = 0; slot < 16; slot += 1) {
@@ -664,6 +759,7 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
       }
     }
     ({ equipment, stats } = decodeEquipment(reader));
+    quests = decodeQuests(reader);
   }
   const [hasLoot = false] = reader.flags(1);
   let loot: LootView | null = null;
@@ -671,19 +767,24 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
     const creatureId = reader.u32();
     const diedAt = reader.u64();
     const money = reader.u32();
-    const [hasItem = false] = reader.flags(1);
-    let item: Exclude<InventorySlot, null> | null = null;
-    if (hasItem) {
+    const stack = (): Exclude<InventorySlot, null> | null => {
+      const [present = false] = reader.flags(1);
+      if (!present) {
+        return null;
+      }
       const itemId = reader.u16();
       const quantity = reader.u16();
       validateStack(itemId, quantity);
-      item = { itemId, quantity };
-    }
+      return { itemId, quantity };
+    };
+    const item = stack();
+    const questItem = stack();
+    // A quest drop is always one unit.
     if (dead || target?.kind !== "creature" || target.id !== creatureId || diedAt > tick
-      || (money === 0 && item === null)) {
+      || (money === 0 && item === null && questItem === null) || (questItem !== null && questItem.quantity !== 1)) {
       throw new Error("Inconsistent corpse loot sheet");
     }
-    loot = { creatureId, diedAt, money, item };
+    loot = { creatureId, diedAt, money, item, questItem };
   }
   const eventCount = reader.u8();
   if (eventCount > MAX_EVENTS) {
@@ -746,7 +847,7 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
       copper, experience, experienceToNextLevel, health, maxHealth, level, dead, inCombat, autoAttacking, target,
       classChoice, resource, cast, globalCooldown, damage,
     },
-    cooldowns, auras, targetOfTarget, targetDetail, inventoryRevision, inventory, equipment, stats, loot, events,
+    cooldowns, auras, targetOfTarget, targetDetail, inventoryRevision, inventory, equipment, stats, quests, loot, events,
     chat, entities,
   };
 }

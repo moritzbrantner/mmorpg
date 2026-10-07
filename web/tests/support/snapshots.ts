@@ -1,4 +1,4 @@
-import type { EntityFlags, EntityState, ViewerState, Vector3, ZoneSnapshot } from "../../src/replication";
+import type { EntityFlags, EntityState, QuestSheet, ViewerState, Vector3, ZoneSnapshot } from "../../src/replication";
 
 export const NO_FLAGS: EntityFlags = {
   dead: false, inCombat: false, hostile: false, attackable: false, tappedByOther: false, evading: false, targetsViewer: false, lootable: false,
@@ -17,14 +17,18 @@ export const HEALTHY_VIEWER: ViewerState = {
 /** Nothing equipped. */
 export const NO_EQUIPMENT: readonly null[] = Array<null>(6).fill(null);
 export const NO_STATS = { stamina: 0, strength: 0, agility: 0, intellect: 0 } as const;
+/** No active, turned-in or marked quests. */
+export const NO_QUESTS: QuestSheet = { completed: 0, entries: [], markers: [] };
 
 /** A projection with a healthy viewer, no target and no events. */
 export function testSnapshot(
   fields: Pick<ZoneSnapshot, "zoneId" | "tick" | "contentRevision" | "acknowledgedSequence" | "viewerId" | "entities"> &
-    Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events" | "inventoryRevision" | "inventory" | "equipment" | "stats" | "loot" | "cooldowns" | "auras" | "targetDetail">>,
+    Partial<Pick<ZoneSnapshot, "viewer" | "targetOfTarget" | "events" | "inventoryRevision" | "inventory" | "equipment" | "stats" | "loot" | "cooldowns" | "auras" | "targetDetail" | "quests">>,
 ): ZoneSnapshot {
   return {
     loot: null, inventoryRevision: 1n, inventory: null, equipment: null, stats: null, viewer: HEALTHY_VIEWER, targetOfTarget: null, events: [], chat: [],
-    cooldowns: [], auras: [], targetDetail: { cast: null, auras: [] }, ...fields,
+    cooldowns: [], auras: [], targetDetail: { cast: null, auras: [] },
+    // The quest sheet travels exactly with the bag sheet.
+    quests: fields.inventory ? NO_QUESTS : null, ...fields,
   };
 }

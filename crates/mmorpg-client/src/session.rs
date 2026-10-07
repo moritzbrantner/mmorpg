@@ -513,6 +513,7 @@ mod tests {
             events: Vec::new(),
             chat: Vec::new(),
             entities: Vec::new(),
+            quests: None,
         };
         outbox.observe(&snapshot);
         assert_eq!(

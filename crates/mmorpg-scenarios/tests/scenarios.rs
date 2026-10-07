@@ -363,6 +363,26 @@ fn invalid_scenarios_are_rejected_at_load() {
             "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"chat\"\nbot = \"a\"\ntarget = \"a\"\ntext = \"hi\"\nemote = \"wave\"\ntick = 1",
             "missing its required field",
         ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"accept_quest\"\nquest = 1",
+            "npc is required only for",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"abandon_quest\"\nquest = 1\nchoice = 0",
+            "choice is required only for complete_quest",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[steps]]\ntick = 0\nbot = \"a\"\naction = \"complete_quest\"\nnpc = 1\nchoice = 0",
+            "quest is required only for",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"quest\"\nbot = \"a\"\nquest = 1\nquest_state = \"absent\"\nprogress = [0, 0, 0]\ntick = 1",
+            "missing its required field",
+        ),
+        (
+            "name = \"x\"\nzone = 1\nticks = 2\n[[bots]]\nname = \"a\"\n[[expect]]\nkind = \"marker\"\nbot = \"a\"\nnpc = 1\nmarker = \"!\"\ntick = 1",
+            "missing its required field",
+        ),
     ] {
         let error = bots::load(text).unwrap_err();
         assert!(error.contains(message), "{error}");

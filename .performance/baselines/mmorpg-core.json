@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "operation": "size-evidence",
   "status": "passed",
-  "durationMs": 53,
+  "durationMs": 47,
   "data": {
     "schemaVersion": "coding-tooling/size-evidence/v1",
     "metric": "raw-artifact-bytes",
@@ -79,12 +79,12 @@
             }
           ]
         },
-        "bytes": 2834026,
+        "bytes": 3128164,
         "artifacts": [
           {
             "path": "target/x86_64-unknown-linux-gnu/release/libmmorpg_core.rlib",
-            "bytes": 2834026,
-            "sha256": "222878ddb6d6d622874c2417e9531277dd220d8a6d178ae4f7610701209d60fd"
+            "bytes": 3128164,
+            "sha256": "8d3dc2c716586bc395f02223bc79edf107e75e8239c94675f5e7f04e78f0f4a2"
           }
         ],
         "comparison": {

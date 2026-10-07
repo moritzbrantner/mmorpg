@@ -200,7 +200,6 @@ const worldView = new WorldView(renderer, camera, {
   },
   overlay: requireElement<HTMLElement>("#debug-overlay"),
   areaName: requireElement<HTMLElement>("#area-name"),
-  objective: requireElement<HTMLElement>("#objective"),
   unitStatus: requireElement<HTMLElement>("#unit-status"),
   combatFeedback: requireElement<HTMLElement>("#combat-feedback"),
   classHud: requireElement<HTMLElement>("#class-hud"),
@@ -246,6 +245,22 @@ const worldView = new WorldView(renderer, camera, {
     offers: requireElement<HTMLElement>("#vendor-offers"),
     sales: requireElement<HTMLElement>("#vendor-sales"),
     feedback: requireElement<HTMLElement>("#vendor-feedback"),
+  },
+  quests: {
+    dialog: requireElement<HTMLElement>("#quest-dialog"),
+    dialogToggle: requireElement<HTMLButtonElement>("#quest-dialog-toggle"),
+    dialogClose: requireElement<HTMLButtonElement>("#quest-dialog-close"),
+    dialogTitle: requireElement<HTMLElement>("#quest-dialog-title"),
+    dialogStatus: requireElement<HTMLElement>("#quest-dialog-status"),
+    dialogQuests: requireElement<HTMLElement>("#quest-dialog-quests"),
+    dialogFeedback: requireElement<HTMLElement>("#quest-dialog-feedback"),
+    log: requireElement<HTMLElement>("#quest-log"),
+    logToggle: requireElement<HTMLButtonElement>("#quest-log-toggle"),
+    logClose: requireElement<HTMLButtonElement>("#quest-log-close"),
+    logQuests: requireElement<HTMLElement>("#quest-log-quests"),
+    logFeedback: requireElement<HTMLElement>("#quest-log-feedback"),
+    tracker: requireElement<HTMLElement>("#objective"),
+    markers: requireElement<HTMLElement>("#quest-markers"),
   },
   chat: {
     frame: requireElement<HTMLElement>("#chat"),
@@ -1034,11 +1049,18 @@ function runAction(action: GameAction): void {
     case "ui.toggleVendor":
       worldView.toggleVendor();
       return;
+    case "ui.talk":
+      worldView.toggleQuestDialog();
+      return;
+    case "ui.toggleQuestLog":
+      worldView.toggleQuestLog();
+      return;
     case "ui.openChat":
       worldView.openChat();
       return;
     case "ui.closePanel":
-      if (!worldView.closeLoot() && !worldView.closeVendor() && !worldView.closeCharacter()) {
+      if (!worldView.closeLoot() && !worldView.closeVendor() && !worldView.closeQuestDialog()
+        && !worldView.closeQuestLog() && !worldView.closeCharacter()) {
         worldView.closeBags();
       }
       return;

@@ -138,7 +138,7 @@
       <header class="topbar" data-world-ui hidden>
         <p id="world-mode" class="eyebrow">Greyhaven Vale · local zone host</p>
         <p id="connection-status" class="connection-status" role="status" aria-live="polite"></p>
-        <div class="world-toolbar"><button id="loot-toggle" type="button" aria-controls="loot-panel" aria-expanded="false">Loot</button><button id="bags-toggle" type="button" aria-controls="bags-panel" aria-expanded="false">Bags (B)</button><button id="character-toggle" type="button" aria-controls="character-panel" aria-expanded="false">Character (C)</button><button id="vendor-toggle" type="button" aria-controls="vendor-panel" aria-expanded="false">Vendor (V)</button><button id="return-to-characters" type="button">Characters</button></div>
+        <div class="world-toolbar"><button id="loot-toggle" type="button" aria-controls="loot-panel" aria-expanded="false">Loot</button><button id="bags-toggle" type="button" aria-controls="bags-panel" aria-expanded="false">Bags (B)</button><button id="character-toggle" type="button" aria-controls="character-panel" aria-expanded="false">Character (C)</button><button id="vendor-toggle" type="button" aria-controls="vendor-panel" aria-expanded="false">Vendor (V)</button><button id="quest-log-toggle" type="button" aria-controls="quest-log" aria-expanded="false">Quests (L)</button><button id="return-to-characters" type="button">Characters</button></div>
       </header>
       <aside id="minimap" class="minimap" data-world-ui aria-label="Minimap" hidden>
         <h1 id="area-name" class="minimap-zone">Greyhaven Vale</h1>
@@ -174,6 +174,18 @@
         <ul id="vendor-sales" class="vendor-list" aria-label="Your items"></ul>
         <p id="vendor-feedback" aria-live="polite"></p>
       </aside>
+      <aside id="quest-dialog" class="quest-panel quest-dialog" aria-label="Quest dialog" hidden>
+        <div class="bags-heading"><h2 id="quest-dialog-title">Quests</h2><button id="quest-dialog-close" type="button" aria-label="Close quest dialog">Close</button></div>
+        <p id="quest-dialog-status" aria-live="polite"></p>
+        <ul id="quest-dialog-quests" class="quest-list" aria-label="Quests here"></ul>
+        <p id="quest-dialog-feedback" class="quest-feedback" aria-live="polite"></p>
+      </aside>
+      <aside id="quest-log" class="quest-panel quest-log" aria-label="Quest log" hidden>
+        <div class="bags-heading"><h2>Quest log</h2><span class="quest-log-actions"><button id="quest-dialog-toggle" type="button" aria-controls="quest-dialog" aria-expanded="false">Talk (T)</button><button id="quest-log-close" type="button" aria-label="Close quest log">Close</button></span></div>
+        <ul id="quest-log-quests" class="quest-list" aria-label="Active quests"></ul>
+        <p id="quest-log-feedback" class="quest-feedback" aria-live="polite"></p>
+      </aside>
+      <div id="quest-markers" class="quest-markers" data-world-ui aria-label="Quest markers" hidden></div>
       <section id="chat" class="chat-frame" data-world-ui aria-label="Chat" hidden>
         <ol id="chat-log" class="chat-log" role="log" aria-live="polite" aria-label="Chat messages"></ol>
         <form id="chat-form" class="chat-form"><label class="visually-hidden" for="chat-input">Chat message</label><input id="chat-input" type="text" autocomplete="off" spellcheck="false" placeholder="Enter to chat · /y to yell" /></form>
@@ -212,8 +224,8 @@
       </section>
       <section id="debug-overlay" class="debug-overlay" aria-label="Debug statistics" hidden></section>
       <section class="hud" data-world-ui aria-label="Controls" hidden>
-        <p><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Tab</kbd> target · <kbd>1</kbd>–<kbd>4</kbd> abilities · <kbd>Esc</kbd> cancels a cast · <kbd>F</kbd> or right-click attack · left-drag look · right-drag turn · wheel zoom · <kbd>B</kbd> bags · <kbd>C</kbd> character · <kbd>V</kbd> vendor · <kbd>Enter</kbd> chat · <kbd>F3</kbd> stats · <kbd>Esc</kbd> characters</p>
-        <p id="objective">Explore Greyhaven Vale. Quests are not in this build yet.</p>
+        <p><kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Tab</kbd> target · <kbd>1</kbd>–<kbd>4</kbd> abilities · <kbd>Esc</kbd> cancels a cast · <kbd>F</kbd> or right-click attack · left-drag look · right-drag turn · wheel zoom · <kbd>B</kbd> bags · <kbd>C</kbd> character · <kbd>V</kbd> vendor · <kbd>T</kbd> talk · <kbd>L</kbd> quests · <kbd>Enter</kbd> chat · <kbd>F3</kbd> stats · <kbd>Esc</kbd> characters</p>
+        <p id="objective" class="quest-tracker" aria-label="Quest objectives" aria-live="polite">No active quests.</p>
         <p id="unit-status" aria-live="polite"></p>
         <p id="combat-feedback" aria-live="polite"></p>
         <p id="copper-status">Copper: 0</p>

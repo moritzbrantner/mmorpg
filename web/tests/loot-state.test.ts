@@ -4,7 +4,7 @@ import { LootState } from "../src/world/units/loot-state";
 import { HEALTHY_VIEWER, playerEntity, testSnapshot } from "./support/snapshots";
 
 function sheet(diedAt = 10n): LootView {
-  return { creatureId: 108, diedAt, money: 2, item: { itemId: 1, quantity: 2 } };
+  return { creatureId: 108, diedAt, money: 2, item: { itemId: 1, quantity: 2 }, questItem: null };
 }
 
 function projection(tick = 12n, loot: LootView | null = sheet(), copper = 0) {

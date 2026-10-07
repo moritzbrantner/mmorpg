@@ -6,8 +6,9 @@
 //! tables of the hosted [`ZoneContent`] as compact JSON: creature templates
 //! (name, family, behaviour, levels, elite, body size), NPCs (name, role,
 //! level), areas (name), items (name, stack limit, equipment slot, stats,
-//! sale value), vendors (NPC and priced offers), classes (name, resource)
-//! and abilities (name, user, unlock level, cost, cast time, cooldown, aura). It carries the content
+//! sale value), vendors (NPC and priced offers), classes (name, resource),
+//! abilities (name, user, unlock level, cost, cast time, cooldown, aura) and
+//! quests (name, text, giver, ender, prerequisite, objectives, rewards). It carries the content
 //! revision and fingerprint,
 //! so a client can refuse a catalog of other content. Combat numbers,
 //! spawn points and AI stay on the server side.
@@ -20,7 +21,7 @@ use serde::Serialize;
 use crate::host::hosted_content;
 
 pub const CATALOG_FORMAT: &str = "mmorpg.catalog";
-pub const CATALOG_FORMAT_VERSION: u32 = 5;
+pub const CATALOG_FORMAT_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +45,56 @@ pub struct CatalogExport {
     pub vendor_catalog_revision: String,
     /// Ordered by NPC ID; offer order is the wire offer index.
     pub vendors: Vec<VendorExport>,
+    /// `"0"` for content without quests.
+    pub quest_catalog_revision: String,
+    /// Ordered by quest ID; objective order is the wire progress index.
+    pub quests: Vec<QuestExport>,
+}
+
+/// A quest as clients present it: dialog text, who gives and ends it,
+/// what it asks for and what it grants.
+#[derive(Clone, Debug, Serialize)]
+pub struct QuestExport {
+    pub id: u8,
+    pub name: String,
+    pub text: String,
+    pub giver: u32,
+    pub ender: u32,
+    pub prerequisite: Option<u8>,
+    pub objectives: Vec<ObjectiveExport>,
+    pub experience: u32,
+    pub copper: u32,
+    /// Item IDs; the reward choice is the index into this list.
+    pub choices: Vec<u16>,
+}
+
+/// `kind` is `kill` (`target` is a creature template), `collect` (`target`
+/// is an item that creatures of template `source` drop), `talk` (`target`
+/// is an NPC) or `explore` (`target` is an area).
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ObjectiveExport {
+    pub kind: &'static str,
+    pub target: u32,
+    pub source: Option<u16>,
+    pub count: u8,
+}
+
+fn objective(objective: mmorpg_core::QuestObjective) -> ObjectiveExport {
+    use mmorpg_core::QuestObjective;
+    let (kind, target, source) = match objective {
+        QuestObjective::Kill { template, .. } => ("kill", u32::from(template.get()), None),
+        QuestObjective::Collect { item, source, .. } => {
+            ("collect", u32::from(item.get()), Some(source.get()))
+        }
+        QuestObjective::Talk { npc } => ("talk", npc.get(), None),
+        QuestObjective::Explore { area } => ("explore", u32::from(area.get()), None),
+    };
+    ObjectiveExport {
+        kind,
+        target,
+        source,
+        count: objective.required(),
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -178,6 +229,28 @@ pub fn catalog(content: &ZoneContent) -> CatalogExport {
                     .collect(),
             })
             .collect(),
+        quest_catalog_revision: content.quest_revision().to_string(),
+        quests: content
+            .quests()
+            .iter()
+            .map(|quest| QuestExport {
+                id: quest.id.get(),
+                name: quest.name.clone(),
+                text: quest.text.clone(),
+                giver: quest.giver.get(),
+                ender: quest.ender.get(),
+                prerequisite: quest.prerequisite.map(mmorpg_core::QuestId::get),
+                objectives: quest.objectives.iter().copied().map(objective).collect(),
+                experience: quest.rewards.experience,
+                copper: quest.rewards.copper,
+                choices: quest
+                    .rewards
+                    .choices
+                    .iter()
+                    .map(|item| item.get())
+                    .collect(),
+            })
+            .collect(),
         content_fingerprint: format!("{:016x}", content.fingerprint()),
         classes: mmorpg_core::PlayerClass::ALL
             .iter()
@@ -264,10 +337,14 @@ mod tests {
         let content = hosted_content();
         assert_eq!(value["format"], CATALOG_FORMAT);
         assert_eq!(value["version"], CATALOG_FORMAT_VERSION);
-        assert_eq!(value["itemCatalogRevision"], "2");
+        assert_eq!(value["itemCatalogRevision"], "3");
         let stats = |stamina, strength, agility, intellect| json!({"stamina": stamina, "strength": strength, "agility": agility, "intellect": intellect});
         let item = |id, name, slot, stats| {
-            let max_stack = if id == 1 { 20 } else { 1 };
+            let max_stack = match id {
+                1 => 20,
+                10 => 10,
+                _ => 1,
+            };
             let sell_price = mmorpg_core::sell_price(mmorpg_core::ItemId::new(id));
             json!({"id": id, "name": name, "maxStack": max_stack, "slot": slot, "stats": stats, "sellPrice": sell_price})
         };
@@ -288,9 +365,31 @@ mod tests {
                 item(7, "Padded Tunic", json!("chest"), stats(2, 0, 0, 0)),
                 item(8, "Padded Trousers", json!("legs"), stats(1, 0, 0, 0)),
                 item(9, "Worn Boots", json!("feet"), stats(1, 0, 2, 0)),
+                item(10, "Wolf Pelt", Value::Null, stats(0, 0, 0, 0)),
             ])
         );
-        assert_eq!(value["vendorCatalogRevision"], "1");
+        assert_eq!(value["vendorCatalogRevision"], "2");
+        assert_eq!(value["questCatalogRevision"], "1");
+        let quests = value["quests"].as_array().unwrap();
+        assert_eq!(quests.len(), 9);
+        assert_eq!(
+            quests[1],
+            json!({
+                "id": 2, "name": "Pelts for the Tanner",
+                "text": "The Marshal's wolves left good fur behind. Bring me five wolf pelts from the Wolfrun Woods.",
+                "giver": 2, "ender": 2, "prerequisite": 1,
+                "objectives": [{"kind": "collect", "target": 10, "source": 1, "count": 5}],
+                "experience": 200, "copper": 15, "choices": [9, 6],
+            })
+        );
+        assert_eq!(
+            quests[6]["objectives"],
+            json!([
+                {"kind": "explore", "target": 5, "source": null, "count": 1},
+                {"kind": "kill", "target": 6, "source": null, "count": 10},
+            ])
+        );
+        assert_eq!(quests[8]["objectives"][0]["kind"], "talk");
         let offer = |item, price| json!({"item": item, "price": price});
         assert_eq!(
             value["vendors"],

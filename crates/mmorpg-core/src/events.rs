@@ -68,6 +68,14 @@ pub enum ErrorCode {
     NotEnoughMoney,
     /// The speaker spoke within the last second.
     ChatThrottled,
+    /// The quest is unknown, not offered or ended by this NPC, not
+    /// available (already active, turned in or locked by its
+    /// prerequisite), not in the log, or the reward choice is invalid.
+    InvalidQuest,
+    /// The quest log already holds ten quests.
+    QuestLogFull,
+    /// Not every objective of the quest is complete.
+    QuestIncomplete,
 }
 
 /// One feedback event addressed to a player.
@@ -153,17 +161,26 @@ pub enum ZoneEvent {
         target: EntityRef,
         amount: u16,
     },
+    /// Objective `objective` (its index) of `quest` reached `count`.
+    QuestProgress {
+        quest: crate::QuestId,
+        objective: u8,
+        count: u8,
+    },
+    /// The player turned `quest` in.
+    QuestCompleted { quest: crate::QuestId },
 }
 
 impl ZoneEvent {
-    /// Overflow keeps higher priorities: deaths, then damage taken, errors,
-    /// damage dealt, ability feedback, and finally misses and evades.
+    /// Overflow keeps higher priorities: deaths, then damage taken, errors
+    /// and turn-ins, damage dealt and quest progress, ability feedback, and
+    /// finally misses and evades.
     const fn priority(self) -> u8 {
         match self {
             Self::Died { .. } => 5,
             Self::DamageTaken { .. } => 4,
-            Self::Error { .. } => 3,
-            Self::DamageDealt { .. } => 2,
+            Self::Error { .. } | Self::QuestCompleted { .. } => 3,
+            Self::DamageDealt { .. } | Self::QuestProgress { .. } => 2,
             Self::CastStarted { .. }
             | Self::AbilityUsed { .. }
             | Self::Healed { .. }

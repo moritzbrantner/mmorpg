@@ -25,7 +25,7 @@ pub struct LootView {
 }
 
 pub(crate) fn has_rewards(rewards: LootRewards) -> bool {
-    rewards.money != 0 || rewards.item.is_some()
+    rewards.money != 0 || rewards.item.is_some() || rewards.quest_item.is_some()
 }
 
 enum Eligibility {
@@ -140,6 +140,9 @@ impl ZoneSimulation {
             player.inventory_changed_at = self.tick + 1;
         }
         creature.loot = None;
+        if let Some(stack) = view.rewards.quest_item {
+            self.report_collected(player_id, stack.item());
+        }
         Ok(None)
     }
 }

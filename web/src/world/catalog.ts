@@ -1,9 +1,9 @@
 /**
  * The content catalog from the WASM `catalog()` export (format
- * `mmorpg.catalog` v5): names and presentation facts for the IDs that
+ * `mmorpg.catalog` v6): names and presentation facts for the IDs that
  * projections carry. Creature templates by template ID, NPCs by NPC ID,
  * areas by area ID, items (with equipment slot and stats) by item ID,
- * classes by wire value and abilities by ability ID.
+ * classes by wire value, abilities by ability ID and quests by quest ID.
  * Combat numbers stay on the server.
  */
 export type CreatureFamily = "wolf" | "boar" | "vermin" | "marauder" | "mirefin" | "redbrand";
@@ -63,6 +63,27 @@ export type AbilityRecord = {
   aura: number | null;
 };
 
+/** `target` is a creature template (kill), an item (collect, dropped by template `source`), an NPC (talk) or an area (explore). */
+export type QuestObjectiveRecord =
+  | { kind: "kill" | "talk" | "explore"; target: number; count: number }
+  | { kind: "collect"; target: number; source: number; count: number };
+
+export type QuestRecord = {
+  id: number;
+  name: string;
+  /** What the giver says. */
+  text: string;
+  giver: number;
+  ender: number;
+  prerequisite: number | null;
+  /** Objective order is the wire progress index. */
+  objectives: readonly QuestObjectiveRecord[];
+  experience: number;
+  copper: number;
+  /** Item IDs; the reward choice is the index into this list. */
+  choices: readonly number[];
+};
+
 export type ContentCatalog = {
   itemCatalogRevision: bigint;
   items: ReadonlyMap<number, ItemRecord>;
@@ -76,10 +97,13 @@ export type ContentCatalog = {
   abilities: ReadonlyMap<number, AbilityRecord>;
   /** Vendor stock by NPC ID. */
   vendors: ReadonlyMap<number, VendorRecord>;
+  /** Quests by quest ID, in ID order. */
+  quests: ReadonlyMap<number, QuestRecord>;
 };
 
 const FORMAT = "mmorpg.catalog";
-const VERSION = 5;
+const VERSION = 6;
+const OBJECTIVE_KINDS = ["kill", "collect", "talk", "explore"] as const;
 const CLASS_NAMES: readonly ClassName[] = ["warden", "ranger", "arcanist"];
 const RESOURCES = ["rage", "focus", "mana"] as const;
 const USERS: readonly (ClassName | "creature")[] = [...CLASS_NAMES, "creature"];
@@ -152,7 +176,7 @@ export function decodeCatalog(json: string): ContentCatalog {
   }
   const root = object(parsed, [
     "format", "version", "contentRevision", "contentFingerprint", "creatureTemplates", "npcs", "areas", "itemCatalogRevision", "items",
-    "classes", "abilityCatalogRevision", "abilities", "vendorCatalogRevision", "vendors",
+    "classes", "abilityCatalogRevision", "abilities", "vendorCatalogRevision", "vendors", "questCatalogRevision", "quests",
   ], "export");
   if (root.format !== FORMAT || root.version !== VERSION) {
     fail(`unsupported format ${String(root.format)} v${String(root.version)}`);
@@ -204,7 +228,7 @@ export function decodeCatalog(json: string): ContentCatalog {
     const record = object(value, ["id", "name"], `area ${index}`);
     return { id: int(record.id, `area ${index} id`, 0, 0xffff), name: text(record.name, `area ${index} name`) };
   });
-  if (root.itemCatalogRevision !== "2") {
+  if (root.itemCatalogRevision !== "3") {
     fail("unsupported item catalog revision");
   }
   const items = list(root.items, "items", 256).map((value, index): ItemRecord => {
@@ -226,7 +250,7 @@ export function decodeCatalog(json: string): ContentCatalog {
     };
   });
   const itemsById = byId(items, "item");
-  if (root.vendorCatalogRevision !== "0" && root.vendorCatalogRevision !== "1") {
+  if (root.vendorCatalogRevision !== "0" && root.vendorCatalogRevision !== "2") {
     fail("unsupported vendor catalog revision");
   }
   const vendors = list(root.vendors, "vendors", 256).map((value, index): VendorRecord & { id: number } => {
@@ -283,16 +307,79 @@ export function decodeCatalog(json: string): ContentCatalog {
       aura: record.aura === null ? null : int(record.aura, `${name} aura`, 1, 7),
     };
   });
+  if (root.questCatalogRevision !== "0" && root.questCatalogRevision !== "1") {
+    fail("unsupported quest catalog revision");
+  }
+  const npcsById = byId(npcs, "npc");
+  const quests = list(root.quests, "quests", 32).map((value, index): QuestRecord => {
+    const name = `quest ${index}`;
+    const record = object(value, [
+      "id", "name", "text", "giver", "ender", "prerequisite", "objectives", "experience", "copper", "choices",
+    ], name);
+    const npc = (field: unknown, label: string) => {
+      const id = int(field, `${name} ${label}`, 0, 0xffff);
+      if (npcsById.get(id)?.role !== "quest_giver") {
+        fail(`${name} ${label} must be a quest giver`);
+      }
+      return id;
+    };
+    if (typeof record.text !== "string" || record.text.trim().length === 0 || record.text.length > 240) {
+      fail(`${name} text must be non-empty text`);
+    }
+    const objectives = list(record.objectives, `${name} objectives`, 3).map((entry, slot): QuestObjectiveRecord => {
+      const label = `${name} objective ${slot}`;
+      const objective = object(entry, ["kind", "target", "source", "count"], label);
+      const kind = oneOf(objective.kind, OBJECTIVE_KINDS, `${label} kind`);
+      const target = int(objective.target, `${label} target`, 0, 0xffff_ffff);
+      const count = int(objective.count, `${label} count`, 1, 255);
+      if (kind === "collect") {
+        if (!itemsById.has(target)) {
+          fail(`${label} names an unknown item`);
+        }
+        return { kind, target, source: int(objective.source, `${label} source`, 0, 0xffff), count };
+      }
+      if (objective.source !== null) {
+        fail(`${label} has a source only when it collects`);
+      }
+      return { kind, target, count };
+    });
+    if (objectives.length === 0) {
+      fail(`${name} needs an objective`);
+    }
+    const choices = list(record.choices, `${name} choices`, 4).map((item, slot) => {
+      const id = int(item, `${name} choice ${slot}`, 1, 0xffff);
+      if (!itemsById.has(id)) {
+        fail(`${name} choice ${slot} names an unknown item`);
+      }
+      return id;
+    });
+    return {
+      id: int(record.id, `${name} id`, 1, 32),
+      name: text(record.name, `${name} name`),
+      text: record.text,
+      giver: npc(record.giver, "giver"),
+      ender: npc(record.ender, "ender"),
+      prerequisite: record.prerequisite === null ? null : int(record.prerequisite, `${name} prerequisite`, 1, 32),
+      objectives,
+      experience: int(record.experience, `${name} experience`, 0, 0xffff_ffff),
+      copper: int(record.copper, `${name} copper`, 0, 0xffff_ffff),
+      choices,
+    };
+  });
+  if (root.questCatalogRevision === "0" && quests.length > 0) {
+    fail("content without a quest catalog cannot list quests");
+  }
   return {
+    quests: byId(quests, "quest"),
     classes: byId(classes, "class"),
     abilities: byId(abilities, "ability"),
-    itemCatalogRevision: 2n,
+    itemCatalogRevision: 3n,
     items: itemsById,
     vendors: new Map([...byId(vendors, "vendor")].map(([id, { npc, offers }]) => [id, { npc, offers }])),
     contentRevision,
     contentFingerprint: root.contentFingerprint,
     creatureTemplates: byId(templates, "creature template"),
-    npcs: byId(npcs, "npc"),
+    npcs: npcsById,
     areas: new Map([...byId(areas, "area")].map(([id, area]) => [id, area.name])),
   };
 }

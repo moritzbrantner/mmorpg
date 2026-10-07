@@ -6,7 +6,8 @@ use std::{error::Error, fmt};
 use crate::equipment::{EquipmentSlot, ItemStats};
 
 pub const INVENTORY_SLOTS: usize = 16;
-pub const ITEM_CATALOG_REVISION: u64 = 2;
+/// Revision 3 adds the Wolf Pelt quest item (#25).
+pub const ITEM_CATALOG_REVISION: u64 = 3;
 /// Re-send unchanged bags every ten ticks so a lost change self-heals.
 pub const INVENTORY_RESEND_TICKS: u64 = 10;
 
@@ -38,8 +39,9 @@ pub struct ItemTemplate {
 }
 
 /// Starter catalog, in stable ID order. Equippable items stack to one;
-/// consumable effects, prices and loot tables are separate rules.
-pub const ITEM_CATALOG: [ItemTemplate; 9] = [
+/// consumable effects, prices and loot tables are separate rules. Quest
+/// items are plain bag items that quest content names as collect objectives.
+pub const ITEM_CATALOG: [ItemTemplate; 10] = [
     ItemTemplate {
         id: ItemId::new(1),
         name: "Torn Fur",
@@ -142,6 +144,13 @@ pub const ITEM_CATALOG: [ItemTemplate; 9] = [
             agility: 2,
             intellect: 0,
         },
+    },
+    ItemTemplate {
+        id: ItemId::new(10),
+        name: "Wolf Pelt",
+        max_stack: 10,
+        slot: None,
+        stats: ItemStats::NONE,
     },
 ];
 
@@ -273,6 +282,42 @@ impl Inventory {
             return Err(InventoryError::NoCapacity);
         }
         self.slots = slots;
+        Ok(())
+    }
+
+    /// Units of `item` across every slot.
+    #[must_use]
+    pub fn count(&self, item: ItemId) -> u32 {
+        self.slots
+            .iter()
+            .flatten()
+            .filter(|stack| stack.item == item)
+            .map(|stack| u32::from(stack.quantity))
+            .sum()
+    }
+
+    /// Takes `quantity` units of `item` from its stacks in slot order. Without
+    /// enough units the bag stays unchanged.
+    pub fn remove_item(&mut self, item: ItemId, quantity: u16) -> Result<(), InventoryError> {
+        if quantity == 0 {
+            return Err(InventoryError::InvalidQuantity);
+        }
+        if self.count(item) < u32::from(quantity) {
+            return Err(InventoryError::InsufficientItems);
+        }
+        let mut remaining = quantity;
+        for slot in &mut self.slots {
+            let Some(stack) = slot else { continue };
+            if stack.item != item || remaining == 0 {
+                continue;
+            }
+            let taken = remaining.min(stack.quantity);
+            remaining -= taken;
+            *slot = (taken < stack.quantity).then_some(ItemStack {
+                item,
+                quantity: stack.quantity - taken,
+            });
+        }
         Ok(())
     }
 

@@ -45,6 +45,9 @@ pub struct LootRewards {
     /// Copper, matching the starter economy's `u32` balance contract.
     pub money: u32,
     pub item: Option<ItemStack>,
+    /// One unit of a quest item, rolled outside the table while the
+    /// tapper's quest still needs it (#25).
+    pub quest_item: Option<ItemStack>,
 }
 
 /// Credit one validated reward atomically. The caller owns claim eligibility
@@ -58,12 +61,13 @@ pub fn settle_loot(
     let balance = copper
         .checked_add(rewards.money)
         .ok_or(LootSettlementError::MoneyOverflow)?;
-    if let Some(stack) = rewards.item {
-        // Inventory insertion already stages the complete bounded bag mutation.
-        inventory
-            .insert(stack.item(), stack.quantity())
+    // Both stacks fit or neither is granted.
+    let mut bag = inventory.clone();
+    for stack in [rewards.item, rewards.quest_item].into_iter().flatten() {
+        bag.insert(stack.item(), stack.quantity())
             .map_err(LootSettlementError::Inventory)?;
     }
+    *inventory = bag;
     *copper = balance;
     Ok(())
 }
@@ -175,7 +179,11 @@ impl LootTable {
                 )
             }
         };
-        LootRewards { money, item }
+        LootRewards {
+            money,
+            item,
+            quest_item: None,
+        }
     }
 }
 

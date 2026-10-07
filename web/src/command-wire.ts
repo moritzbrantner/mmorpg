@@ -1,6 +1,6 @@
 /**
- * Command wire version 8, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
- * `fixtures/protocol/commands-v8.hex` holds both encoders to the same bytes.
+ * Command wire version 9, mirrored from `mmorpg-protocol` (docs/PROTOCOL.md).
+ * `fixtures/protocol/commands-v9.hex` holds both encoders to the same bytes.
  * The session supplies player identity and sequence separately.
  */
 import { entityKindCode, isU32, type EntityRef } from "./entity-ref";
@@ -33,9 +33,14 @@ export type WorldCommand =
   | { kind: "sell-item"; npc: number; bagSlot: number; quantity: number }
   /** Says (20 m) or yells (60 m) one line of 1–80 UTF-8 bytes; the zone rate-limits speakers. */
   | { kind: "chat"; channel: "say" | "yell"; text: string }
-  | { kind: "emote"; emote: EmoteName };
+  | { kind: "emote"; emote: EmoteName }
+  /** Accepts `quest` from its giver `npc`; the zone checks reach and availability. */
+  | { kind: "accept-quest"; npc: number; quest: number }
+  /** Turns `quest` in at its ender `npc`, taking reward `choice` (0 when it offers none). */
+  | { kind: "complete-quest"; npc: number; quest: number; choice: number }
+  | { kind: "abandon-quest"; quest: number };
 
-const COMMAND_WIRE_VERSION = 8;
+const COMMAND_WIRE_VERSION = 9;
 const MOVE_TAG = 1;
 const JUMP_TAG = 2;
 const SELECT_TARGET_TAG = 3;
@@ -53,6 +58,9 @@ const BUY_ITEM_TAG = 14;
 const SELL_ITEM_TAG = 15;
 const CHAT_TAG = 16;
 const EMOTE_TAG = 17;
+const ACCEPT_QUEST_TAG = 18;
+const COMPLETE_QUEST_TAG = 19;
+const ABANDON_QUEST_TAG = 20;
 const YAW_STEPS = 65_536;
 
 function isAxis(value: number): value is Axis {
@@ -168,6 +176,28 @@ export function encodeCommand(command: WorldCommand): Uint8Array {
       const text = new TextEncoder().encode(command.text);
       return Uint8Array.from([COMMAND_WIRE_VERSION, CHAT_TAG, command.channel === "say" ? 0 : 1, text.length, ...text]);
     }
+    case "accept-quest":
+    case "complete-quest": {
+      const choice = command.kind === "complete-quest" ? command.choice : 0;
+      if (!isU32(command.npc) || !isU8(command.quest) || !isU8(choice)) {
+        throw new Error("Quest commands need a u32 NPC, a u8 quest and a u8 choice.");
+      }
+      const payload = new Uint8Array(command.kind === "accept-quest" ? 7 : 8);
+      const view = new DataView(payload.buffer);
+      view.setUint8(0, COMMAND_WIRE_VERSION);
+      view.setUint8(1, command.kind === "accept-quest" ? ACCEPT_QUEST_TAG : COMPLETE_QUEST_TAG);
+      view.setUint32(2, command.npc);
+      view.setUint8(6, command.quest);
+      if (command.kind === "complete-quest") {
+        view.setUint8(7, choice);
+      }
+      return payload;
+    }
+    case "abandon-quest":
+      if (!isU8(command.quest)) {
+        throw new Error("Quest IDs must be u8.");
+      }
+      return Uint8Array.of(COMMAND_WIRE_VERSION, ABANDON_QUEST_TAG, command.quest);
     case "equip-item":
       if (!isU8(command.bagSlot)) {
         throw new Error("Bag slots must be u8.");

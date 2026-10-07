@@ -16,7 +16,7 @@ Design contract and step plan: [docs/STARTER_ZONE.md](docs/STARTER_ZONE.md). Eac
 - Combat presentation in the browser: target frame, nameplates, combat text (step 7b).
 - Classes and abilities.
 - Progression, loot, inventory, equipment and vendors.
-- Quests and the Redbrand Hollow chain.
+- [x] Quests and the Redbrand Hollow chain ([#25](https://github.com/moritzbrantner/mmorpg/issues/25)): core rules, the nine-quest Greyhaven chain, snapshot v14/command v9 and the browser dialog, log, tracker and markers.
 - [x] Starter-zone combat workload evidence ([#26](https://github.com/moritzbrantner/mmorpg/issues/26)): fixed idle/distributed/crowded scripts, replay/recovery parity and deterministic work/byte ceilings.
 - World presentation: relief, vegetation, water, sky, animated models, effects.
   - [x] Part A (browser): biome terrain and far ranges, procedural props and vegetation in static batches, lake, CSS sky, animated humanoids with class gear, camera polish, minimap, F3 statistics.

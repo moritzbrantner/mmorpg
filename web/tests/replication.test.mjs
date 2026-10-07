@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { decodeSnapshot, findEntity, SnapshotBuffer, yawFromRadians } from "../src/replication.ts";
 import { NO_FLAGS, playerEntity, testSnapshot } from "./support/snapshots.ts";
 
-const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v13.hex", import.meta.url), "utf8").trim();
+const hex = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v14.hex", import.meta.url), "utf8").trim();
 const fixture = Uint8Array.from(Buffer.from(hex, "hex"));
 const player = (entityId, x, facing = 0) => playerEntity(entityId, [x, 90, 0], [21, 0, 0], facing);
 const snapshot = (tick, entities = [player(1, Number(tick) * 12)]) => testSnapshot({
@@ -24,9 +24,11 @@ const TARGET_AURAS = TARGET_CAST + 6;
 const INVENTORY = TARGET_AURAS + 1 + 6;
 const EQUIPMENT = INVENTORY + 9 + 64;
 const STATS = EQUIPMENT + 12;
-const EVENTS = INVENTORY + 8 + 1 + 84 + 1;
-/** Two chat lines and an emote follow the events: 6 + 16, 6 + 8 and 6 bytes. */
-const CHAT = EVENTS + 1 + 14 * 14;
+/** The quest part ends the sheet: mask, one entry, two markers (16 bytes). */
+const QUESTS = STATS + 8;
+const EVENTS = INVENTORY + 8 + 1 + 84 + 16 + 1;
+/** Two chat lines and an emote follow the sixteen events: 6 + 16, 6 + 8 and 6 bytes. */
+const CHAT = EVENTS + 1 + 16 * 14;
 const EMOTE = CHAT + 1 + 22 + 14;
 const ENTITY_COUNT = EMOTE + 6;
 const FIRST_ENTITY = ENTITY_COUNT + 2;
@@ -41,18 +43,18 @@ describe("Rust/browser snapshot contract", () => {
     const invalidFlag = fixture.slice();
     invalidFlag[INVENTORY + 8] = 2;
     expect(() => decodeSnapshot(invalidFlag)).toThrow("Reserved");
-    for (const [slot, item, quantity] of [[0, 0, 3], [0, 10, 1], [0, 1, 0], [0, 1, 21], [1, 2, 2]]) {
+    for (const [slot, item, quantity] of [[0, 0, 3], [0, 11, 1], [0, 1, 0], [0, 1, 21], [1, 2, 2]]) {
       const bytes = fixture.slice();
       const view = new DataView(bytes.buffer);
       view.setUint16(INVENTORY + 9 + slot * 4, item);
       view.setUint16(INVENTORY + 11 + slot * 4, quantity);
       expect(() => decodeSnapshot(bytes)).toThrow("inventory stack");
     }
-    const omitted = new Uint8Array([...fixture.slice(0, INVENTORY + 8), 0, ...fixture.slice(INVENTORY + 9 + 84)]);
-    expect(decodeSnapshot(omitted)).toMatchObject({ inventoryRevision: 9n, inventory: null, equipment: null, stats: null });
+    const omitted = new Uint8Array([...fixture.slice(0, INVENTORY + 8), 0, ...fixture.slice(INVENTORY + 9 + 84 + 16)]);
+    expect(decodeSnapshot(omitted)).toMatchObject({ inventoryRevision: 9n, inventory: null, equipment: null, stats: null, quests: null });
   });
   test("validates equipment slots and stat totals beside the bag", () => {
-    for (const [slot, item, message] of [[0, 10, "equipment slot"], [0, 1, "equipment slot"], [1, 6, "equipment slot"]]) {
+    for (const [slot, item, message] of [[0, 10, "equipment slot"], [0, 11, "equipment slot"], [1, 6, "equipment slot"]]) {
       const bytes = fixture.slice();
       new DataView(bytes.buffer).setUint16(EQUIPMENT + 2 * slot, item);
       expect(() => decodeSnapshot(bytes), `slot ${slot} = item ${item}`).toThrow(message);
@@ -82,7 +84,7 @@ describe("Rust/browser snapshot contract", () => {
     }
   });
   test("decodes the same golden bytes as the Rust encoder", () => {
-    expect(fixture.length).toBe(105 + 2 * 3 + 2 * 6 + 84 + 14 * 14 + 22 + 14 + 6 + 4 * 21);
+    expect(fixture.length).toBe(105 + 2 * 3 + 2 * 6 + 84 + 16 + 16 * 14 + 22 + 14 + 6 + 4 * 21);
     expect(decodeSnapshot(fixture)).toEqual({
       zoneId: 42, tick: 99n, contentRevision: 4n, acknowledgedSequence: 81, viewerId: 7,
       viewer: {
@@ -102,6 +104,11 @@ describe("Rust/browser snapshot contract", () => {
       inventory: [{ itemId: 1, quantity: 3 }, { itemId: 2, quantity: 1 }, ...Array(13).fill(null), { itemId: 1, quantity: 20 }],
       equipment: [4, null, 6, 7, null, null],
       stats: { stamina: 3, strength: 0, agility: 0, intellect: 6 },
+      quests: {
+        completed: 1,
+        entries: [{ quest: 2, progress: [3, 0, 0] }],
+        markers: [{ npc: 1, marker: "available" }, { npc: 2, marker: "in-progress" }],
+      },
       loot: null,
       events: [
         { kind: "damage-dealt", source: VIEWER, target: WOLF, amount: 7, critical: true },
@@ -118,6 +125,8 @@ describe("Rust/browser snapshot contract", () => {
         { kind: "aura-removed", source: VIEWER, target: VIEWER, ability: 11 },
         { kind: "interrupted", source: null, target: VIEWER, ability: 9 },
         { kind: "absorbed", source: WOLF, target: VIEWER, amount: 5 },
+        { kind: "quest-progress", quest: 2, objective: 0, count: 3 },
+        { kind: "quest-completed", quest: 1 },
       ],
       chat: [
         { speaker: 7, channel: "say", text: "Hail, Greyhaven!" },
@@ -157,7 +166,8 @@ describe("Rust/browser snapshot contract", () => {
       "too-many-intents", "invalid-inventory-move", "inventory-full",
       "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
       "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
-      "not-equippable",
+      "not-equippable", "invalid-vendor", "not-enough-money", "chat-throttled", "invalid-quest", "quest-log-full",
+      "quest-incomplete",
     ];
     codes.forEach((code, index) => {
       const bytes = fixture.slice();
@@ -198,7 +208,17 @@ describe("Rust/browser snapshot contract", () => {
       [TARGET_CAST, 0, "cast state"],
       [TARGET_AURAS + 4, 0, "aura record"],
       [EVENTS, 17, "event capacity"],
-      [EVENTS + 1, 14, "event kind"],
+      [EVENTS + 1, 16, "event kind"],
+      [EVENTS + 1 + 14 * 14 + 1, 0, "Quest id"],
+      [EVENTS + 1 + 14 * 14 + 12, 3, "Malformed"],
+      [EVENTS + 1 + 14 * 14 + 13, 0, "Malformed"],
+      [EVENTS + 1 + 15 * 14 + 1, 33, "Quest id"],
+      [EVENTS + 1 + 15 * 14 + 2, 1, "Malformed"],
+      [QUESTS + 4, 11, "Quest log exceeds"],
+      [QUESTS + 5, 1, "Inconsistent quest log"],
+      [QUESTS + 9, 9, "too many markers"],
+      [QUESTS + 12, 4, "Inconsistent quest marker"],
+      [QUESTS + 14, 1, "Inconsistent quest marker"],
       [EVENTS + 1 + 7 * 14 + 1, 15, "Unknown ability"],
       [EVENTS + 1 + 7 * 14 + 1, 0, "Unknown ability"],
       [EVENTS + 1 + 8 * 14 + 13, 1, "Malformed"],
@@ -227,8 +247,10 @@ describe("Rust/browser snapshot contract", () => {
     expect(() => decodeSnapshot(fewer)).toThrow("count");
     expect(() => decodeSnapshot(new Uint8Array([...fixture, 0]))).toThrow();
     expect(() => decodeSnapshot(new Uint8Array(1_078))).toThrow("budget");
-    const legacy = readFileSync(new URL("../../fixtures/protocol/player-snapshot-v9.hex", import.meta.url), "utf8").trim();
-    expect(() => decodeSnapshot(Uint8Array.from(Buffer.from(legacy, "hex")))).toThrow("version");
+    for (const version of [9, 13]) {
+      const legacy = readFileSync(new URL(`../../fixtures/protocol/player-snapshot-v${version}.hex`, import.meta.url), "utf8").trim();
+      expect(() => decodeSnapshot(Uint8Array.from(Buffer.from(legacy, "hex")))).toThrow("version");
+    }
   });
 
   test("requires the viewer to lead the priority-ordered records", () => {

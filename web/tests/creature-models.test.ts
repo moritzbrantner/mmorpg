@@ -27,7 +27,8 @@ const NPCS = [
   { id: 5, name: "Brother Aldous", role: "spirit_healer", level: 10 },
   { id: 6, name: "Greyhaven Guard", role: "guard", level: 10 },
 ];
-const CATALOG: ContentCatalog = decodeCatalog(JSON.stringify({ ...catalogJson(), creatureTemplates: TEMPLATES, npcs: NPCS }));
+// These NPCs give no quests.
+const CATALOG: ContentCatalog = decodeCatalog(JSON.stringify({ ...catalogJson(), creatureTemplates: TEMPLATES, npcs: NPCS, quests: [] }));
 const CONTEXT: UnitContext = {
   unitsPerMetre: 100,
   playerHalfHeightUnits: 90,

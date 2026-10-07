@@ -68,6 +68,18 @@ pub enum PlayerIntent {
     },
     /// A chat line or an emote (#69).
     Chat(crate::ChatMessage),
+    AcceptQuest {
+        npc: crate::NpcId,
+        quest: u8,
+    },
+    CompleteQuest {
+        npc: crate::NpcId,
+        quest: u8,
+        choice: u8,
+    },
+    AbandonQuest {
+        quest: u8,
+    },
 }
 
 /// A creature's decision state.
@@ -194,6 +206,10 @@ pub struct CanonicalPlayerSnapshot {
     pub chat_ready_at: u64,
     /// Chat lines the player heard this tick, at most [`crate::MAX_CHAT_PER_TICK`].
     pub chat: Vec<crate::ChatLine>,
+    /// Active and turned-in quests; validated against the content.
+    pub quests: crate::QuestLog,
+    /// The tick the quest log last changed.
+    pub quests_changed_at: u64,
 }
 
 /// A creature; `position` is its body or corpse, zero once despawned, and
@@ -286,6 +302,8 @@ impl ZoneSimulation {
                     },
                     chat_ready_at: state.chat_ready_at,
                     chat: state.chat.clone(),
+                    quests: state.quests.clone(),
+                    quests_changed_at: state.quests_changed_at,
                 })
             })
             .collect::<Result<Vec<_>, ZoneError>>()?;
@@ -426,6 +444,10 @@ impl ZoneSimulation {
         {
             return Err(ZoneError::new("player chat state is out of range"));
         }
+        if player.quests_changed_at > self.tick {
+            return Err(ZoneError::new("player quest change tick is invalid"));
+        }
+        crate::quest::validate_log(&self.content, &player.quests)?;
         if combat.intents_dropped && combat.intents.len() != MAX_PENDING_INTENTS {
             return Err(ZoneError::new("only a full intent queue drops intents"));
         }
@@ -493,6 +515,8 @@ impl ZoneSimulation {
                 auras: combat.abilities.auras,
                 chat_ready_at: player.chat_ready_at,
                 chat: player.chat,
+                quests: player.quests,
+                quests_changed_at: player.quests_changed_at,
             },
         );
         Ok(())
@@ -573,22 +597,29 @@ impl ZoneSimulation {
         if let Some(rewards) = record.loot {
             let valid_corpse = matches!(record.life, CreatureLife::Corpse { died_at }
                 if self.tick < died_at.saturating_add(u64::from(crate::unit::CORPSE_TICKS)));
-            let valid_rewards = content.loot_table(spawn.template).is_some_and(|table| {
-                let [min, max] = table.money_range();
-                (min..=max).contains(&rewards.money)
-                    && table
-                        .outcomes()
-                        .iter()
-                        .any(|outcome| match (outcome, rewards.item) {
-                            (crate::LootOutcome::Nothing { .. }, None) => true,
-                            (crate::LootOutcome::Item { item, quantity, .. }, Some(stack)) => {
-                                stack.item() == *item
-                                    && (quantity[0]..=quantity[1]).contains(&stack.quantity())
-                            }
-                            _ => false,
-                        })
+            let valid_rewards = content.loot_table(spawn.template).map_or(
+                rewards.money == 0 && rewards.item.is_none(),
+                |table| {
+                    let [min, max] = table.money_range();
+                    (min..=max).contains(&rewards.money)
+                        && table
+                            .outcomes()
+                            .iter()
+                            .any(|outcome| match (outcome, rewards.item) {
+                                (crate::LootOutcome::Nothing { .. }, None) => true,
+                                (crate::LootOutcome::Item { item, quantity, .. }, Some(stack)) => {
+                                    stack.item() == *item
+                                        && (quantity[0]..=quantity[1]).contains(&stack.quantity())
+                                }
+                                _ => false,
+                            })
+                },
+            );
+            let valid_quest_item = rewards.quest_item.is_none_or(|stack| {
+                stack.quantity() == 1
+                    && crate::quest::drops_quest_item(&content, spawn.template, stack.item())
             });
-            if !valid_corpse || record.tapped_by.is_none() || !valid_rewards {
+            if !valid_corpse || record.tapped_by.is_none() || !valid_rewards || !valid_quest_item {
                 return Err(ZoneError::new(
                     "corpse loot is inconsistent with life, owner or content",
                 ));

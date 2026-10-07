@@ -143,12 +143,15 @@ export class LootPanel {
     let rewardText = this.#empty;
     if (sheet !== null) {
       rewardText = `${sheet.money} copper`;
-      if (sheet.item !== null) {
-        const item = this.#catalog?.items.get(sheet.item.itemId);
+      for (const [stack, suffix] of [[sheet.item, ""], [sheet.questItem, " (quest)"]] as const) {
+        if (stack === null) {
+          continue;
+        }
+        const item = this.#catalog?.items.get(stack.itemId);
         if (!item) {
           throw new Error("Projected loot item is missing from the content catalog.");
         }
-        rewardText += ` · ${item.name} × ${sheet.item.quantity}`;
+        rewardText += ` · ${item.name} × ${stack.quantity}${suffix}`;
       }
     }
     for (const [element, text] of [[title, this.#name], [rewards, rewardText],

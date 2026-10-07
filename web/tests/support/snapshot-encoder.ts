@@ -12,28 +12,35 @@ const ENTITY_BYTES = 21;
 const ERROR_CODES = [
   "no-target", "out-of-range", "target-dead", "not-attackable", "you-are-dead", "not-dead", "invalid-target", "too-many-intents", "invalid-inventory-move", "inventory-full", "invalid-loot", "not-loot-owner", "empty-loot", "money-overflow",
   "no-class", "not-learned", "not-ready", "not-enough-resource", "stunned", "already-casting", "invalid-class",
-  "not-equippable", "invalid-vendor", "not-enough-money", "chat-throttled",
+  "not-equippable", "invalid-vendor", "not-enough-money", "chat-throttled", "invalid-quest", "quest-log-full",
+  "quest-incomplete",
 ];
+const QUEST_MARKERS = ["available", "in-progress", "complete"];
 
 function flagByte(flags: readonly boolean[]): number {
   return flags.reduce((byte, set, bit) => byte | (set ? 1 << bit : 0), 0);
 }
 
 /**
- * Test-only player-visible snapshot v13 encoder (docs/PROTOCOL.md); Rust owns the real one.
+ * Test-only player-visible snapshot v14 encoder (docs/PROTOCOL.md); Rust owns the real one.
  * Like it, positions must fit i16 and velocities saturate to i8.
  */
 export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
   let lootBytes = 0;
   if (snapshot.loot !== null) {
-    lootBytes = snapshot.loot.item === null ? 17 : 21;
+    lootBytes = 16 + (snapshot.loot.item === null ? 1 : 5) + (snapshot.loot.questItem === null ? 1 : 5);
   }
+  const quests = snapshot.quests;
+  if ((quests === null) !== (snapshot.inventory === null)) {
+    throw new Error("The quest sheet travels exactly with the bag");
+  }
+  const questBytes = quests === null ? 0 : 4 + 1 + 4 * quests.entries.length + 1 + 3 * quests.markers.length;
   const lists = 3 * snapshot.cooldowns.length + 6 * (snapshot.auras.length + snapshot.targetDetail.auras.length);
   const chat = snapshot.chat ?? [];
   const chatText = (line: (typeof chat)[number]) =>
     line.channel === "emote" ? null : new TextEncoder().encode(line.text);
   const chatBytes = chat.reduce((total, line) => total + 6 + (chatText(line)?.length ?? 0), 0);
-  const size = FIXED_BYTES + lists + (snapshot.inventory === null ? 0 : SHEET_BYTES) + lootBytes + EVENT_BYTES * snapshot.events.length + chatBytes + ENTITY_BYTES * snapshot.entities.length;
+  const size = FIXED_BYTES + lists + (snapshot.inventory === null ? 0 : SHEET_BYTES) + questBytes + lootBytes + EVENT_BYTES * snapshot.events.length + chatBytes + ENTITY_BYTES * snapshot.entities.length;
   const bytes = new Uint8Array(size);
   const view = new DataView(bytes.buffer);
   let offset = 0;
@@ -45,9 +52,9 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     u8(value === null ? 0 : entityKindCode(value.kind));
     u32(value?.id ?? 0);
   };
-  u8(13);
+  u8(14);
   u8(2);
-  u16(13);
+  u16(14);
   u32(snapshot.zoneId);
   u64(snapshot.tick);
   u64(snapshot.contentRevision);
@@ -115,16 +122,29 @@ export function encodeTestSnapshot(snapshot: ZoneSnapshot): Uint8Array {
     for (const total of [stats.stamina, stats.strength, stats.agility, stats.intellect]) {
       u16(total);
     }
+    u32(quests!.completed);
+    u8(quests!.entries.length);
+    for (const entry of quests!.entries) {
+      u8(entry.quest);
+      entry.progress.forEach(u8);
+    }
+    u8(quests!.markers.length);
+    for (const marker of quests!.markers) {
+      u16(marker.npc);
+      u8(QUEST_MARKERS.indexOf(marker.marker) + 1);
+    }
   }
   u8(snapshot.loot === null ? 0 : 1);
   if (snapshot.loot !== null) {
     u32(snapshot.loot.creatureId);
     u64(snapshot.loot.diedAt);
     u32(snapshot.loot.money);
-    u8(snapshot.loot.item === null ? 0 : 1);
-    if (snapshot.loot.item !== null) {
-      u16(snapshot.loot.item.itemId);
-      u16(snapshot.loot.item.quantity);
+    for (const stack of [snapshot.loot.item, snapshot.loot.questItem]) {
+      u8(stack === null ? 0 : 1);
+      if (stack !== null) {
+        u16(stack.itemId);
+        u16(stack.quantity);
+      }
     }
   }
   u8(snapshot.events.length);
@@ -237,6 +257,14 @@ function encodeEvent(
       entity(event.source);
       entity(event.target);
       u16(event.amount);
+      return;
+    case "quest-progress":
+    case "quest-completed":
+      u8(event.kind === "quest-progress" ? 14 : 15);
+      u8(event.quest);
+      entity(null);
+      entity(null);
+      u16(event.kind === "quest-progress" ? (event.objective << 8) | event.count : 0);
       return;
   }
 }

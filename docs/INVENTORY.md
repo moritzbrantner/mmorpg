@@ -7,8 +7,9 @@ or below that item's stack limit. `ItemStack::new` validates imported stacks;
 private fields and a fixed-length slot array prevent unchecked or truncated
 imports. Queries expose immutable slots.
 
-The immutable catalog revision is 2 (revision 1 held only items 1 and 2, with
-the same names and limits):
+The immutable catalog revision is 3 (revision 1 held only items 1 and 2, and
+revision 2 items 1–9, with the same names and limits; revision 3 adds the Wolf
+Pelt quest item):
 
 | Stable item ID | Name | Stack limit | Equipment slot | Sta | Str | Agi | Int |
 | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: |
@@ -21,6 +22,7 @@ the same names and limits):
 | 7 | Padded Tunic | 1 | chest | 2 | 0 | 0 | 0 |
 | 8 | Padded Trousers | 1 | legs | 1 | 0 | 0 | 0 |
 | 9 | Worn Boots | 1 | feet | 1 | 0 | 2 | 0 |
+| 10 | Wolf Pelt | 10 | — | | | | |
 
 Zero and unknown IDs fail closed. IDs are never reassigned. Names, limits,
 slots and stats are content, not client preferences. Equippable items stack to
@@ -142,6 +144,9 @@ offers of distinct catalog items with nonzero prices; the offer index is its
 wire identity. `ZoneContent::with_vendors` binds stocks to NPCs with the
 `Vendor` role and enters the vendor revision, every sale value and every offer
 into content identity without changing the AI/combat seed (Greyhaven revision 8).
+Vendor catalog revision 2 adds the Wolf Pelt quest item (item catalog revision
+3, stacks to 10), which sells for 1 copper and is not stocked; quests drop it
+and consume it at their turn-in ([STARTER_ZONE.md](STARTER_ZONE.md#quests)).
 
 `BuyItem { npc, offer, quantity }` and `SellItem { npc, bag_slot, quantity }` are
 sequenced intents resolved in tick step 1 like `MoveItem`:

@@ -33,6 +33,7 @@ import { ClassHud } from "./units/class-hud";
 import { CombatHud } from "./units/combat-hud";
 import { LootPanel, type LootElements } from "./units/loot-panel";
 import { VendorPanel, type VendorElements } from "./units/vendor-panel";
+import { QuestPanel, type MarkerPoint, type QuestElements } from "./units/quest-panel";
 import { ChatFrame, type ChatElements } from "./units/chat-frame";
 import { nearestAnimal, projectedUnit, type ProjectedUnit } from "./units/projected-units";
 import { ProgressionHud } from "./units/progression-hud";
@@ -53,7 +54,6 @@ export type WorldViewElements = {
   minimap: MinimapElements;
   overlay: HTMLElement;
   areaName: HTMLElement;
-  objective: HTMLElement;
   /** The viewer's health and target line. */
   unitStatus: HTMLElement;
   /** The latest combat feedback line. */
@@ -65,6 +65,7 @@ export type WorldViewElements = {
   character: CharacterElements;
   loot: LootElements;
   vendor: VendorElements;
+  quests: QuestElements;
   chat: ChatElements;
   /** Action bar, unit frames, cast bars and combat text. */
   classHud: HTMLElement;
@@ -75,6 +76,8 @@ export type Intent = (projection: ZoneSnapshot) => WorldCommand | null;
 
 /** Outside every named area the HUD names the zone itself. */
 const ZONE_NAME = "Greyhaven Vale";
+/** Quest markers float this far above an NPC's feet (metres). */
+const MARKER_HEIGHT_METRES = 2.3;
 
 /** Debug-only camera poses for screenshots; they never touch the simulation. */
 export const DEBUG_VIEWPOINTS: Readonly<Record<string, { eye: Vec3; target: Vec3 }>> = {
@@ -150,6 +153,7 @@ export class WorldView {
   readonly #character: CharacterPane;
   readonly #loot: LootPanel;
   readonly #vendor: VendorPanel;
+  readonly #quests: QuestPanel;
   readonly #chat: ChatFrame;
   readonly #intents: { intent: Intent; onSent: ((sequence: number | null) => void) | undefined }[] = [];
   readonly #secondaryClick = new SecondaryClick();
@@ -201,21 +205,32 @@ export class WorldView {
       this.#bags.close();
       this.#character.close(false);
       this.#vendor.close(false);
+      this.#closeQuests();
     });
     this.#vendor = new VendorPanel(elements.vendor, this.#bags.state, (command, onSent) => this.queueIntent(() => command, onSent), () => {
       this.#loot.close(false);
       this.#character.close(false);
       this.#bags.close();
+      this.#closeQuests();
+    });
+    // The quest dialog and log share the bag panes' places on screen, so they replace them.
+    this.#quests = new QuestPanel(elements.quests, (command) => this.queueIntent(() => command), () => {
+      this.#loot.close(false);
+      this.#vendor.close(false);
+      this.#bags.close();
+      this.#character.close(false);
     });
     // Leaving the chat field hands the keyboard back to the world.
     this.#chat = new ChatFrame(elements.chat, (command) => this.queueIntent(() => command), () => elements.canvas.focus());
     elements.bags.toggle.addEventListener("click", () => {
       this.#loot.close(false);
       this.#vendor.close(false);
+      this.#closeQuests();
     });
     elements.character.toggle.addEventListener("click", () => {
       this.#loot.close(false);
       this.#vendor.close(false);
+      this.#closeQuests();
     });
     this.#outbox = new MovementOutbox(this.#input({ held: IDLE_INTENT, jumps: 0 }));
   }
@@ -232,6 +247,7 @@ export class WorldView {
     this.#character.load(world.catalog);
     this.#loot.load(world.catalog);
     this.#vendor.load(world.catalog);
+    this.#quests.load(world.catalog);
     const scenery = world.scenery.scenery;
     this.#presentationFingerprint = scenery.presentationFingerprint;
     this.#reliefAt = world.scenery.reliefAt;
@@ -259,6 +275,7 @@ export class WorldView {
     this.#character.reset(projection);
     this.#loot.reset(projection);
     this.#vendor.reset(projection);
+    this.#quests.reset(projection);
     this.#chat.reset();
     this.#shownArea = null;
     this.#flyTo = null;
@@ -292,6 +309,7 @@ export class WorldView {
     this.#character.reset();
     this.#loot.reset();
     this.#vendor.reset();
+    this.#quests.reset();
     this.#chat.reset();
     this.#endDrag();
     this.#sky.show(false);
@@ -306,13 +324,20 @@ export class WorldView {
   toggleBags(): void {
     this.#loot.close(false);
     this.#vendor.close(false);
+    this.#closeQuests();
     this.#bags.toggle();
   }
 
   toggleCharacter(): void {
     this.#loot.close(false);
     this.#vendor.close(false);
+    this.#closeQuests();
     this.#character.toggle();
+  }
+
+  #closeQuests(): void {
+    this.#quests.closeDialog(false);
+    this.#quests.closeLog(false);
   }
 
   toggleVendor(): void {
@@ -320,6 +345,19 @@ export class WorldView {
   }
 
   closeVendor(): boolean { return this.#vendor.close(); }
+
+  /** Talks to the selected or nearest quest giver: the NPC dialog. */
+  toggleQuestDialog(): void {
+    this.#quests.toggleDialog();
+  }
+
+  toggleQuestLog(): void {
+    this.#quests.toggleLog();
+  }
+
+  closeQuestDialog(): boolean { return this.#quests.closeDialog(); }
+
+  closeQuestLog(): boolean { return this.#quests.closeLog(); }
 
   /** Focuses the chat field; typing there releases held movement. */
   openChat(): void {
@@ -333,7 +371,10 @@ export class WorldView {
   closeCharacter(): boolean { return this.#character.close(); }
 
   /** Whether bags, the character pane, loot or the vendor are open: a non-blocking overlay over gameplay controls. */
-  get panelOpen(): boolean { return this.#bags.open || this.#character.open || this.#loot.open || this.#vendor.open; }
+  get panelOpen(): boolean {
+    return this.#bags.open || this.#character.open || this.#loot.open || this.#vendor.open
+      || this.#quests.dialogOpen || this.#quests.logOpen;
+  }
 
   toggleOverlay(): void {
     this.#overlay.toggle();
@@ -351,10 +392,6 @@ export class WorldView {
     }
     this.#shownArea = name;
     this.#elements.areaName.textContent = name;
-    // A placeholder objective until quests exist; area names come from core content.
-    this.#elements.objective.textContent = name === ZONE_NAME
-      ? "Explore Greyhaven Vale. Quests are not in this build yet."
-      : `Explore Greyhaven Vale — you are in ${name}. Quests are not in this build yet.`;
   }
 
   /** One frame: intent out, ticks, projection in, scene drawn. Throws when the projection lacks the viewer. */
@@ -383,6 +420,7 @@ export class WorldView {
       this.#character.update(received);
       this.#loot.update(received);
       this.#vendor.update(received);
+      this.#quests.update(received);
       this.#chat.update(received);
     }
     const projection = source.latestProjection();
@@ -473,6 +511,7 @@ export class WorldView {
       projectionMatrix: webGpuProjection(this.#camera),
     };
     this.#lastWork = this.#renderer.render({ camera, nodes });
+    this.#quests.placeMarkers(this.#markerPoints(anchors, projection));
     this.#sky.update(this.#horizon(view.eye, view.target), this.#seconds, animate);
     this.#minimap?.draw({ x: self.x, z: self.z }, this.#orbit.heading, self.facing, others);
     this.#frameRate.sample(now);
@@ -486,6 +525,26 @@ export class WorldView {
       units: visible.size,
       work: this.#lastWork,
     }, now);
+  }
+
+  /** Screen anchors above every projected NPC, from the camera this frame drew with. */
+  #markerPoints(anchors: ReadonlyMap<string, Anchor>, projection: ZoneSnapshot): MarkerPoint[] {
+    const canvas = this.#elements.canvas;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    const point = new THREE.Vector3();
+    return projection.entities.flatMap((entity) => {
+      if (entity.kind !== "npc") {
+        return [];
+      }
+      const anchor = anchors.get(entityKey({ kind: "npc", id: entity.entityId }));
+      if (!anchor) {
+        return [];
+      }
+      point.set(anchor.x, anchor.feetY + MARKER_HEIGHT_METRES, anchor.z).project(this.#camera);
+      const onScreen = point.z > -1 && point.z < 1 && Math.abs(point.x) <= 1.05 && Math.abs(point.y) <= 1.05;
+      return [{ npc: entity.entityId, x: ((point.x + 1) / 2) * width, y: ((1 - point.y) / 2) * height, onScreen }];
+    });
   }
 
   #minimapUnit(entity: EntityState, unitsPerMetre: number): MinimapUnit {

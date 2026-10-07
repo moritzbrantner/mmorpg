@@ -69,7 +69,8 @@ impl UnitSpec {
 
 /// A feedback event kind: `damage_dealt`, `damage_taken`, `miss`, `died`,
 /// `evade`, `cast_started`, `ability_used`, `healed`, `aura_applied`,
-/// `aura_removed`, `interrupted`, `absorbed` or `error:<code>`.
+/// `aura_removed`, `interrupted`, `absorbed`, `quest_progress`,
+/// `quest_completed` or `error:<code>`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(try_from = "String")]
 pub enum EventSpec {
@@ -85,11 +86,13 @@ pub enum EventSpec {
     AuraRemoved,
     Interrupted,
     Absorbed,
+    QuestProgress,
+    QuestCompleted,
     Error(ErrorCode),
 }
 
 /// Event kinds without a payload, with their scenario names.
-const PLAIN_EVENTS: [(EventSpec, &str); 12] = [
+const PLAIN_EVENTS: [(EventSpec, &str); 14] = [
     (EventSpec::DamageDealt, "damage_dealt"),
     (EventSpec::DamageTaken, "damage_taken"),
     (EventSpec::Miss, "miss"),
@@ -102,6 +105,8 @@ const PLAIN_EVENTS: [(EventSpec, &str); 12] = [
     (EventSpec::AuraRemoved, "aura_removed"),
     (EventSpec::Interrupted, "interrupted"),
     (EventSpec::Absorbed, "absorbed"),
+    (EventSpec::QuestProgress, "quest_progress"),
+    (EventSpec::QuestCompleted, "quest_completed"),
 ];
 
 impl TryFrom<String> for EventSpec {
@@ -114,7 +119,7 @@ impl TryFrom<String> for EventSpec {
         match text.strip_prefix("error:").and_then(parse_error_code) {
             Some(code) => Ok(Self::Error(code)),
             None => Err(format!(
-                "event {text:?} must be damage_dealt, damage_taken, miss, died, evade, cast_started, ability_used, healed, aura_applied, aura_removed, interrupted, absorbed or error:<code>"
+                "event {text:?} must be damage_dealt, damage_taken, miss, died, evade, cast_started, ability_used, healed, aura_applied, aura_removed, interrupted, absorbed, quest_progress, quest_completed or error:<code>"
             )),
         }
     }
@@ -150,7 +155,9 @@ impl EventSpec {
             | (Self::AuraApplied, ZoneEvent::AuraApplied { .. })
             | (Self::AuraRemoved, ZoneEvent::AuraRemoved { .. })
             | (Self::Interrupted, ZoneEvent::Interrupted { .. })
-            | (Self::Absorbed, ZoneEvent::Absorbed { .. }) => true,
+            | (Self::Absorbed, ZoneEvent::Absorbed { .. })
+            | (Self::QuestProgress, ZoneEvent::QuestProgress { .. })
+            | (Self::QuestCompleted, ZoneEvent::QuestCompleted { .. }) => true,
             (Self::Error(expected), ZoneEvent::Error { code, .. }) => expected == *code,
             _ => false,
         };
@@ -161,7 +168,7 @@ impl EventSpec {
 /// The unit an event is about, seen from its recipient: whom it hit or who
 /// hit it, who died, who evaded, the target an error concerned, the other
 /// party of a cast, ability, heal or shield, and the unit an aura or
-/// interrupt affected.
+/// interrupt affected; quest events concern no unit.
 pub fn concerned_unit(event: &ZoneEvent, viewer: EntityRef) -> Option<EntityRef> {
     let other = |source: EntityRef, target: Option<EntityRef>| {
         if source == viewer {
@@ -183,6 +190,7 @@ pub fn concerned_unit(event: &ZoneEvent, viewer: EntityRef) -> Option<EntityRef>
         ZoneEvent::AuraApplied { target, .. }
         | ZoneEvent::AuraRemoved { target, .. }
         | ZoneEvent::Interrupted { target, .. } => Some(target),
+        ZoneEvent::QuestProgress { .. } | ZoneEvent::QuestCompleted { .. } => None,
     }
 }
 
@@ -261,6 +269,9 @@ pub const fn error_code_name(code: ErrorCode) -> &'static str {
         ErrorCode::InvalidVendor => "invalid_vendor",
         ErrorCode::NotEnoughMoney => "not_enough_money",
         ErrorCode::ChatThrottled => "chat_throttled",
+        ErrorCode::InvalidQuest => "invalid_quest",
+        ErrorCode::QuestLogFull => "quest_log_full",
+        ErrorCode::QuestIncomplete => "quest_incomplete",
     }
 }
 
@@ -291,6 +302,9 @@ fn parse_error_code(name: &str) -> Option<ErrorCode> {
         "invalid_vendor" => ErrorCode::InvalidVendor,
         "not_enough_money" => ErrorCode::NotEnoughMoney,
         "chat_throttled" => ErrorCode::ChatThrottled,
+        "invalid_quest" => ErrorCode::InvalidQuest,
+        "quest_log_full" => ErrorCode::QuestLogFull,
+        "quest_incomplete" => ErrorCode::QuestIncomplete,
         _ => return None,
     })
 }
@@ -332,6 +346,12 @@ pub fn event_token(event: &ZoneEvent, name: impl Fn(EntityRef) -> String) -> Str
             target, ability, ..
         } => format!("interrupted:{}:{}", name(target), ability.get()),
         ZoneEvent::Absorbed { target, amount, .. } => format!("absorbed:{}:{amount}", name(target)),
+        ZoneEvent::QuestProgress {
+            quest,
+            objective,
+            count,
+        } => format!("quest:{}:{objective}={count}", quest.get()),
+        ZoneEvent::QuestCompleted { quest } => format!("quest_done:{}", quest.get()),
     }
 }
 
@@ -381,6 +401,9 @@ mod tests {
             ErrorCode::Stunned,
             ErrorCode::AlreadyCasting,
             ErrorCode::InvalidClass,
+            ErrorCode::InvalidQuest,
+            ErrorCode::QuestLogFull,
+            ErrorCode::QuestIncomplete,
         ] {
             let spec = EventSpec::Error(code);
             assert_eq!(EventSpec::try_from(spec.to_string()), Ok(spec));

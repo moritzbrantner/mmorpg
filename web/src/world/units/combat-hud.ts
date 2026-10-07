@@ -1,6 +1,7 @@
 import type { EntityRef } from "../../entity-ref";
 import { findEntity, type ErrorCode, type ZoneEvent, type ZoneSnapshot } from "../../replication";
 import type { ContentCatalog } from "../catalog";
+import { objectiveLabel } from "./quest-state";
 
 /**
  * Plain-text combat HUD lines beside the class HUD's frames, cast bars and
@@ -32,6 +33,9 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   "invalid-vendor": "That vendor does not sell that.",
   "not-enough-money": "You do not have enough copper.",
   "chat-throttled": "You can speak or emote once per second.",
+  "invalid-quest": "That quest is not available here.",
+  "quest-log-full": "Your quest log is full.",
+  "quest-incomplete": "That quest is not complete yet.",
 };
 
 const RESOURCE_NAMES = { rage: "Rage", focus: "Focus", mana: "Mana" } as const;
@@ -131,6 +135,15 @@ export function eventText(event: ZoneEvent, snapshot: ZoneSnapshot, catalog: Con
       return `${capitalise(name(event.target))} ${isViewer(event.target) ? "are" : "is"} interrupted (${abilityName(event.ability, catalog)}).`;
     case "absorbed":
       return `A shield absorbs ${event.amount} damage.`;
+    case "quest-progress": {
+      const quest = catalog.quests.get(event.quest);
+      const objective = quest?.objectives[event.objective];
+      return objective
+        ? `${quest!.name}: ${objectiveLabel(objective, catalog)} ${objective.kind === "kill" || objective.kind === "collect" ? `${event.count}/${objective.count}` : "done"}.`
+        : "Quest progress.";
+    }
+    case "quest-completed":
+      return `${catalog.quests.get(event.quest)?.name ?? "Quest"} completed.`;
   }
 }
 
