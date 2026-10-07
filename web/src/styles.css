@@ -292,6 +292,8 @@ button { font: inherit; }
   display: flex;
   align-items: center;
   gap: 1rem;
+  /* Clear of the minimap: the toolbar wraps instead of sliding under it. */
+  max-width: calc(100vw - 14rem);
   border-radius: .75rem;
 }
 
@@ -524,7 +526,7 @@ kbd {
   .equipment-item { padding: .42rem; }
   .equipment-item strong { font-size: .68rem; }
   .character-stage-fallback { left: 50%; top: 43%; transform: translate(-50%, -50%) scale(.72); }
-  .topbar { top: .65rem; left: .65rem; }
+  .topbar { top: .65rem; left: .65rem; max-width: calc(100vw - 9.7rem); padding-left: .5rem; }
   .topbar .eyebrow { display: none; }
   .minimap { top: .65rem; right: .65rem; width: 8.5rem; }
   .minimap-frame { width: 8.5rem; height: 8.5rem; }
@@ -816,8 +818,8 @@ kbd {
 .bag-quantity input { width: 5rem; font: inherit; padding: .4rem; }
 #bag-feedback, #loot-feedback, #character-feedback, #vendor-feedback { min-height: 1.2rem; color: var(--gold-bright); }
 @media (max-width: 480px) {
-  /* Below the seven stacked toolbar buttons. */
-  .bags-panel, .loot-panel, .character-panel, .vendor-panel, .quest-panel { top: 20rem; max-height: calc(100dvh - 21rem); }
+  /* Below the wrapped toolbar buttons. */
+  .bags-panel, .loot-panel, .character-panel, .vendor-panel, .quest-panel { top: 15rem; max-height: calc(100dvh - 16rem); }
   .bag-slots { gap: .25rem; }
   .bags-panel, .loot-panel, .character-panel, .vendor-panel, .quest-panel { padding: .7rem; }
 }
@@ -855,6 +857,11 @@ kbd {
 .quest-choices legend { padding: 0 .25rem; color: #b7c2bb; font-size: .75rem; }
 .quest-card button { justify-self: start; padding: .35rem .7rem; }
 .quest-feedback { min-height: 1.2rem; color: var(--gold-bright); }
+.quest-log-actions { display: flex; gap: .4rem; }
+/* The zone label yields its room to the toolbar before the toolbar would wrap. */
+@media (max-width: 1100px) {
+  .topbar .eyebrow { display: none; }
+}
 .quest-tracker { white-space: pre-line; }
 /* Markers follow NPC heads on screen; they never take pointer input. */
 .quest-markers { position: fixed; z-index: 2; inset: 0; overflow: hidden; pointer-events: none; }

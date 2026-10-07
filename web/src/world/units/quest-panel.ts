@@ -138,6 +138,8 @@ export class QuestPanel {
       return;
     }
     this.#onOpen();
+    // The dialog takes the log's place; its Talk button opens it.
+    this.closeLog(false);
     this.#elements.dialog.hidden = false;
     this.#elements.dialogToggle.setAttribute("aria-expanded", "true");
     this.#dialogKey = "";
