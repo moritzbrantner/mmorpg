@@ -205,25 +205,32 @@ export class WorldView {
       this.#bags.close();
       this.#character.close(false);
       this.#vendor.close(false);
+      this.#closeQuests();
     });
     this.#vendor = new VendorPanel(elements.vendor, this.#bags.state, (command, onSent) => this.queueIntent(() => command, onSent), () => {
       this.#loot.close(false);
       this.#character.close(false);
       this.#bags.close();
+      this.#closeQuests();
     });
+    // The quest dialog and log share the bag panes' places on screen, so they replace them.
     this.#quests = new QuestPanel(elements.quests, (command) => this.queueIntent(() => command), () => {
       this.#loot.close(false);
       this.#vendor.close(false);
+      this.#bags.close();
+      this.#character.close(false);
     });
     // Leaving the chat field hands the keyboard back to the world.
     this.#chat = new ChatFrame(elements.chat, (command) => this.queueIntent(() => command), () => elements.canvas.focus());
     elements.bags.toggle.addEventListener("click", () => {
       this.#loot.close(false);
       this.#vendor.close(false);
+      this.#closeQuests();
     });
     elements.character.toggle.addEventListener("click", () => {
       this.#loot.close(false);
       this.#vendor.close(false);
+      this.#closeQuests();
     });
     this.#outbox = new MovementOutbox(this.#input({ held: IDLE_INTENT, jumps: 0 }));
   }
@@ -317,13 +324,20 @@ export class WorldView {
   toggleBags(): void {
     this.#loot.close(false);
     this.#vendor.close(false);
+    this.#closeQuests();
     this.#bags.toggle();
   }
 
   toggleCharacter(): void {
     this.#loot.close(false);
     this.#vendor.close(false);
+    this.#closeQuests();
     this.#character.toggle();
+  }
+
+  #closeQuests(): void {
+    this.#quests.closeDialog(false);
+    this.#quests.closeLog(false);
   }
 
   toggleVendor(): void {
