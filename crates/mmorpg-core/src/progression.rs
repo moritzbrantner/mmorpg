@@ -51,34 +51,60 @@ pub(crate) fn valid_progression(level: u8, experience: u32) -> bool {
 }
 
 impl crate::ZoneSimulation {
-    /// The admitted living tapper must remain within the interest radius of
-    /// the corpse. Called once by the alive-to-corpse authority transition.
-    pub(crate) fn reward_kill_experience(
-        &mut self,
+    /// Whether the admitted tapper is alive and within the interest radius
+    /// of the corpse at `position`: it then earns the kill's experience and
+    /// quest credit. Checked once by the alive-to-corpse transition.
+    pub(crate) fn kill_credit_eligible(
+        &self,
         player_id: crate::PlayerId,
-        creature_level: u8,
         position: [i32; 3],
-    ) -> Result<(), crate::ZoneError> {
+    ) -> Result<bool, crate::ZoneError> {
         let Some(player) = self.players.get(&player_id) else {
-            return Ok(());
+            return Ok(false);
         };
         if !player.is_alive() {
-            return Ok(());
+            return Ok(false);
         }
         let player_position = self.player_position(player_id)?;
         let dx = i128::from(player_position.x) - i128::from(position[0]);
         let dz = i128::from(player_position.z) - i128::from(position[2]);
         let radius = i128::from(crate::INTEREST_RADIUS_UNITS);
-        if dx * dx + dz * dz > radius * radius {
+        Ok(dx * dx + dz * dz <= radius * radius)
+    }
+
+    /// Kill experience for an eligible tapper.
+    pub(crate) fn reward_kill_experience(
+        &mut self,
+        player_id: crate::PlayerId,
+        creature_level: u8,
+    ) -> Result<(), crate::ZoneError> {
+        let Some(player) = self.players.get(&player_id) else {
             return Ok(());
-        }
+        };
         let reward = kill_experience(player.level, creature_level)
             .ok_or_else(|| crate::ZoneError::new("invalid progression level"))?;
-        let player = self.players.get_mut(&player_id).expect("admitted tapper");
+        self.grant_experience(player_id, reward)
+    }
+
+    /// Adds experience, levelling up through the starter curve; the cap
+    /// keeps zero experience. Current health and mana grow with their
+    /// maximums; rage and focus keep a fixed maximum.
+    pub(crate) fn grant_experience(
+        &mut self,
+        player_id: crate::PlayerId,
+        amount: u32,
+    ) -> Result<(), crate::ZoneError> {
+        let Some(player) = self.players.get_mut(&player_id) else {
+            return Ok(());
+        };
+        if player.level == MAX_PLAYER_LEVEL {
+            return Ok(());
+        }
         let old_level = player.level;
-        player.experience += reward;
+        player.experience = player.experience.saturating_add(amount);
         while player.level < MAX_PLAYER_LEVEL {
-            let threshold = experience_to_next_level(player.level).expect("valid starter level");
+            let threshold = experience_to_next_level(player.level)
+                .ok_or_else(|| crate::ZoneError::new("invalid progression level"))?;
             if player.experience < threshold {
                 break;
             }
@@ -88,8 +114,6 @@ impl crate::ZoneSimulation {
         if player.level == MAX_PLAYER_LEVEL {
             player.experience = 0;
         }
-        // Current health and mana grow with their maximums; rage and focus
-        // keep a fixed maximum.
         player.health += crate::unit::player_max_health(player.level)
             - crate::unit::player_max_health(old_level);
         if let Some(choice) = player.class {

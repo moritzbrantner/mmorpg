@@ -148,6 +148,9 @@ pub struct ZoneSnapshot {
     /// Equipment, sent exactly with the bag under the same revision; its
     /// stat totals are [`crate::Equipment::totals`].
     pub equipment: Option<crate::Equipment>,
+    /// Quest log, turned-in quests and NPC markers, sent exactly with the
+    /// bag sheet.
+    pub quests: Option<crate::QuestSheet>,
     /// Complete eligible selected corpse sheet, repeated every projection.
     pub loot: Option<crate::LootView>,
     /// Feedback the viewer received this tick.
@@ -209,6 +212,7 @@ impl ZoneSimulation {
 
         let max_health = viewer.max_health();
         let sheet = self.tick == viewer.inventory_changed_at
+            || self.tick == viewer.quests_changed_at
             || self.tick.is_multiple_of(crate::INVENTORY_RESEND_TICKS);
         Ok(PlayerProjection {
             snapshot: ZoneSnapshot {
@@ -255,6 +259,9 @@ impl ZoneSimulation {
                 inventory_revision: viewer.inventory_revision,
                 inventory: sheet.then(|| viewer.inventory.clone()),
                 equipment: sheet.then_some(viewer.equipment),
+                quests: sheet.then(|| {
+                    crate::quest::quest_sheet(&self.content, &viewer.quests, &viewer.inventory)
+                }),
                 loot: match viewer.target {
                     Some(EntityRef::Creature(id)) => self.loot_view_for(player_id, id)?,
                     _ => None,

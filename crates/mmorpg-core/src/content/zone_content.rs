@@ -36,6 +36,8 @@ pub struct ZoneContent {
     creature_abilities: Vec<(CreatureTemplateId, AbilityId)>,
     vendor_revision: u64,
     vendors: Vec<(NpcId, VendorStock)>,
+    quest_revision: u64,
+    quests: Vec<crate::Quest>,
 }
 
 /// A body as `(centre, half extents)` in units.
@@ -130,6 +132,8 @@ impl ZoneContent {
             creature_abilities: Vec::new(),
             vendor_revision: 0,
             vendors: Vec::new(),
+            quest_revision: 0,
+            quests: Vec::new(),
         };
         content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
@@ -156,6 +160,8 @@ impl ZoneContent {
             creature_abilities: Vec::new(),
             vendor_revision: 0,
             vendors: Vec::new(),
+            quest_revision: 0,
+            quests: Vec::new(),
         };
         content.rng_seed = content.compute_simulation_fingerprint();
         content.fingerprint = content.compute_fingerprint();
@@ -402,7 +408,93 @@ impl ZoneContent {
             .map(|index| &self.vendors[index].1)
     }
 
+    /// Binds quests, validated against this content, and the quest rules to
+    /// recovery identity without changing the simulation seed. Revision zero
+    /// is reserved for content without quests; its zones refuse every quest.
+    pub fn with_quests(
+        mut self,
+        revision: u64,
+        quests: Vec<crate::Quest>,
+    ) -> Result<Self, ZoneError> {
+        if revision == 0 {
+            return Err(ZoneError::new("quest catalog revision must be nonzero"));
+        }
+        let quests = crate::quest::validate_quests(&self, quests)
+            .map_err(|error| ZoneError::new(error.to_string()))?;
+        self.quest_revision = revision;
+        self.quests = quests;
+        self.fingerprint = self.compute_fingerprint();
+        Ok(self)
+    }
+
+    #[must_use]
+    pub const fn quest_revision(&self) -> u64 {
+        self.quest_revision
+    }
+
+    /// Ordered by quest ID.
+    #[must_use]
+    pub fn quests(&self) -> &[crate::Quest] {
+        &self.quests
+    }
+
+    #[must_use]
+    pub fn quest(&self, id: crate::QuestId) -> Option<&crate::Quest> {
+        self.quests
+            .binary_search_by_key(&id, |quest| quest.id)
+            .ok()
+            .map(|index| &self.quests[index])
+    }
+
     fn compute_fingerprint(&self) -> u64 {
+        let fingerprint = self.compute_vendor_fingerprint();
+        if self.quest_revision == 0 {
+            return fingerprint;
+        }
+        let mut hash = Fnv1a::new();
+        hash.bytes(b"mmorpg.zone-content/v6");
+        hash.u64(fingerprint);
+        hash.u64(self.quest_revision);
+        hash.len(self.quests.len());
+        for quest in &self.quests {
+            hash.u8(quest.id.get());
+            hash.text(&quest.name);
+            hash.text(&quest.text);
+            hash.u32(quest.giver.get());
+            hash.u32(quest.ender.get());
+            hash.u8(quest.prerequisite.map_or(0, crate::QuestId::get));
+            hash.len(quest.objectives.len());
+            for objective in &quest.objectives {
+                hash.u8(objective.code());
+                match *objective {
+                    crate::QuestObjective::Kill { template, count } => {
+                        hash.u16(template.get());
+                        hash.u8(count);
+                    }
+                    crate::QuestObjective::Collect {
+                        item,
+                        count,
+                        source,
+                    } => {
+                        hash.u16(item.get());
+                        hash.u8(count);
+                        hash.u16(source.get());
+                    }
+                    crate::QuestObjective::Talk { npc } => hash.u32(npc.get()),
+                    crate::QuestObjective::Explore { area } => hash.u16(area.get()),
+                }
+            }
+            hash.u32(quest.rewards.experience);
+            hash.u32(quest.rewards.copper);
+            hash.len(quest.rewards.choices.len());
+            for item in &quest.rewards.choices {
+                hash.u16(item.get());
+            }
+        }
+        hash.finish()
+    }
+
+    fn compute_vendor_fingerprint(&self) -> u64 {
         let fingerprint = self.compute_ability_fingerprint();
         if self.vendor_revision == 0 {
             return fingerprint;

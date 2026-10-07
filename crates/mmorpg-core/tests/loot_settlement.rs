@@ -22,6 +22,7 @@ fn settlement_conserves_rewards_and_uses_existing_ordered_merge_then_empty_slots
     let rewards = LootRewards {
         money: 35,
         item: Some(stack(FUR, 20)),
+        quest_item: None,
     };
     let expected_reward = rewards;
     settle_loot(&mut bag, &mut copper, rewards).unwrap();
@@ -42,6 +43,7 @@ fn insufficient_total_bag_capacity_never_partially_merges_or_credits_money() {
         let rewards = LootRewards {
             money: 9,
             item: Some(stack(FUR, available + 1)),
+            quest_item: None,
         };
         let mut bag = original.clone();
         let mut copper = 17;
@@ -72,6 +74,7 @@ fn exact_copper_boundaries_and_overflow_refusals_leave_items_available() {
             LootRewards {
                 money: reward,
                 item: Some(stack(DAGGER, 1)),
+                quest_item: None,
             },
         )
         .unwrap();
@@ -85,6 +88,7 @@ fn exact_copper_boundaries_and_overflow_refusals_leave_items_available() {
         let rewards = LootRewards {
             money: reward,
             item: Some(stack(FUR, 2)),
+            quest_item: None,
         };
         for _ in 0..3 {
             assert_eq!(
@@ -108,6 +112,7 @@ fn money_only_empty_and_item_only_rewards_have_explicit_bounded_behavior() {
         LootRewards {
             money: 1,
             item: None,
+            quest_item: None,
         },
     )
     .unwrap();
@@ -117,6 +122,7 @@ fn money_only_empty_and_item_only_rewards_have_explicit_bounded_behavior() {
         LootRewards {
             money: 0,
             item: None,
+            quest_item: None,
         },
     )
     .unwrap();
@@ -129,7 +135,8 @@ fn money_only_empty_and_item_only_rewards_have_explicit_bounded_behavior() {
             &mut copper,
             LootRewards {
                 money: 1,
-                item: Some(stack(DAGGER, 1))
+                item: Some(stack(DAGGER, 1)),
+                quest_item: None,
             }
         ),
         Err(LootSettlementError::MoneyOverflow)
@@ -143,6 +150,7 @@ fn money_only_empty_and_item_only_rewards_have_explicit_bounded_behavior() {
         LootRewards {
             money: 0,
             item: Some(stack(FUR, 20)),
+            quest_item: None,
         },
     )
     .unwrap();
@@ -163,6 +171,7 @@ fn standalone_settlement_has_no_live_zone_or_content_effect() {
         LootRewards {
             money: 35,
             item: Some(stack(DAGGER, 1)),
+            quest_item: None,
         },
     )
     .unwrap();

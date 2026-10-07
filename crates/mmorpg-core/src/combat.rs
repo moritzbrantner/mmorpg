@@ -92,6 +92,8 @@ impl ZoneSimulation {
             | PlayerIntent::BuyItem { .. }
             | PlayerIntent::SellItem { .. }
             | PlayerIntent::Loot(_)
+            | PlayerIntent::AcceptQuest { .. }
+            | PlayerIntent::CompleteQuest { .. }
                 if !alive =>
             {
                 Some((ErrorCode::YouAreDead, None))
@@ -155,6 +157,21 @@ impl ZoneSimulation {
                 player_id,
                 npc,
                 crate::vendor::Trade::Sell { bag_slot, quantity },
+            )?,
+            PlayerIntent::AcceptQuest { npc, quest } => self.quest_request(
+                player_id,
+                crate::quest::QuestRequest::Accept { npc, quest },
+                now,
+            )?,
+            PlayerIntent::CompleteQuest { npc, quest, choice } => self.quest_request(
+                player_id,
+                crate::quest::QuestRequest::Complete { npc, quest, choice },
+                now,
+            )?,
+            PlayerIntent::AbandonQuest { quest } => self.quest_request(
+                player_id,
+                crate::quest::QuestRequest::Abandon { quest },
+                now,
             )?,
             PlayerIntent::SelectTarget(None) => {
                 self.update_player(player_id, |player| {
@@ -594,13 +611,35 @@ impl ZoneSimulation {
             .ok_or_else(|| ZoneError::new("creature physics body is missing"))?;
         let position = body.position();
         let (spawn, _) = Self::creature_content(&self.content, creature_id)?;
-        let loot = self.content.loot_table(spawn.template).map(|table| {
+        let template = spawn.template;
+        let mut loot = self.content.loot_table(template).map(|table| {
             table.roll(crate::LootRolls {
                 money: (self.loot_rng.next_u64() >> 32) as u32,
                 outcome: (self.loot_rng.next_u64() >> 32) as u32,
                 quantity: (self.loot_rng.next_u64() >> 32) as u32,
             })
         });
+        // A quest item drops for the tapper only while a quest needs it; it
+        // draws nothing from the loot stream.
+        let tapper = self
+            .creatures
+            .get(&creature_id)
+            .and_then(|creature| creature.tapped_by);
+        let quest_item = tapper
+            .and_then(|player_id| self.players.get(&player_id))
+            .and_then(|player| {
+                crate::quest::quest_drop(&self.content, &player.quests, &player.inventory, template)
+            });
+        if let Some(item) = quest_item {
+            let stack = crate::ItemStack::new(item, 1)
+                .map_err(|_| ZoneError::new("quest item is not in the catalog"))?;
+            let rewards = loot.get_or_insert(crate::LootRewards {
+                money: 0,
+                item: None,
+                quest_item: None,
+            });
+            rewards.quest_item = Some(stack);
+        }
         let Some(creature) = self.creatures.get_mut(&creature_id) else {
             return Ok(());
         };
@@ -631,8 +670,11 @@ impl ZoneSimulation {
         for player_id in recipients {
             self.notify(player_id, died);
         }
-        if let Some(player_id) = tapper {
-            self.reward_kill_experience(player_id, level, [position.x, position.y, position.z])?;
+        if let Some(player_id) = tapper
+            && self.kill_credit_eligible(player_id, [position.x, position.y, position.z])?
+        {
+            self.reward_kill_experience(player_id, level)?;
+            self.credit_kill(player_id, template, now);
         }
         Ok(())
     }

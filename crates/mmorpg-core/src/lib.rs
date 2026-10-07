@@ -26,6 +26,7 @@ mod inventory;
 mod loot;
 mod progression;
 mod projection;
+mod quest;
 pub mod rng;
 mod snapshot;
 pub mod trig;
@@ -80,6 +81,12 @@ pub use projection::{
     AuraView, CastView, EntityFlags, EntitySnapshot, ResourceView, TargetDetail, ViewerState,
     ZoneSnapshot,
 };
+pub use quest::{
+    MAX_QUEST_EXPERIENCE, MAX_QUEST_LOG, MAX_QUEST_NAME_BYTES, MAX_QUEST_NPCS,
+    MAX_QUEST_OBJECTIVES, MAX_QUEST_TEXT_BYTES, MAX_QUESTS, MAX_REWARD_CHOICES, NpcMarker,
+    QUEST_CATALOG_REVISION, QUEST_REACH_UNITS, Quest, QuestContentError, QuestEntry, QuestId,
+    QuestLog, QuestMarker, QuestObjective, QuestRewards, QuestSheet,
+};
 pub use snapshot::{
     CanonicalCreatureAbilities, CanonicalCreatureSnapshot, CanonicalPlayerAbilities,
     CanonicalPlayerCombat, CanonicalPlayerSnapshot, CanonicalZoneSnapshot, CreatureAi,
@@ -100,7 +107,7 @@ pub type PlayerId = u32;
 pub const TICK_HZ: u16 = 30;
 pub const MAX_PLAYERS_PER_ZONE: usize = 512;
 /// Core schema of canonical and player-visible snapshots.
-pub const SNAPSHOT_SCHEMA_VERSION: u16 = 13;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 14;
 /// Inclusive XZ radius of player-scoped relevance (45 m).
 pub const INTEREST_RADIUS_UNITS: i32 = 4_500;
 /// Deterministic relevance cap of one player projection: the viewer, its
@@ -203,6 +210,22 @@ pub enum ZoneCommand {
     },
     /// Performs one emote for the players in `/say` range (#69).
     Emote(Emote),
+    /// Accepts `quest` from its giver `npc` (#25).
+    AcceptQuest {
+        npc: NpcId,
+        quest: u8,
+    },
+    /// Turns `quest` in at its ender `npc`, taking reward `choice` (an
+    /// index into the quest's choices; 0 when it offers none).
+    CompleteQuest {
+        npc: NpcId,
+        quest: u8,
+        choice: u8,
+    },
+    /// Drops `quest` from the log; its progress is lost.
+    AbandonQuest {
+        quest: u8,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

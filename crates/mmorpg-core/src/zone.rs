@@ -116,6 +116,10 @@ pub(crate) struct PlayerState {
     pub(crate) chat_ready_at: u64,
     /// Chat lines heard this tick.
     pub(crate) chat: Vec<crate::ChatLine>,
+    /// Active and turned-in quests.
+    pub(crate) quests: crate::QuestLog,
+    /// The tick the quest log last changed; its sheet is sent then.
+    pub(crate) quests_changed_at: u64,
 }
 
 impl PlayerState {
@@ -152,6 +156,8 @@ impl PlayerState {
             auras: Vec::new(),
             chat_ready_at: 0,
             chat: Vec::new(),
+            quests: crate::QuestLog::default(),
+            quests_changed_at: tick,
         }
     }
 
@@ -478,6 +484,13 @@ impl ZoneSimulation {
             }),
             ZoneCommand::Chat { channel, text } => Some(PlayerIntent::Chat(channel.message(text))),
             ZoneCommand::Emote(emote) => Some(PlayerIntent::Chat(crate::ChatMessage::Emote(emote))),
+            ZoneCommand::AcceptQuest { npc, quest } => {
+                Some(PlayerIntent::AcceptQuest { npc, quest })
+            }
+            ZoneCommand::CompleteQuest { npc, quest, choice } => {
+                Some(PlayerIntent::CompleteQuest { npc, quest, choice })
+            }
+            ZoneCommand::AbandonQuest { quest } => Some(PlayerIntent::AbandonQuest { quest }),
         };
         if let Some(intent) = intent {
             if player.intents.len() < MAX_PENDING_INTENTS {
@@ -508,7 +521,9 @@ impl ZoneSimulation {
     ///    after movement, damage, threat, deaths, tapping;
     /// 7. health and class-resource regeneration, corpse despawns and
     ///    respawns in ID order;
-    /// 8. the tick counter.
+    /// 8. talk and explore quest objectives of living players in player-ID
+    ///    order;
+    /// 9. the tick counter.
     ///
     /// Events of the previous tick are cleared first, so each player's queue
     /// holds exactly this tick's events until the next tick starts.
@@ -535,6 +550,7 @@ impl ZoneSimulation {
         self.advance_auras(now)?;
         self.resolve_combat(now)?;
         self.update_timers(now)?;
+        self.advance_quest_objectives(now)?;
         self.tick = now;
         Ok(())
     }

@@ -137,7 +137,8 @@ fn death_rolls_once_on_a_separate_stream_and_recovery_preserves_the_rewards() {
         view.rewards,
         LootRewards {
             money: 2,
-            item: Some(ItemStack::new(FUR, 1).unwrap())
+            item: Some(ItemStack::new(FUR, 1).unwrap()),
+            quest_item: None,
         }
     );
     assert_eq!(state.creatures[0].loot, Some(view.rewards));
