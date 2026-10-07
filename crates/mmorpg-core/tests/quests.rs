@@ -243,6 +243,9 @@ fn marker(npc: NpcId, marker: QuestMarker) -> NpcMarker {
     NpcMarker { npc, marker }
 }
 
+/// A named edit that makes the test quests invalid.
+type Mutation = fn(&mut Vec<Quest>);
+
 #[test]
 fn content_validates_quests_and_binds_them_to_its_identity() {
     let base = base_content();
@@ -269,7 +272,7 @@ fn content_validates_quests_and_binds_them_to_its_identity() {
         bound.fingerprint()
     );
 
-    let mutations: Vec<(&str, fn(&mut Vec<Quest>))> = vec![
+    let mutations: Vec<(&str, Mutation)> = vec![
         ("no quests", |quests| quests.clear()),
         ("id 0", |quests| quests[0].id = QuestId::new(0)),
         ("id 33", |quests| quests[0].id = QuestId::new(33)),
