@@ -4,8 +4,10 @@ The immutable rule catalog has revision 2 and one table per hosted creature
 template. Each roll yields u32 copper and at most one ordinary item stack.
 Revision 2 makes the starter gear of [item catalog revision 2](INVENTORY.md#equipment)
 obtainable from humanoids; wolves, boars, rats and lurkers keep revision 1's
-tables, and every money range is unchanged. Prices and quest-conditional drops
-are separate integrations.
+tables, and every money range is unchanged. Prices are a separate integration.
+Quest items are not table outcomes: a quest's collect objective drops one unit
+beside the rolled rewards while the corpse's tapper still needs it, without a
+loot-stream draw ([STARTER_ZONE.md](STARTER_ZONE.md#quests)).
 
 | Template ID | Creature | Inclusive copper range | Weighted ordinary item outcome |
 | --- | --- | --- | --- |
