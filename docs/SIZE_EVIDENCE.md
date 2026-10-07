@@ -107,3 +107,17 @@ canonical trade intent records add 103,068 archive bytes, above the unchanged
 retains the observation. These are raw archive/metadata bytes, not a linked-code
 or runtime cost estimate. The explicit capture passed the unchanged 3 MiB
 absolute limit, and the ordinary gate never updated evidence.
+
+The #25 quests/schema-v14 change advances the reviewed baseline to
+**3,128,164 bytes**, SHA-256
+`8d3dc2c716586bc395f02223bc79edf107e75e8239c94675f5e7f04e78f0f4a2`. Its complete
+build identity matches the previous baseline (2,834,026 bytes). Quest content
+validation and fingerprinting, the quest log, accept/abandon/turn-in settlement,
+kill/collect/talk/explore progress, markers, quest drops and the nine authored
+Greyhaven quests with their dialog text add 294,138 archive bytes, above the
+unchanged 65,536-byte growth gate;
+[the failed comparison](../.performance/observations/quests-v14-growth.json)
+retains the observation. These are raw archive/metadata bytes, not a linked-code
+or runtime cost estimate. The explicit capture passed the unchanged 3 MiB
+absolute limit with 17,564 bytes to spare, so the next content step will need a
+deliberate budget decision.
