@@ -120,7 +120,29 @@ Step 8a implemented the kit in core (abilities 1–12 of the catalog; lurkers ca
 - Objective kinds: kill N of template, collect N items (drops), talk to NPC, explore area.
 - The quest log holds at most 10 entries. Accept and turn-in happen at NPCs, and prerequisites form chains. Rewards: XP, money, one item choice.
 - NPC markers are per-player: `!` available, `?` complete, grey `?` in progress.
-- Chain (draft): *Trouble in the Woods* (kill 6 wolves) → *Pelts for the Tanner* (collect 5 wolf pelts) → *The Missing Farmhand* (talk at Millbrook) → *Marauders in the Fields* (kill 8 marauders) → *Scout the Lake* (explore) → *Mirefin Menace* (kill 6 lurkers) → *Into Redbrand Hollow* (kill 10 bandits) → *Garrick Redbrand* (named boss) → *Return to Greyhaven*.
+- Chain: *Trouble in the Woods* (kill 6 wolves) → *Pelts for the Tanner* (collect 5 wolf pelts) → *The Missing Farmhand* (talk at Millbrook) → *Marauders in the Fields* (kill 8 marauders) → *Scout the Lake* (explore) → *Mirefin Menace* (kill 6 lurkers) → *Into Redbrand Hollow* (kill 10 bandits) → *Garrick Redbrand* (named boss) → *Return to Greyhaven*.
+
+*Quests landed* (#25): `mmorpg_core::quest` holds the rules and `greyhaven_vale::quests` the chain (quest catalog 1, content revision 9). Each quest names a giver and an ender among the hub's quest givers (Marshal Elden Greywatch, Tanner Hilda Brook, Farmer Osric Mill), at most one prerequisite (an earlier quest), one to three objectives, XP, copper and up to four reward items to choose one from. `AcceptQuest`, `CompleteQuest` and `AbandonQuest` (command v9) resolve in tick step 1; tick step 8 completes talk and explore objectives; kills credit the corpse's tapper on the same terms as kill XP. The log, the turned-in mask and the markers travel in the self sheet (snapshot v14, see [PROTOCOL.md](PROTOCOL.md#quests-snapshot-v14-and-command-v9)), and the canonical snapshot carries each log so recovery continues it exactly. Recorded decisions:
+
+| Quest | Giver → ender | Objectives | Rewards |
+| --- | --- | --- | --- |
+| 1 Trouble in the Woods | Marshal → Marshal | 6 Timber Wolves | 150 XP, 10 copper |
+| 2 Pelts for the Tanner | Tanner → Tanner | 5 Wolf Pelts from Timber Wolves | 200 XP, 15 copper, Worn Boots or Cloth Hood |
+| 3 The Missing Farmhand | Tanner → Farmer | talk to Farmer Osric Mill | 100 XP, 5 copper |
+| 4 Marauders in the Fields | Farmer → Farmer | 8 Field Marauders | 300 XP, 25 copper, Padded Trousers or Pine Buckler |
+| 5 Scout the Lake | Farmer → Marshal | explore Stillwater Lake | 150 XP, 10 copper |
+| 6 Mirefin Menace | Marshal → Marshal | 6 Mirefin Lurkers | 350 XP, 30 copper |
+| 7 Into Redbrand Hollow | Marshal → Marshal | explore Redbrand Hollow, 10 Redbrand Bandits | 450 XP, 40 copper, Padded Tunic or Militia Shortsword |
+| 8 Garrick Redbrand | Marshal → Marshal | Garrick Redbrand | 600 XP, 60 copper |
+| 9 Return to Greyhaven | Marshal → Tanner | talk to Tanner Hilda Brook | 300 XP, 100 copper, Apprentice Wand, Militia Shortsword or Pine Buckler |
+
+- Accepting and turning in need a living player within 5 m (XZ) of the NPC's feet, like the vendor; abandoning works anywhere, also while dead, and loses the quest's progress.
+- A talk objective completes when the player stands within that same 5 m of the NPC; an explore objective when the player stands inside the named area. Both are checked for living players after movement each tick.
+- Collect progress is the bag's count of the item (capped at the required count), so selling, moving or a full bag change it, and the turn-in consumes exactly the required units. The quest item (Wolf Pelt, item catalog 3) drops as one unit on the corpse of the source template's creature when its tapper still needs more at the moment it dies, beside the ordinary loot and without drawing from the loot stream; it is claimed with the corpse. A quest item stays in the bag after an abandon.
+- Markers rank `?` (a quest ending here is complete) over `!` (a quest starting here is available) over grey `?` (a quest ending here is active). They are computed from the log, the bag and the content for every quest giver and ender and sent with the sheet, not per entity record.
+- Quest XP uses the same level-up path as kill XP; the reward choice is one unit of the chosen item and must be valid when choices exist (0 otherwise). A turn-in that cannot place the item or credit the copper changes nothing.
+- Garrick Redbrand is the chain's boss as authored in revision 3; his own ability kit is not part of this step.
+- Browser: Talk (T) opens the dialog of the selected or nearest projected quest NPC (quests offered, ready with the reward choice, or in progress), Quests (L) the log with Abandon, the HUD tracks every active objective, and `!`/`?` markers float over NPCs on screen. The native client decodes the quest sheet but does not present it yet.
 
 ### Player-scoped projection
 
@@ -153,7 +175,7 @@ Each step is one issue and one PR, validated by the full gate from `AGENTS.md`. 
 7. **Units, combat and creature AI** (#22), in two pull requests. *7a*: `ZoneContent` with content identity, creature spawn tables and NPC posts, creatures, targeting, auto-attack, death/respawn, regen, threat/leash/assist, zone RNG, events, snapshot v5, the WASM content catalog and minimal browser and native presentation (placeholder bodies, Tab/F/R, text status). *7b*: browser target frame, nameplates, combat text (the target frame and combat text landed with step 8b).
 8. **Classes and abilities** (#23): resources, GCD, cooldowns, casts, auras, the ability kit above; action bar and cast bars. *8a landed* (#112): the kit in core, snapshot v9/command v4, keys 1–4 and text resource/cast status in both clients; *8b landed*: the browser action bar, player and target frames, aura icons, cast bars, combat text and spell visuals.
 9. **Progression, loot, inventory, equipment, vendor** (#24): XP/levels, loot windows, bags, character pane, vendor NPC placement and window. *Equipment core landed* (#66): slots, item stats and the self sheet, snapshot v10/command v5; the browser character pane is #129. *Vendor landed* (#67): Innkeeper Bram Tolliver's stock, atomic buy/sell, snapshot v11/command v6 and the browser vendor window. *Acceptance landed* (#24): `crates/mmorpg-core/tests/starter_acceptance.rs` scripts a new Warden through ordinary commands on the hosted content: it hunts grain rats to level 2, then Field Marauders until one drops gear, claims it and equips it.
-10. **Quests** (#25): quest-giver NPC placement, definitions, NPC dialog, log, tracker, markers, chain and boss.
+10. **Quests** (#25): quest-giver NPC placement, definitions, NPC dialog, log, tracker, markers, chain and boss. *Landed* (see [Quests](#quests)): the nine-quest chain in content revision 9, snapshot v14/command v9, the browser dialog, log, tracker and markers; `crates/mmorpg-core/tests/quest_chain.rs` scripts a new Warden through the first three quests on the hosted content.
 11. **Starter-zone workload evidence** (#26): deterministic multi-player combat workload with work counters and a snapshot-byte ratchet (BENCH-016).
 12. **World presentation** (#27): terrain relief, instanced vegetation, water, sky, fog and day/night (3d-lab renderer extensions), procedural animated character and creature models, spell effects, selection circles, minimap. *Part A landed for the browser* with the pinned renderer (see [Presentation](#presentation)); part B adds richer effects than the step-8b spell visuals and the 3d-lab #82/#84 features. *Browser creature and NPC models landed* (see Creature and NPC models above); native unit models landed in step 13 (#121).
 13. **Native client parity** (#28): units (*native low-poly unit models landed*, #121), health bars, targeting, abilities, orbit camera and HUD over the same projections.

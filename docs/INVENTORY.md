@@ -142,6 +142,9 @@ offers of distinct catalog items with nonzero prices; the offer index is its
 wire identity. `ZoneContent::with_vendors` binds stocks to NPCs with the
 `Vendor` role and enters the vendor revision, every sale value and every offer
 into content identity without changing the AI/combat seed (Greyhaven revision 8).
+Vendor catalog revision 2 adds the Wolf Pelt quest item (item catalog revision
+3, stacks to 10), which sells for 1 copper and is not stocked; quests drop it
+and consume it at their turn-in ([STARTER_ZONE.md](STARTER_ZONE.md#quests)).
 
 `BuyItem { npc, offer, quantity }` and `SellItem { npc, bag_slot, quantity }` are
 sequenced intents resolved in tick step 1 like `MoveItem`:

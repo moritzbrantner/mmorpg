@@ -6,7 +6,7 @@ The scaling unit is an authoritative zone. Each zone runs one deterministic phys
 
 | Capability | Implemented | Remaining production work |
 | --- | --- | --- |
-| Zone simulation | Fixed ticks in a documented order, ordered players, capacity, sequenced facing-relative movement and grounded jumps; units, targeting, auto-attack, death, corpses, respawn, release spirit, regeneration and tapping; deterministic creature AI (wander, aggro, assist, chase, leash, evade); separate AI/combat and loot RNGs; XP/levels, bags, money and atomic corpse claims; bounded per-player events; interest projections | Classes and abilities, equipment, vendors, quests |
+| Zone simulation | Fixed ticks in a documented order, ordered players, capacity, sequenced facing-relative movement and grounded jumps; units, targeting, auto-attack, death, corpses, respawn, release spirit, regeneration and tapping; deterministic creature AI (wander, aggro, assist, chase, leash, evade); separate AI/combat and loot RNGs; XP/levels, bags, money and atomic corpse claims; class abilities, equipment and vendors; quests (bounded logs, kill/collect/talk/explore objectives, rewards with an item choice, per-player NPC markers) and the Greyhaven chain; bounded per-player events; interest projections | Garrick Redbrand's own ability kit |
 | Physics | Pinned engine, shared Greyhaven Vale content (colliders, spawn plaza, areas, road corridors, creature and NPC bodies), validated static and unit content, gravity, velocity-preserving recovery | Authored content pipeline, character controller, pathfinding around obstacles, workload limits |
 | Ownership | Expiring fenced directory; heartbeat-gated host placement; `FencedZoneRuntime` checks every reference-runtime operation | Durable linearizable directory, host-incarnation/local permits, lease-aware network serving |
 | Handoff | Idempotent metadata, renewal-safe identity, one active transfer per entity | Frozen state export, staged import, activation/retirement, crash reconciliation |
@@ -256,7 +256,7 @@ without simulating moves or grants. A bounded source advance returns each decode
 projection in tick order (at most four local catch-up ticks), so intermediate
 sheets and refusals reach the bag cache before drawing the newest frame. Catalog format v2 adds item catalog revision
 and ID/name/stack-limit records; v1 exports fail closed at that presentation
-boundary. Catalog format v3 adds classes and abilities, v4 each item's equipment slot and stats, and v5 sale values and vendor stock; the browser now requires v5. Current gameplay uses snapshot/command v13/v8 and content revision 8; only content identity changes scenery metadata.
+boundary. Catalog format v3 adds classes and abilities, v4 each item's equipment slot and stats, v5 sale values and vendor stock, and v6 quests; the browser now requires v6. Current gameplay uses snapshot/command v14/v9 and content revision 9; only content identity changes scenery metadata. Quest rules, the log and markers are core's (`mmorpg_core::quest`, tick steps 1 and 8); see [STARTER_ZONE.md](STARTER_ZONE.md#quests).
 
 Corpse reward authority lives in `mmorpg-core`'s `corpse_loot` module. Immutable
 bound content owns reward rules; a domain-separated canonical RNG generates
