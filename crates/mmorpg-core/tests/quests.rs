@@ -304,6 +304,21 @@ fn content_validates_quests_and_binds_them_to_its_identity() {
                 source: BOAR,
             };
         }),
+        ("repeated collect item", |quests| {
+            quests[1].objectives.push(QuestObjective::Collect {
+                item: PELT,
+                count: 2,
+                source: BOAR,
+            });
+        }),
+        // Pelts stack to 10 in 16 bag slots.
+        ("collect beyond a full bag", |quests| {
+            quests[1].objectives[0] = QuestObjective::Collect {
+                item: PELT,
+                count: 161,
+                source: BOAR,
+            };
+        }),
         ("unknown area", |quests| {
             quests[3].objectives[0] = QuestObjective::Explore {
                 area: AreaId::new(2),
@@ -321,6 +336,16 @@ fn content_validates_quests_and_binds_them_to_its_identity() {
         mutate(&mut invalid);
         assert!(base.clone().with_quests(1, invalid).is_err(), "{name}");
     }
+    let mut full_bag = quests();
+    full_bag[1].objectives[0] = QuestObjective::Collect {
+        item: PELT,
+        count: 160,
+        source: BOAR,
+    };
+    assert!(
+        base.clone().with_quests(1, full_bag).is_ok(),
+        "a full bag of pelts"
+    );
     assert!(base.with_quests(0, quests()).is_err(), "revision zero");
 
     let hosted = greyhaven_vale::content();

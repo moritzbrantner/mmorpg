@@ -182,11 +182,18 @@ export class QuestState {
         const active = (sheet: QuestSheet, quest: number) => sheet.entries.some((entry) => entry.quest === quest);
         const accepted = after.entries.find((entry) => !active(before, entry.quest));
         const dropped = before.entries.find((entry) => !active(after, entry.quest) && !questCompleted(after.completed, entry.quest));
+        // The quest-completed event is cosmetic and may be lost; the sheet's completion bit is not.
+        const completed = before.entries.find(
+          (entry) => !questCompleted(before.completed, entry.quest) && questCompleted(after.completed, entry.quest),
+        );
         if (accepted) {
           this.#feedback = `Accepted: ${name(accepted.quest)}.`;
           this.#pending = null;
         } else if (dropped) {
           this.#feedback = `Abandoned: ${name(dropped.quest)}.`;
+          this.#pending = null;
+        } else if (completed) {
+          this.#feedback = `${name(completed.quest)} completed.`;
           this.#pending = null;
         }
       }

@@ -156,6 +156,8 @@ export class QuestPanel {
       this.closeLog();
       return;
     }
+    // The log takes the dialog's place, as the dialog takes the log's.
+    this.closeDialog(false);
     this.#elements.log.hidden = false;
     this.#elements.logToggle.setAttribute("aria-expanded", "true");
     this.#logKey = "";

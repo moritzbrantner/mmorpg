@@ -123,4 +123,16 @@ describe("quest state", () => {
     state.reset();
     expect([state.sheet, state.feedback]).toEqual([null, ""]);
   });
+
+  test("a turn-in whose completion event was lost is answered by the next sheet", () => {
+    const state = new QuestState();
+    const near = { npc: MARSHAL, name: "Marshal", inReach: true };
+    const bag = Array(16).fill(null);
+    state.update(projection(1, { inventory: bag, quests: sheet({ entries: [{ quest: 1, progress: [6, 0, 0] }] }) }), catalog);
+    expect(state.complete(near, 1, 0)).not.toBeNull();
+    expect(state.feedback).toBe("Turning in…");
+    // The projection carrying `quest-completed` never arrived; a periodic sheet did.
+    state.update(projection(3, { inventory: bag, quests: sheet({ completed: 1 }) }), catalog);
+    expect(state.feedback).toBe("Trouble in the Woods completed.");
+  });
 });

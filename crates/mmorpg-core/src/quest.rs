@@ -12,8 +12,9 @@ use std::{error::Error, fmt};
 
 use crate::events::push_event;
 use crate::{
-    AreaId, CreatureTemplateId, EntityRef, ErrorCode, Inventory, InventoryError, ItemId, NpcId,
-    NpcRole, PlayerId, ZoneContent, ZoneError, ZoneEvent, ZoneSimulation, item_template,
+    AreaId, CreatureTemplateId, EntityRef, ErrorCode, INVENTORY_SLOTS, Inventory, InventoryError,
+    ItemId, NpcId, NpcRole, PlayerId, ZoneContent, ZoneError, ZoneEvent, ZoneSimulation,
+    item_template,
 };
 
 /// Revision of the quest rules and the hosted Greyhaven chain.
@@ -200,7 +201,7 @@ pub(crate) fn validate_quests(
         if quest.objectives.is_empty() || quest.objectives.len() > MAX_QUEST_OBJECTIVES {
             return Err(QuestContentError::InvalidObjective);
         }
-        for objective in &quest.objectives {
+        for (index, objective) in quest.objectives.iter().enumerate() {
             let valid = match *objective {
                 QuestObjective::Kill { template, count } => {
                     count > 0 && content.creature_template(template).is_some()
@@ -210,8 +211,18 @@ pub(crate) fn validate_quests(
                     count,
                     source,
                 } => {
+                    // Progress is the bag's count of the item, so one item backs one
+                    // objective, and the count must fit in a full bag of its stacks.
+                    let repeated = quest.objectives[..index].iter().any(|earlier| {
+                        matches!(*earlier, QuestObjective::Collect { item: other, .. } if other == item)
+                    });
                     count > 0
-                        && item_template(item).is_some_and(|item| item.slot.is_none())
+                        && !repeated
+                        && item_template(item).is_some_and(|template| {
+                            template.slot.is_none()
+                                && usize::from(count)
+                                    <= usize::from(template.max_stack) * INVENTORY_SLOTS
+                        })
                         && content.creature_template(source).is_some()
                 }
                 QuestObjective::Talk { npc } => content.npc(npc).is_some(),
