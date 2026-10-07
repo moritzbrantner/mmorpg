@@ -126,6 +126,9 @@ export function trackerLines(sheet: QuestSheet, catalog: ContentCatalog): string
   ]);
 }
 
+/** Ticks (3 s at 30 Hz) after which an unanswered quest request stops blocking new ones. */
+const PENDING_TICKS = 90n;
+
 const REFUSALS: Partial<Record<ErrorCode, string>> = {
   "invalid-quest": "That quest is not available here.",
   "quest-log-full": "Your quest log is full. Abandon a quest first.",
@@ -147,11 +150,17 @@ export class QuestState {
   #sheet: QuestSheet | null = null;
   #dead = false;
   #feedback = "";
-  /** The NPC the latest request addressed (`null` for an abandon), until an answer arrives. */
-  #pending: { npc: number | null } | null = null;
+  /**
+   * The NPC the latest request addressed (`null` for an abandon) and the tick it was sent at,
+   * until an answer arrives. Further requests wait, so repeated clicks cannot fill the zone's
+   * intent queue; an unanswered request lapses after `PENDING_TICKS`.
+   */
+  #pending: { npc: number | null; tick: bigint } | null = null;
 
   get sheet(): QuestSheet | null { return this.#sheet; }
   get feedback(): string { return this.#feedback; }
+  /** Whether a request still waits for its answer. */
+  get busy(): boolean { return this.#pending !== null; }
 
   reset(): void {
     this.#tick = -1n;
@@ -173,6 +182,9 @@ export class QuestState {
     }
     this.#tick = snapshot.tick;
     this.#dead = snapshot.viewer.dead;
+    if (this.#pending !== null && snapshot.tick - this.#pending.tick > PENDING_TICKS) {
+      this.#pending = null;
+    }
     if (snapshot.quests !== null) {
       const before = this.#sheet;
       const after = snapshot.quests;
@@ -222,7 +234,7 @@ export class QuestState {
   }
 
   accept(npc: QuestNpc | null, quest: number): WorldCommand | null {
-    if (!npc || !npc.inReach || this.#dead) {
+    if (!npc || !npc.inReach || this.#dead || this.busy) {
       return null;
     }
     this.#request(npc.npc, "Accepting…");
@@ -230,7 +242,7 @@ export class QuestState {
   }
 
   complete(npc: QuestNpc | null, quest: number, choice: number): WorldCommand | null {
-    if (!npc || !npc.inReach || this.#dead) {
+    if (!npc || !npc.inReach || this.#dead || this.busy) {
       return null;
     }
     this.#request(npc.npc, "Turning in…");
@@ -238,7 +250,7 @@ export class QuestState {
   }
 
   abandon(quest: number): WorldCommand | null {
-    if (!this.#sheet?.entries.some((entry) => entry.quest === quest)) {
+    if (this.busy || !this.#sheet?.entries.some((entry) => entry.quest === quest)) {
       return null;
     }
     this.#request(null, "Abandoning…");
@@ -246,7 +258,7 @@ export class QuestState {
   }
 
   #request(npc: number | null, feedback: string): void {
-    this.#pending = { npc };
+    this.#pending = { npc, tick: this.#tick };
     this.#feedback = feedback;
   }
 }

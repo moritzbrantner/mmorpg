@@ -7,8 +7,9 @@ or below that item's stack limit. `ItemStack::new` validates imported stacks;
 private fields and a fixed-length slot array prevent unchecked or truncated
 imports. Queries expose immutable slots.
 
-The immutable catalog revision is 2 (revision 1 held only items 1 and 2, with
-the same names and limits):
+The immutable catalog revision is 3 (revision 1 held only items 1 and 2, and
+revision 2 items 1–9, with the same names and limits; revision 3 adds the Wolf
+Pelt quest item):
 
 | Stable item ID | Name | Stack limit | Equipment slot | Sta | Str | Agi | Int |
 | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: |
@@ -21,6 +22,7 @@ the same names and limits):
 | 7 | Padded Tunic | 1 | chest | 2 | 0 | 0 | 0 |
 | 8 | Padded Trousers | 1 | legs | 1 | 0 | 0 | 0 |
 | 9 | Worn Boots | 1 | feet | 1 | 0 | 2 | 0 |
+| 10 | Wolf Pelt | 10 | — | | | | |
 
 Zero and unknown IDs fail closed. IDs are never reassigned. Names, limits,
 slots and stats are content, not client preferences. Equippable items stack to

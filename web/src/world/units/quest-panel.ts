@@ -84,6 +84,8 @@ export class QuestPanel {
   #catalog: ContentCatalog | null = null;
   #npc: QuestNpc | null = null;
   #dialogKey = "";
+  /** What had focus when the dialog opened, to return to on close if still visible. */
+  #dialogReturn: HTMLElement | null = null;
   #logKey = "";
 
   constructor(elements: QuestElements, send: (command: WorldCommand) => void, onOpen: () => void) {
@@ -137,6 +139,8 @@ export class QuestPanel {
       this.closeDialog();
       return;
     }
+    const active = document.activeElement;
+    this.#dialogReturn = active instanceof HTMLElement && active !== document.body ? active : null;
     this.#onOpen();
     // The dialog takes the log's place; its Talk button opens it.
     this.closeLog(false);
@@ -148,7 +152,19 @@ export class QuestPanel {
   }
 
   closeDialog(returnFocus = true): boolean {
-    return this.#close(this.#elements.dialog, this.#elements.dialogToggle, returnFocus);
+    const restore = this.#dialogReturn;
+    this.#dialogReturn = null;
+    // The Talk button lives in the log, which the dialog hid; return focus to the control that
+    // opened the dialog when it is still shown, and otherwise release it to the world.
+    const closed = this.#close(this.#elements.dialog, this.#elements.dialogToggle, false);
+    if (closed && returnFocus) {
+      if (restore?.isConnected && restore.getClientRects().length > 0) {
+        restore.focus();
+      } else if (this.#elements.dialog.contains(document.activeElement)) {
+        (document.activeElement as HTMLElement).blur();
+      }
+    }
+    return closed;
   }
 
   toggleLog(): void {
@@ -259,7 +275,7 @@ export class QuestPanel {
     setText(this.#elements.dialogStatus, !npc.inReach
       ? `Move within 5 m of ${npc.name} to talk.`
       : empty ? `${npc.name} has nothing for you right now.` : "");
-    const key = JSON.stringify([npc, view.offered.map((quest) => quest.id),
+    const key = JSON.stringify([npc, this.#state.busy, view.offered.map((quest) => quest.id),
       view.ready.map((entry) => entry.quest.id), view.inProgress.map((entry) => [entry.quest.id, entry.objectives.map((o) => o.current)])]);
     if (key === this.#dialogKey) {
       return;
@@ -267,11 +283,13 @@ export class QuestPanel {
     this.#dialogKey = key;
     const cards: HTMLElement[] = [];
     for (const quest of view.offered) {
-      cards.push(this.#card(quest, null, catalog, "Accept", () => this.#state.accept(this.#npc, quest.id), npc.inReach));
+      cards.push(this.#card(quest, null, catalog, "Accept", () => this.#state.accept(this.#npc, quest.id),
+        npc.inReach && !this.#state.busy));
     }
     for (const entry of view.ready) {
       const card = this.#card(entry.quest, entry, catalog, "Complete quest", () =>
-        this.#state.complete(this.#npc, entry.quest.id, this.#choices.get(entry.quest.id) ?? 0), npc.inReach);
+        this.#state.complete(this.#npc, entry.quest.id, this.#choices.get(entry.quest.id) ?? 0),
+        npc.inReach && !this.#state.busy);
       card.dataset.state = "complete";
       cards.push(card);
     }
@@ -285,7 +303,7 @@ export class QuestPanel {
 
   #renderLog(catalog: ContentCatalog, sheet: NonNullable<QuestState["sheet"]>): void {
     const views = questViews(sheet, catalog);
-    const key = JSON.stringify(views.map((view) => [view.quest.id, view.objectives.map((objective) => objective.current)]));
+    const key = JSON.stringify([this.#state.busy, views.map((view) => [view.quest.id, view.objectives.map((objective) => objective.current)])]);
     if (key === this.#logKey) {
       return;
     }
@@ -295,7 +313,7 @@ export class QuestPanel {
       return;
     }
     this.#elements.logQuests.replaceChildren(...views.map((view) =>
-      this.#card(view.quest, view, catalog, "Abandon", () => this.#state.abandon(view.quest.id), true)));
+      this.#card(view.quest, view, catalog, "Abandon", () => this.#state.abandon(view.quest.id), !this.#state.busy)));
   }
 
   /** One quest: name, text, objectives, rewards with any item choice, and an optional action. */

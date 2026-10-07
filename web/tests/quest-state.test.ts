@@ -97,6 +97,10 @@ describe("quest state", () => {
     expect(state.abandon(1)).toBeNull();
     expect(state.accept(near, 1)).toEqual({ kind: "accept-quest", npc: MARSHAL, quest: 1 });
     expect(state.feedback).toBe("Accepting…");
+    // A pending request blocks repeats until the zone answers.
+    expect(state.busy).toBe(true);
+    expect(state.accept(near, 1)).toBeNull();
+    expect(state.complete(near, 1, 0)).toBeNull();
     const refusal = (tick: number, event: ZoneEvent) => projection(tick, { events: [event] });
     // A refusal about another NPC does not answer it.
     state.update(refusal(1, { kind: "error", code: "invalid-quest", target: { kind: "npc", id: 3 } }), catalog);
@@ -134,5 +138,18 @@ describe("quest state", () => {
     // The projection carrying `quest-completed` never arrived; a periodic sheet did.
     state.update(projection(3, { inventory: bag, quests: sheet({ completed: 1 }) }), catalog);
     expect(state.feedback).toBe("Trouble in the Woods completed.");
+    expect(state.busy).toBe(false);
+  });
+
+  test("an unanswered request stops blocking after three seconds", () => {
+    const state = new QuestState();
+    const near = { npc: MARSHAL, name: "Marshal", inReach: true };
+    state.update(projection(10, { inventory: Array(16).fill(null), quests: sheet() }), catalog);
+    expect(state.accept(near, 1)).not.toBeNull();
+    state.update(projection(100), catalog);
+    expect(state.busy).toBe(true);
+    state.update(projection(101), catalog);
+    expect(state.busy).toBe(false);
+    expect(state.accept(near, 1)).not.toBeNull();
   });
 });
