@@ -122,6 +122,8 @@ fn initial_zone(fixture: Fixture) -> Result<ZoneSimulation, Box<dyn Error>> {
             combat: CanonicalPlayerCombat::default(),
             chat_ready_at: 0,
             chat: Vec::new(),
+            quests: mmorpg_core::QuestLog::default(),
+            quests_changed_at: 0,
         });
     }
     Ok(ZoneSimulation::from_snapshot(state, content)?)

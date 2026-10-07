@@ -580,8 +580,11 @@ async fn a_budget_packed_crowded_projection_reaches_a_client() {
         let mut previous_tick = None;
         for _ in 0..10 {
             let snapshot = session.receive_snapshot().await?;
-            // The self sheet: bag, equipment and stat totals.
-            let sheet_bytes = if snapshot.inventory.is_some() { 84 } else { 0 };
+            // The self sheet: bag, equipment and stat totals, then the quest
+            // part (mask, entry count, entries, marker count, markers).
+            let sheet_bytes = snapshot.quests.as_ref().map_or(0, |quests| {
+                84 + 4 + 1 + 4 * quests.entries.len() + 1 + 3 * quests.markers.len()
+            });
             let expected_entities =
                 (MAX_PLAYER_PROJECTION_BYTES - PLAYER_SNAPSHOT_FIXED_BYTES - sheet_bytes)
                     / ENTITY_RECORD_BYTES;
@@ -631,6 +634,7 @@ async fn fragmented_projection_reaches_the_native_client() {
         inventory_revision: 1,
         inventory: None,
         equipment: None,
+        quests: None,
         viewer: ViewerState {
             experience: 0,
             experience_to_next_level: 100,

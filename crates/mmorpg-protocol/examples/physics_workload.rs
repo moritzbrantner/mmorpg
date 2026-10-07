@@ -93,6 +93,8 @@ fn initial_zone(name: &str, count: usize) -> Result<ZoneSimulation, Box<dyn Erro
             combat: CanonicalPlayerCombat::default(),
             chat_ready_at: 0,
             chat: Vec::new(),
+            quests: mmorpg_core::QuestLog::default(),
+            quests_changed_at: 0,
         });
     }
     Ok(ZoneSimulation::from_snapshot(

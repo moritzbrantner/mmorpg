@@ -35,6 +35,9 @@ const UNEQUIP_ITEM_INTENT: u8 = 11;
 const BUY_ITEM_INTENT: u8 = 12;
 const SELL_ITEM_INTENT: u8 = 13;
 const CHAT_INTENT: u8 = 14;
+const ACCEPT_QUEST_INTENT: u8 = 15;
+const COMPLETE_QUEST_INTENT: u8 = 16;
+const ABANDON_QUEST_INTENT: u8 = 17;
 const ALIVE: u8 = 1;
 const CORPSE: u8 = 2;
 const DESPAWNED: u8 = 3;
@@ -176,6 +179,22 @@ fn encode_player(
                 crate::chat::encode_message(payload, message);
                 continue;
             }
+            PlayerIntent::AcceptQuest { npc, quest } => {
+                payload.push(ACCEPT_QUEST_INTENT);
+                payload.extend_from_slice(&npc.get().to_be_bytes());
+                payload.push(quest);
+                continue;
+            }
+            PlayerIntent::CompleteQuest { npc, quest, choice } => {
+                payload.push(COMPLETE_QUEST_INTENT);
+                payload.extend_from_slice(&npc.get().to_be_bytes());
+                payload.extend_from_slice(&[quest, choice]);
+                continue;
+            }
+            PlayerIntent::AbandonQuest { quest } => {
+                payload.extend_from_slice(&[ABANDON_QUEST_INTENT, quest]);
+                continue;
+            }
         };
         payload.push(code);
         encode_entity_ref(payload, target);
@@ -223,7 +242,7 @@ fn encode_player(
     for line in &player.chat {
         crate::chat::encode_line(payload, line);
     }
-    Ok(())
+    crate::quest::encode_log(payload, &player.quests, player.quests_changed_at)
 }
 
 /// 17 bytes: ability (0 for none), elapsed ticks, target reference, point
@@ -457,6 +476,26 @@ fn decode_player(
             intents.push(PlayerIntent::ChooseClass { class, sex });
             continue;
         }
+        if code == ACCEPT_QUEST_INTENT || code == COMPLETE_QUEST_INTENT {
+            let npc = mmorpg_core::NpcId::new(u32::from_be_bytes(take(payload, offset)?));
+            let quest = read_u8(payload, offset)?;
+            intents.push(if code == ACCEPT_QUEST_INTENT {
+                PlayerIntent::AcceptQuest { npc, quest }
+            } else {
+                PlayerIntent::CompleteQuest {
+                    npc,
+                    quest,
+                    choice: read_u8(payload, offset)?,
+                }
+            });
+            continue;
+        }
+        if code == ABANDON_QUEST_INTENT {
+            intents.push(PlayerIntent::AbandonQuest {
+                quest: read_u8(payload, offset)?,
+            });
+            continue;
+        }
         if code == CHAT_INTENT {
             intents.push(PlayerIntent::Chat(crate::chat::decode_message(
                 payload, offset,
@@ -569,7 +608,10 @@ fn decode_player(
     for _ in 0..chat_count {
         chat.push(crate::chat::decode_line(payload, offset)?);
     }
+    let (quests, quests_changed_at) = crate::quest::decode_log(payload, offset)?;
     Ok(CanonicalPlayerSnapshot {
+        quests,
+        quests_changed_at,
         chat_ready_at,
         chat,
         player_id,
@@ -794,6 +836,8 @@ mod tests {
                         ],
                         abilities: CanonicalPlayerAbilities::default(),
                     },
+                    quests: mmorpg_core::QuestLog::default(),
+                    quests_changed_at: 0,
                 },
                 CanonicalPlayerSnapshot {
                     chat_ready_at: 0,
@@ -813,6 +857,8 @@ mod tests {
                     inventory_changed_at: 0,
                     equipment: mmorpg_core::Equipment::default(),
                     combat: CanonicalPlayerCombat::default(),
+                    quests: mmorpg_core::QuestLog::default(),
+                    quests_changed_at: 0,
                 },
             ],
             creatures: vec![
@@ -912,6 +958,9 @@ mod tests {
             state.creatures[1].loot = Some(mmorpg_core::LootRewards {
                 money: u32::MAX,
                 item,
+                // A quest item rides along whenever the test adds an item.
+                quest_item: item
+                    .map(|_| mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(10), 1).unwrap()),
             });
             let encoded = encode_canonical_snapshot(&state).unwrap();
             assert_eq!(decode_canonical_snapshot(&encoded).unwrap(), state);
@@ -1112,6 +1161,77 @@ mod tests {
     }
 
     #[test]
+    fn quest_logs_and_pending_quest_intents_round_trip_with_exact_records() {
+        let mut snapshot = snapshot();
+        let npc = mmorpg_core::NpcId::new(0x0102_0304);
+        snapshot.players[0].combat.intents = vec![
+            PlayerIntent::AcceptQuest { npc, quest: 2 },
+            PlayerIntent::CompleteQuest {
+                npc: mmorpg_core::NpcId::new(1),
+                quest: 9,
+                choice: u8::MAX,
+            },
+            PlayerIntent::AbandonQuest { quest: 0 },
+        ];
+        snapshot.players[0].quests = mmorpg_core::QuestLog {
+            entries: vec![
+                mmorpg_core::QuestEntry {
+                    quest: mmorpg_core::QuestId::new(3),
+                    progress: [1, 0, 0],
+                },
+                mmorpg_core::QuestEntry {
+                    quest: mmorpg_core::QuestId::new(32),
+                    progress: [u8::MAX, 2, 7],
+                },
+            ],
+            completed: 0b11,
+        };
+        snapshot.players[0].quests_changed_at = 0x0a0b;
+        let encoded = encode_canonical_snapshot(&snapshot).unwrap();
+        assert_eq!(decode_canonical_snapshot(&encoded).unwrap(), snapshot);
+        let intents = [
+            &[ACCEPT_QUEST_INTENT, 1, 2, 3, 4, 2][..],
+            &[COMPLETE_QUEST_INTENT, 0, 0, 0, 1, 9, 0xff],
+            &[ABANDON_QUEST_INTENT, 0],
+        ]
+        .concat();
+        let log = [
+            &0x0a0b_u64.to_be_bytes()[..],
+            &[0, 0, 0, 0b11, 2, 3, 1, 0, 0, 32, 0xff, 2, 7],
+        ]
+        .concat();
+        for records in [intents, log] {
+            assert!(
+                encoded
+                    .windows(records.len())
+                    .any(|window| window == records.as_slice()),
+                "{records:?}"
+            );
+        }
+        for length in 0..encoded.len() {
+            assert!(decode_canonical_snapshot(&encoded[..length]).is_err());
+        }
+        let at = encoded
+            .windows(13)
+            .position(|window| window == [0, 0, 0, 0b11, 2, 3, 1, 0, 0, 32, 0xff, 2, 7])
+            .unwrap();
+        for (offset, value, message) in [
+            (at + 4, 11, "quest log exceeds its capacity"),
+            (at + 5, 0, "quest id is out of range"),
+            (at + 9, 33, "quest id is out of range"),
+            (at + 9, 3, "quest log entries are not ordered"),
+        ] {
+            let mut invalid = encoded.clone();
+            invalid[offset] = value;
+            assert_eq!(
+                decode_canonical_snapshot(&invalid).unwrap_err().to_string(),
+                message,
+                "byte {offset} = {value}"
+            );
+        }
+    }
+
+    #[test]
     fn canonical_decoding_rejects_malformed_unit_state() {
         let encoded = encode_canonical_snapshot(&snapshot()).unwrap();
         // Player 7's auto-attack flag follows its target reference.
@@ -1121,7 +1241,7 @@ mod tests {
         let mut cases = vec![
             (auto_attack, 2, "boolean field must be 0 or 1"),
             (intents, 17, "player has too many pending intents"),
-            (intents + 1, 15, "malformed pending intent"),
+            (intents + 1, 18, "malformed pending intent"),
         ];
         // The third intent (StartAttack) carries no target.
         cases.push((intents + 1 + 2 * 6 + 1, 2, "malformed pending intent"));
@@ -1178,7 +1298,7 @@ mod tests {
         let equipment = 16 + 32 + 2 + 39 + 80;
         assert_eq!(encoded[equipment..equipment + 2], [0, 3]);
         for (slot, item, message) in [
-            (0, 10, "unknown item"),
+            (0, 11, "unknown item"),
             (1, 2, "item cannot be equipped there"),
             (2, 1, "item cannot be equipped there"),
         ] {

@@ -55,12 +55,16 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             // cooldown or aura records follow. v10 adds the four-byte melee
             // damage range per projection and 20 equipment and stat bytes per
             // self sheet. v12 adds the one-byte chat count per projection;
-            // these fixtures never chat. Physics/work fences remain unchanged.
+            // these fixtures never chat. v14 adds a nine-byte quest part
+            // per self sheet (mask, counts and the Marshal's `!` marker;
+            // these fixtures never accept a quest) and the one-byte quest
+            // item presence per corpse sheet. Physics/work fences remain
+            // unchanged.
             let ceiling = if index == 6 {
                 ceiling
                     + (22 + 23 + 4 + 1) * fixture.players * TICKS
-                    + (64 + 20) * fixture.players * (TICKS / 10)
-                    + 21 * report.loot_sheets
+                    + (64 + 20 + 9) * fixture.players * (TICKS / 10)
+                    + 22 * report.loot_sheets
             } else {
                 ceiling
             };
@@ -79,8 +83,10 @@ fn greyhaven_combat_work_and_wire_budgets_are_ratcheted() {
             assert_eq!(report.ai_evaluations, 59 * TICKS);
         }
         if fixture.crowded {
-            // Whole 21-byte records after the 105-byte fixed part fill 1,074 bytes.
-            assert_eq!(report.max_projection_bytes, 1_074);
+            // Whole 14-byte events and 21-byte records beside the 105-byte
+            // fixed part, a 93-byte self sheet and an 18-byte copper-only
+            // corpse sheet fill 1,077 bytes.
+            assert_eq!(report.max_projection_bytes, 1_077);
             assert!(report.candidates_tested > 1_000_000);
         }
     }

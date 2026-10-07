@@ -35,9 +35,11 @@ pub const CAST_RECORD_BYTES: usize = 1 + 1 + 2 + 2;
 const SELF_ABILITY_BYTES: usize = 1 + 1 + 2 + 2 + 2 + CAST_RECORD_BYTES + 2 + 2 + 1 + 1;
 /// Four `u16` stat totals: stamina, strength, agility and intellect.
 const STAT_TOTALS_BYTES: usize = 4 * 2;
-/// The self sheet: bag, equipment and stat totals.
+/// The self sheet's fixed part: bag, equipment and stat totals; the quest
+/// part follows (at most [`crate::quest::MAX_QUEST_SHEET_BYTES`]).
 pub const SELF_SHEET_BYTES: usize =
     INVENTORY_RECORD_BYTES + EQUIPMENT_RECORD_BYTES + STAT_TOTALS_BYTES;
+const MAX_SELF_SHEET_BYTES: usize = SELF_SHEET_BYTES + crate::quest::MAX_QUEST_SHEET_BYTES;
 /// The target's own target, the target's cast and its aura count.
 const TARGET_BYTES: usize = ENTITY_REF_BYTES + CAST_RECORD_BYTES + 1;
 /// Every section's fixed part: header, self, target, inventory revision
@@ -64,14 +66,15 @@ pub const MAX_WIRE_ENTITIES: usize =
 const MAX_EVENT_SECTION_BYTES: usize = MAX_EVENTS_PER_PLAYER * EVENT_RECORD_BYTES;
 const MAX_CHAT_SECTION_BYTES: usize = MAX_CHAT_PER_TICK * crate::chat::MAX_CHAT_RECORD_BYTES;
 
-// With every list full, both sheets, a full event section and four
-// 80-byte chat lines, the viewer and its target always fit:
-// 105 + 108 + 21 + 84 + 16 × 14 + 4 × 86 + 2 × 21 = 928 ≤ 1,077 bytes.
+// With every list full, both sheets (a full quest log and eight markers),
+// a full event section and four 80-byte chat lines, the viewer and its
+// target always fit:
+// 105 + 108 + 26 + 154 + 16 × 14 + 4 × 86 + 2 × 21 = 1,003 ≤ 1,077 bytes.
 const _: () = assert!(
     PLAYER_SNAPSHOT_FIXED_BYTES
         + MAX_ABILITY_LIST_BYTES
         + crate::loot::MAX_LOOT_SHEET_BYTES
-        + SELF_SHEET_BYTES
+        + MAX_SELF_SHEET_BYTES
         + MAX_EVENT_SECTION_BYTES
         + MAX_CHAT_SECTION_BYTES
         + 2 * ENTITY_RECORD_BYTES
@@ -167,8 +170,8 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
     encode_auras(&mut payload, &snapshot.target_detail.auras)?;
 
     payload.extend_from_slice(&snapshot.inventory_revision.to_be_bytes());
-    match (&snapshot.inventory, &snapshot.equipment) {
-        (Some(inventory), Some(equipment)) => {
+    match (&snapshot.inventory, &snapshot.equipment, &snapshot.quests) {
+        (Some(inventory), Some(equipment), Some(quests)) => {
             payload.push(1);
             encode_inventory(&mut payload, inventory);
             encode_equipment(&mut payload, equipment);
@@ -181,11 +184,12 @@ pub fn pack_snapshot(snapshot: &ZoneSnapshot) -> Result<PackedSnapshot, Protocol
             ] {
                 payload.extend_from_slice(&total.to_be_bytes());
             }
+            crate::quest::encode_sheet(&mut payload, quests)?;
         }
-        (None, None) => payload.push(0),
+        (None, None, None) => payload.push(0),
         _ => {
             return Err(ProtocolError::new(
-                "the self sheet needs both the bag and the equipment",
+                "the self sheet needs the bag, the equipment and the quests",
             ));
         }
     }
@@ -462,7 +466,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
     if inventory_revision == 0 {
         return Err(ProtocolError::new("inventory revision must be nonzero"));
     }
-    let (inventory, equipment) = if read_bool(payload, &mut offset)? {
+    let (inventory, equipment, quests) = if read_bool(payload, &mut offset)? {
         let inventory = decode_inventory(payload, &mut offset)?;
         let equipment = decode_equipment(payload, &mut offset)?;
         let totals = equipment.totals();
@@ -480,9 +484,10 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         {
             return Err(ProtocolError::new("stat totals do not match the equipment"));
         }
-        (Some(inventory), Some(equipment))
+        let quests = crate::quest::decode_sheet(payload, &mut offset)?;
+        (Some(inventory), Some(equipment), Some(quests))
     } else {
-        (None, None)
+        (None, None, None)
     };
     let loot = if read_bool(payload, &mut offset)? {
         Some(mmorpg_core::LootView {
@@ -540,7 +545,9 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         if dead
             || target != Some(mmorpg_core::EntityRef::Creature(view.claim.creature))
             || view.claim.died_at > tick
-            || (view.rewards.money == 0 && view.rewards.item.is_none())
+            || (view.rewards.money == 0
+                && view.rewards.item.is_none()
+                && view.rewards.quest_item.is_none())
             || corpse.is_none_or(|entity| {
                 !entity.flags.dead
                     || !entity.flags.lootable
@@ -586,6 +593,7 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
         events,
         chat,
         entities,
+        quests,
     })
 }
 
@@ -693,6 +701,7 @@ mod tests {
         slots[1] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(2), 1).unwrap());
         slots[15] = Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 20).unwrap());
         ZoneSnapshot {
+            quests: Some(quest_sheet()),
             loot: None,
             content_revision: 4,
             acknowledged_sequence: 81,
@@ -836,6 +845,14 @@ mod tests {
                     target: VIEWER,
                     amount: 5,
                 },
+                ZoneEvent::QuestProgress {
+                    quest: mmorpg_core::QuestId::new(2),
+                    objective: 0,
+                    count: 3,
+                },
+                ZoneEvent::QuestCompleted {
+                    quest: mmorpg_core::QuestId::new(1),
+                },
             ],
             chat: vec![
                 mmorpg_core::ChatLine {
@@ -916,6 +933,47 @@ mod tests {
         }
     }
 
+    /// Quest 1 turned in, quest 2 at 3 of its first objective, `!` over
+    /// NPC 1 and grey `?` over NPC 2: 4 + 1 + 4 + 1 + 2 × 3 bytes.
+    fn quest_sheet() -> mmorpg_core::QuestSheet {
+        mmorpg_core::QuestSheet {
+            completed: 0b1,
+            entries: vec![mmorpg_core::QuestEntry {
+                quest: mmorpg_core::QuestId::new(2),
+                progress: [3, 0, 0],
+            }],
+            markers: vec![
+                mmorpg_core::NpcMarker {
+                    npc: NpcId::new(1),
+                    marker: mmorpg_core::QuestMarker::Available,
+                },
+                mmorpg_core::NpcMarker {
+                    npc: NpcId::new(2),
+                    marker: mmorpg_core::QuestMarker::InProgress,
+                },
+            ],
+        }
+    }
+
+    /// Ten active quests with full progress bytes and eight markers.
+    fn full_quest_sheet() -> mmorpg_core::QuestSheet {
+        mmorpg_core::QuestSheet {
+            completed: 0xffff_fc00,
+            entries: (1..=10)
+                .map(|quest| mmorpg_core::QuestEntry {
+                    quest: mmorpg_core::QuestId::new(quest),
+                    progress: [u8::MAX; 3],
+                })
+                .collect(),
+            markers: (1..=8)
+                .map(|npc| mmorpg_core::NpcMarker {
+                    npc: NpcId::new(npc * 1_000),
+                    marker: mmorpg_core::QuestMarker::Complete,
+                })
+                .collect(),
+        }
+    }
+
     /// Equipment holding each catalog item in its own slot.
     fn equipment(items: &[u16]) -> mmorpg_core::Equipment {
         let mut slots = [None; mmorpg_core::EQUIPMENT_SLOTS];
@@ -937,7 +995,7 @@ mod tests {
 
     fn fixture_bytes() -> Vec<u8> {
         hex(include_str!(
-            "../../../fixtures/protocol/player-snapshot-v13.hex"
+            "../../../fixtures/protocol/player-snapshot-v14.hex"
         ))
     }
 
@@ -951,10 +1009,13 @@ mod tests {
     const TARGET_CAST: usize = TARGET_OF_TARGET + ENTITY_REF_BYTES;
     const TARGET_AURAS: usize = TARGET_CAST + CAST_RECORD_BYTES;
     const INVENTORY: usize = TARGET_AURAS + 1 + AURA_RECORD_BYTES;
-    const EVENT_COUNT: usize = 14;
+    const EVENT_COUNT: usize = 16;
     const EQUIPMENT: usize = INVENTORY + 9 + INVENTORY_RECORD_BYTES;
     const STATS: usize = EQUIPMENT + EQUIPMENT_RECORD_BYTES;
-    const EVENTS: usize = INVENTORY + 8 + 1 + SELF_SHEET_BYTES + 1;
+    const QUESTS: usize = STATS + 8;
+    /// The fixture's quest sheet.
+    const QUEST_BYTES: usize = 4 + 1 + 4 + 1 + 2 * 3;
+    const EVENTS: usize = INVENTORY + 8 + 1 + SELF_SHEET_BYTES + QUEST_BYTES + 1;
     /// The fixture's chat records: 6 + 16 and 6 + 8 bytes, then a 6-byte emote.
     const CHAT_BYTES: usize = 22 + 14 + 6;
     const CHAT: usize = EVENTS + 1 + EVENT_COUNT * EVENT_RECORD_BYTES;
@@ -981,6 +1042,7 @@ mod tests {
             PLAYER_SNAPSHOT_FIXED_BYTES
                 + LIST_BYTES
                 + SELF_SHEET_BYTES
+                + QUEST_BYTES
                 + EVENT_COUNT * EVENT_RECORD_BYTES
                 + CHAT_BYTES
                 + 4 * ENTITY_RECORD_BYTES
@@ -992,11 +1054,16 @@ mod tests {
         );
         assert_eq!(decode_snapshot(&encoded).unwrap(), snapshot);
         assert_eq!(encoded[CLASS], 5, "Arcanist, female");
-        assert_eq!(encoded[EVENTS], 14);
+        assert_eq!(encoded[EVENTS], 16);
+        assert_eq!(
+            encoded[QUESTS..EVENTS - 1],
+            [0, 0, 0, 1, 1, 2, 3, 0, 0, 2, 0, 1, 1, 0, 2, 2],
+            "the quest sheet ends the self sheet"
+        );
         assert_eq!(encoded[FIRST_ENTITY], 1, "the viewer's record leads");
         // The previous version's fixture is rejected, never reinterpreted.
         let legacy = hex(include_str!(
-            "../../../fixtures/protocol/player-snapshot-v12.hex"
+            "../../../fixtures/protocol/player-snapshot-v13.hex"
         ));
         assert_eq!(
             decode_snapshot(&legacy).unwrap_err().to_string(),
@@ -1027,12 +1094,15 @@ mod tests {
             rewards: mmorpg_core::LootRewards {
                 money: 2,
                 item: Some(mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(1), 2).unwrap()),
+                quest_item: Some(
+                    mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(10), 1).unwrap(),
+                ),
             },
         });
         // A dead target has no target detail.
         snapshot.target_detail = TargetDetail::default();
         let expected = hex(include_str!(
-            "../../../fixtures/protocol/player-loot-v13.hex"
+            "../../../fixtures/protocol/player-loot-v14.hex"
         ));
         if std::env::var_os("MMORPG_PRINT_FIXTURE").is_some() {
             let bytes = encode_snapshot(&snapshot).unwrap();
@@ -1059,6 +1129,9 @@ mod tests {
             (presence + 17, 2),
             (presence + 19, 9),
             (presence + 21, 0),
+            (presence + 22, 2),
+            (presence + 24, 11),
+            (presence + 26, 0),
         ] {
             let mut invalid = bytes.clone();
             invalid[offset] = value;
@@ -1071,6 +1144,7 @@ mod tests {
                     invalid.loot.as_mut().unwrap().rewards = mmorpg_core::LootRewards {
                         money: 0,
                         item: None,
+                        quest_item: None,
                     }
                 }
                 1 => invalid.loot.as_mut().unwrap().claim.died_at = snapshot.tick + 1,
@@ -1087,6 +1161,7 @@ mod tests {
             include_str!("../../../fixtures/protocol/player-loot-v10.hex"),
             include_str!("../../../fixtures/protocol/player-loot-v11.hex"),
             include_str!("../../../fixtures/protocol/player-loot-v12.hex"),
+            include_str!("../../../fixtures/protocol/player-loot-v13.hex"),
         ] {
             assert!(decode_snapshot(&hex(legacy)).is_err());
         }
@@ -1133,7 +1208,7 @@ mod tests {
             (TARGET_CAST, 0, "cast state is inconsistent"),
             (TARGET_AURAS + 4, 0, "aura record is inconsistent"),
             (EVENTS, 17, "snapshot exceeds the per-player event capacity"),
-            (EVENTS + 1, 14, "unknown event kind"),
+            (EVENTS + 1, 16, "unknown event kind"),
             (EVENTS + 2, 2, "event flags are invalid"),
             (
                 EVENTS + 1 + 2 * EVENT_RECORD_BYTES + 1,
@@ -1157,7 +1232,7 @@ mod tests {
             ),
             (
                 EVENTS + 1 + 7 * EVENT_RECORD_BYTES,
-                14,
+                16,
                 "unknown event kind",
             ),
             (
@@ -1170,6 +1245,36 @@ mod tests {
                 1,
                 "event flags are invalid",
             ),
+            (
+                EVENTS + 1 + 14 * EVENT_RECORD_BYTES + 1,
+                0,
+                "quest id is out of range",
+            ),
+            (
+                EVENTS + 1 + 14 * EVENT_RECORD_BYTES + 12,
+                3,
+                "malformed event record",
+            ),
+            (
+                EVENTS + 1 + 14 * EVENT_RECORD_BYTES + 13,
+                0,
+                "malformed event record",
+            ),
+            (
+                EVENTS + 1 + 15 * EVENT_RECORD_BYTES + 1,
+                33,
+                "quest id is out of range",
+            ),
+            (
+                EVENTS + 1 + 15 * EVENT_RECORD_BYTES + 2,
+                1,
+                "malformed event record",
+            ),
+            (QUESTS + 4, 11, "quest log exceeds its capacity"),
+            (QUESTS + 5, 1, "an active quest is also turned in"),
+            (QUESTS + 9, 9, "quest sheet has too many markers"),
+            (QUESTS + 12, 4, "unknown quest marker"),
+            (QUESTS + 14, 1, "quest markers are not ordered"),
             (FIRST_ENTITY, 0, "unknown entity kind"),
             (FIRST_ENTITY, 4, "unknown entity kind"),
             (wolf_record + 19, 101, "health percent exceeds 100"),
@@ -1250,7 +1355,7 @@ mod tests {
         assert!(decode_snapshot(&invalid_flag).is_err());
         for (slot, item, quantity) in [
             (0, 0_u16, 3_u16),
-            (0, 10, 1),
+            (0, 11, 1),
             (0, 1, 0),
             (0, 1, 21),
             (1, 2, 2),
@@ -1265,9 +1370,10 @@ mod tests {
         omitted.inventory = None;
         assert_eq!(
             encode_snapshot(&omitted).unwrap_err().to_string(),
-            "the self sheet needs both the bag and the equipment"
+            "the self sheet needs the bag, the equipment and the quests"
         );
         omitted.equipment = None;
+        omitted.quests = None;
         assert_eq!(
             decode_snapshot(&encode_snapshot(&omitted).unwrap()).unwrap(),
             omitted
@@ -1280,7 +1386,7 @@ mod tests {
         assert_eq!(encoded[EQUIPMENT..EQUIPMENT + 2], [0, 4], "the wand");
         // Slot 0 holds the wand; slot 1 (off hand) is empty.
         for (offset, item, message) in [
-            (EQUIPMENT, 10_u16, "unknown item"),
+            (EQUIPMENT, 11_u16, "unknown item"),
             (EQUIPMENT, 1, "item cannot be equipped there"),
             (EQUIPMENT + 2, 6, "item cannot be equipped there"),
         ] {
@@ -1424,6 +1530,7 @@ mod tests {
             target_detail: TargetDetail::default(),
             events: vec![event; MAX_EVENTS_PER_PLAYER],
             entities,
+            quests: None,
         };
         let packed = pack_snapshot(&snapshot).unwrap();
         // (1,077 − 105 − 16 × 14) / 21 = 35 records fit beside a full event section.
@@ -1466,25 +1573,28 @@ mod tests {
             with_sheet.inventory_revision = u64::MAX;
             with_sheet.inventory = Some(full_bag.clone());
             with_sheet.equipment = Some(full_kit);
+            with_sheet.quests = Some(full_quest_sheet());
             with_sheet.events = vec![event; events];
             let packed = pack_snapshot(&with_sheet).unwrap();
             maximum_bytes = maximum_bytes.max(packed.payload.len());
             let decoded = decode_snapshot(&packed.payload).unwrap();
             assert_eq!(decoded.inventory, with_sheet.inventory);
             assert_eq!(decoded.equipment, with_sheet.equipment);
+            assert_eq!(decoded.quests, with_sheet.quests);
             assert_eq!(decoded.inventory_revision, u64::MAX);
             assert_eq!(decoded.events, with_sheet.events);
             assert_eq!(decoded.entities[1].entity(), target);
             assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
-            // (1,077 − 105 − 84) / 21 = 42 and (1,077 − 105 − 84 − 224) / 21 = 31.
+            // With a full quest part the sheet is 84 + 70 = 154 bytes:
+            // (1,077 − 105 − 154) / 21 = 38 and (1,077 − 105 − 154 − 224) / 21 = 28.
             if events == 0 {
-                assert_eq!(packed.packed_entities, 42);
+                assert_eq!(packed.packed_entities, 38);
             }
             if events == 16 {
-                assert_eq!(packed.packed_entities, 31);
+                assert_eq!(packed.packed_entities, 28);
             }
         }
-        // Whole records only: 105 + 84 + 42 × 21 = 1,071 is the largest.
+        // Whole records only: 105 + 154 + 16 × 14 + 28 × 21 = 1,071 is the largest.
         assert_eq!(maximum_bytes, 1_071);
         // Four full chat lines still leave room for the viewer, its target and more.
         let mut chatty = quiet.clone();
@@ -1510,6 +1620,7 @@ mod tests {
                 let mut with_loot = quiet.clone();
                 with_loot.inventory = Some(full_bag.clone());
                 with_loot.equipment = Some(full_kit);
+                with_loot.quests = Some(full_quest_sheet());
                 with_loot.viewer.copper = u32::MAX;
                 with_loot.loot = Some(mmorpg_core::LootView {
                     claim: mmorpg_core::LootClaim {
@@ -1519,6 +1630,7 @@ mod tests {
                     rewards: mmorpg_core::LootRewards {
                         money: u32::MAX,
                         item,
+                        quest_item: item,
                     },
                 });
                 with_loot.target_of_target = None;
@@ -1537,13 +1649,14 @@ mod tests {
                 assert_eq!(decoded.viewer.copper, u32::MAX);
                 assert_eq!(decoded.inventory, with_loot.inventory);
                 assert_eq!(decoded.entities[1].entity(), target);
+                // (1,077 − 105 − 154 − 26 − 224) / 21 = 27.
                 if events == 16 && item.is_some() {
-                    assert_eq!(packed.packed_entities, 30);
+                    assert_eq!(packed.packed_entities, 27);
                 }
             }
         }
-        // With a corpse sheet, whole records reach 1,074 bytes.
-        assert_eq!(maximum_bytes, 1_074);
+        // With a corpse sheet, whole records reach 1,076 bytes.
+        assert_eq!(maximum_bytes, 1_076);
         // Full cooldown and aura lists for the viewer and its target, both
         // sheets and every event still leave the viewer and its target.
         let aura = |ability: u8| {
@@ -1560,6 +1673,7 @@ mod tests {
         let mut loaded = quiet.clone();
         loaded.inventory = Some(full_bag);
         loaded.equipment = Some(full_kit);
+        loaded.quests = Some(full_quest_sheet());
         loaded.events = vec![event; MAX_EVENTS_PER_PLAYER];
         loaded.viewer.class = Some(ClassChoice {
             class: mmorpg_core::PlayerClass::Warden,
@@ -1595,8 +1709,8 @@ mod tests {
             auras: full_auras,
         };
         let packed = pack_snapshot(&loaded).unwrap();
-        // (1,077 − 105 − 108 − 84 − 16 × 14) / 21 = 26 records.
-        assert_eq!(packed.packed_entities, 26);
+        // (1,077 − 105 − 108 − 154 − 16 × 14) / 21 = 23 records.
+        assert_eq!(packed.packed_entities, 23);
         assert!(packed.payload.len() <= MAX_PLAYER_PROJECTION_BYTES);
         let decoded = decode_snapshot(&packed.payload).unwrap();
         assert_eq!(decoded.entities[1].entity(), target);
