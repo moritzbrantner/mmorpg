@@ -4,7 +4,7 @@ import { encodeCommand, type Axis, type WorldCommand } from "../src/command-wire
 import { entityKindFromCode } from "../src/entity-ref";
 import { EMOTES } from "../src/replication";
 
-const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v8.hex", import.meta.url), "utf8");
+const fixture = readFileSync(new URL("../../fixtures/protocol/commands-v9.hex", import.meta.url), "utf8");
 
 function axis(raw: string | undefined): Axis {
   const value = Number(raw);
@@ -59,6 +59,12 @@ function command(fields: readonly string[]): WorldCommand {
       return { kind: "sell-item", npc: Number(first), bagSlot: Number(second), quantity: Number(third) };
     case "emote":
       return { kind: "emote", emote: EMOTES[Number(first) - 1]! };
+    case "accept_quest":
+      return { kind: "accept-quest", npc: Number(first), quest: Number(second) };
+    case "complete_quest":
+      return { kind: "complete-quest", npc: Number(first), quest: Number(second), choice: Number(third) };
+    case "abandon_quest":
+      return { kind: "abandon-quest", quest: Number(first) };
     default:
       throw new Error(`Unknown fixture command ${name}`);
   }
@@ -82,8 +88,9 @@ describe("Rust/browser command contract", () => {
     const commands = fixtureCommands();
     const kinds = new Set(commands.map(({ command }) => command.kind));
     expect([...kinds].sort()).toEqual([
-      "buy-item", "cancel-cast", "chat", "choose-class", "emote", "equip-item", "jump", "loot", "move", "move-item", "release-spirit",
-      "select-target", "sell-item", "start-attack", "stop-attack", "unequip-item", "use-ability",
+      "abandon-quest", "accept-quest", "buy-item", "cancel-cast", "chat", "choose-class", "complete-quest", "emote", "equip-item", "jump",
+      "loot", "move", "move-item", "release-spirit", "select-target", "sell-item", "start-attack", "stop-attack", "unequip-item",
+      "use-ability",
     ]);
     expect(commands.filter(({ command }) => command.kind === "move").length).toBeGreaterThanOrEqual(4);
     expect(commands.filter(({ command }) => command.kind === "select-target").length).toBe(4);
@@ -112,6 +119,10 @@ describe("Rust/browser command contract", () => {
       { kind: "emote", emote: "dance" },
       { kind: "choose-class", classId: 0, sex: 256 },
       { kind: "choose-class", classId: 1.5, sex: 0 },
+      { kind: "accept-quest", npc: -1, quest: 1 },
+      { kind: "accept-quest", npc: 1, quest: 256 },
+      { kind: "complete-quest", npc: 1, quest: 1, choice: 256 },
+      { kind: "abandon-quest", quest: -1 },
       { kind: "equip-item", bagSlot: 256 },
       { kind: "equip-item", bagSlot: -1 },
       { kind: "unequip-item", equipmentSlot: 0.5 },

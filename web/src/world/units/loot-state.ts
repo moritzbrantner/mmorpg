@@ -106,7 +106,7 @@ export class LootState {
     }
     const joined = this.#identity;
     const pending: PendingClaim = {
-      sheet: { ...sheet, item: sheet.item ? { ...sheet.item } : null },
+      sheet: copySheet(sheet)!,
       tick: this.#tick, sequence: this.#sequence, sent: false,
     };
     this.#pending = pending;
@@ -135,7 +135,11 @@ function copySheet(sheet: LootView | null): LootView | null {
   if (sheet === null) {
     return null;
   }
-  return { ...sheet, item: sheet.item ? { ...sheet.item } : null };
+  return {
+    ...sheet,
+    item: sheet.item ? { ...sheet.item } : null,
+    questItem: sheet.questItem ? { ...sheet.questItem } : null,
+  };
 }
 
 const REFUSALS: Record<ErrorCode, string | null> = {
@@ -153,7 +157,7 @@ const REFUSALS: Record<ErrorCode, string | null> = {
   "out-of-range": "Move closer to the corpse.",
   "you-are-dead": "You cannot loot while dead.",
   "too-many-intents": "Too many actions. Try the claim again.",
-  // Ability, class, equipment and vendor refusals never answer a claim.
+  // Ability, class, equipment, vendor, chat and quest refusals never answer a claim.
   "no-class": null,
   "not-learned": null,
   "not-ready": null,
@@ -165,4 +169,7 @@ const REFUSALS: Record<ErrorCode, string | null> = {
   "invalid-vendor": null,
   "not-enough-money": null,
   "chat-throttled": null,
+  "invalid-quest": null,
+  "quest-log-full": null,
+  "quest-incomplete": null,
 };
