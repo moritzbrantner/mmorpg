@@ -58,6 +58,8 @@
 #bags-toggle,
 #character-toggle,
 #vendor-toggle,
+#quest-dialog-toggle,
+#quest-log-toggle,
 #return-to-characters {
   min-height: 2.75rem;
   padding: .5rem .7rem;
@@ -73,11 +75,15 @@
 #bags-toggle:hover,
 #character-toggle:hover,
 #vendor-toggle:hover,
+#quest-dialog-toggle:hover,
+#quest-log-toggle:hover,
 #return-to-characters:hover { background: #30453d; }
 .turntable-controls button:focus-visible,
 #bags-toggle:focus-visible,
 #character-toggle:focus-visible,
 #vendor-toggle:focus-visible,
+#quest-dialog-toggle:focus-visible,
+#quest-log-toggle:focus-visible,
 #return-to-characters:focus-visible,
 .appearance-storage summary:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
 .turntable-hint { text-align: center; font-size: .75rem; color: #c1cec6; line-height: 1.5; }
@@ -108,5 +114,5 @@
   .selection-sidebar { grid-template-columns: minmax(0, 1fr); }
   .equipment-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .world-toolbar { flex-direction: column; gap: .3rem; align-items: end; }
-  .world-toolbar :is(#bags-toggle, #character-toggle, #vendor-toggle, #return-to-characters) { min-height: 2.3rem; padding-block: .3rem; }
+  .world-toolbar :is(#bags-toggle, #character-toggle, #vendor-toggle, #quest-dialog-toggle, #quest-log-toggle, #return-to-characters) { min-height: 2.3rem; padding-block: .3rem; }
 }

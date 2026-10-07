@@ -228,8 +228,7 @@ class BrowserAcceptance(unittest.TestCase):
         writes = self.page.evaluate("window.__calls.writes")
         self.enter_world()
         expect(self.page.locator("#area-name")).to_have_text("Greyhaven Outpost")
-        expect(self.page.locator("#objective")).to_contain_text("Explore Greyhaven Vale")
-        expect(self.page.locator("#objective")).to_contain_text("Greyhaven Outpost")
+        expect(self.page.locator("#objective")).to_contain_text("No active quests")
         self.frames(6)
         spawn = self.world_view()
         self.page.screenshot(path=str(ARTIFACTS / "world-spawn.png"))
@@ -958,6 +957,85 @@ class BrowserAcceptance(unittest.TestCase):
         self.page.get_by_role("button", name="Close vendor").focus()
         self.page.keyboard.press("Escape")
         expect(panel).to_be_hidden()
+        expect(self.page.locator("#character-select")).to_be_hidden()
+
+    def test_quest_dialog_log_tracker_and_marker_at_the_marshal(self):
+        """Walk the quest-resume scenario's route to the Marshal, accept, track and abandon Trouble in the Woods."""
+        self.open("?debug")
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          window.__questAdvance = source.advance;
+          source.advance = () => [];
+        }""")
+        self.enter_world(ticking=False)
+        markers = self.page.locator("#quest-markers .quest-marker")
+        self.page.keyboard.press("t")
+        dialog = self.page.get_by_role("complementary", name="Quest dialog", exact=True)
+        expect(dialog).to_be_visible()
+        expect(self.page.locator("#quest-dialog-status")).to_contain_text("Move within 5 m of Marshal Elden Greywatch")
+        expect(self.page.get_by_role("button", name="Accept: Trouble in the Woods")).to_be_disabled()
+        self.page.evaluate("""() => {
+          const source = window.__valeDebug.worldSource();
+          const moves = new Map([[0,[1,49152]],[30,[0,49152]]]);
+          for (let tick = 0; tick < 32; tick++) {
+            const move = moves.get(tick);
+            if (move) source.sendCommand({kind:'move',forward:move[0],strafe:0,facing:move[1]});
+            window.__questAdvance.call(source, 1 / 30);
+          }
+          window.__questQueue = [];
+          source.advance = () => window.__questQueue.splice(0);
+          window.__questStep = ticks => {
+            for (let tick = 0; tick < ticks; tick++) window.__questQueue.push(...window.__questAdvance.call(source, 1 / 30));
+          };
+        }""")
+        def step(ticks=2):
+            self.frames(2)
+            self.page.evaluate("ticks => window.__questStep(ticks)", ticks)
+            self.frames(3)
+        # Look north-west over the character at the Marshal so his marker is on screen.
+        self.page.evaluate("window.__valeDebug.flyToPose([-21.8, 3.5, 17], [-22, 1.5, 9])")
+        step(10)
+        expect(self.page.get_by_role("heading", name="Marshal Elden Greywatch")).to_be_visible()
+        expect(markers.first).to_have_attribute("data-marker", "available")
+        expect(markers.first).to_have_text("!")
+        card = self.page.locator("#quest-dialog-quests .quest-card")
+        expect(card).to_have_count(1)
+        expect(card.first).to_contain_text("Timber Wolf slain: 0/6")
+        expect(card.first).to_contain_text("Rewards: 150 XP · 10 copper")
+        self.page.screenshot(path=str(ARTIFACTS / "quest-dialog.png"))
+        self.page.get_by_role("button", name="Accept: Trouble in the Woods").click()
+        step()
+        expect(self.page.locator("#quest-dialog-feedback")).to_have_text("Accepted: Trouble in the Woods.")
+        expect(self.page.locator("#objective")).to_contain_text("Timber Wolf slain: 0/6")
+        expect(markers.first).to_have_attribute("data-marker", "in-progress")
+        expect(card.first).to_have_attribute("data-state", "in-progress")
+        self.page.keyboard.press("Escape")
+        expect(dialog).to_be_hidden()
+        self.page.evaluate("window.__valeDebug.follow()")
+        self.page.locator("#world").focus()
+        self.page.keyboard.press("l")
+        log = self.page.get_by_role("complementary", name="Quest log", exact=True)
+        expect(log).to_be_visible()
+        expect(self.page.locator("#quest-log-quests .quest-card")).to_contain_text("Trouble in the Woods")
+        self.page.screenshot(path=str(ARTIFACTS / "quest-log.png"))
+        for width, height in [(390, 844), (640, 360)]:
+            self.page.set_viewport_size({"width": width, "height": height})
+            box = log.bounding_box()
+            self.assertIsNotNone(box)
+            self.assertGreaterEqual(box["x"], 0)
+            self.assertLessEqual(box["x"] + box["width"], width)
+            self.assertFalse(log.evaluate("p => p.scrollWidth > p.clientWidth"))
+            self.page.screenshot(path=str(ARTIFACTS / f"quest-log-{width}x{height}.png"))
+        self.page.set_viewport_size({"width": 1280, "height": 800})
+        self.page.get_by_role("button", name="Abandon: Trouble in the Woods").click()
+        step()
+        expect(self.page.locator("#quest-log-feedback")).to_have_text("Abandoned: Trouble in the Woods.")
+        expect(self.page.locator("#quest-log-quests")).to_contain_text("Your quest log is empty.")
+        expect(self.page.locator("#objective")).to_contain_text("No active quests")
+        expect(markers.first).to_have_attribute("data-marker", "available")
+        self.page.get_by_role("button", name="Close quest log").focus()
+        self.page.keyboard.press("Escape")
+        expect(log).to_be_hidden()
         expect(self.page.locator("#character-select")).to_be_hidden()
 
     def test_zone_chat_frame_says_yells_emotes_and_releases_held_movement(self):

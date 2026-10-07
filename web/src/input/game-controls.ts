@@ -31,6 +31,8 @@ export const GAME_ACTIONS = [
   "ui.toggleBags",
   "ui.toggleCharacter",
   "ui.toggleVendor",
+  "ui.talk",
+  "ui.toggleQuestLog",
   "ui.openChat",
   "ui.closePanel",
   "ui.leaveWorld",
@@ -43,7 +45,8 @@ export type GameAction = (typeof GAME_ACTIONS)[number];
 /**
  * - `selection` / `creation`: character selection, with creation as a modal layer;
  * - `world` < `gameplay` < `casting` < `panels`: while the viewer casts, Escape cancels the cast
- *   instead of leaving; bags, the character pane, loot or the vendor open as a non-blocking overlay that claims Escape first but
+ *   instead of leaving; bags, the character pane, loot, the vendor or the quest dialog and log open as a non-blocking overlay
+ *   that claims Escape first but
  *   lets movement fall through to gameplay.
  */
 export type GameContext = "selection" | "creation" | "world" | "gameplay" | "casting" | "panels";
@@ -129,6 +132,8 @@ export const GAME_ACTION_REGISTRY: ActionRegistry = {
     action("ui.toggleBags", "Toggle bags", "gameplay", [key("KeyB"), button(8)]),
     action("ui.toggleCharacter", "Toggle character pane", "gameplay", [key("KeyC")]),
     action("ui.toggleVendor", "Toggle vendor", "gameplay", [key("KeyV")]),
+    action("ui.talk", "Talk to a quest giver", "gameplay", [key("KeyT")]),
+    action("ui.toggleQuestLog", "Toggle quest log", "gameplay", [key("KeyL")]),
     action("ui.openChat", "Chat", "gameplay", [key("Enter"), key("NumpadEnter")]),
     action("ui.closePanel", "Close panel", "panels", [key("Escape"), button(1)]),
     action("ui.leaveWorld", "Return to characters", "gameplay", [key("Escape"), button(1)]),
