@@ -548,6 +548,11 @@ pub fn decode_snapshot(payload: &[u8]) -> Result<ZoneSnapshot, ProtocolError> {
             || (view.rewards.money == 0
                 && view.rewards.item.is_none()
                 && view.rewards.quest_item.is_none())
+            // A quest drop is always one unit.
+            || view
+                .rewards
+                .quest_item
+                .is_some_and(|stack| stack.quantity() != 1)
             || corpse.is_none_or(|entity| {
                 !entity.flags.dead
                     || !entity.flags.lootable
@@ -1132,6 +1137,8 @@ mod tests {
             (presence + 22, 2),
             (presence + 24, 11),
             (presence + 26, 0),
+            // A quest drop of two units.
+            (presence + 26, 2),
         ] {
             let mut invalid = bytes.clone();
             invalid[offset] = value;
@@ -1630,7 +1637,10 @@ mod tests {
                     rewards: mmorpg_core::LootRewards {
                         money: u32::MAX,
                         item,
-                        quest_item: item,
+                        // A quest drop is one unit; its record is as large as any stack's.
+                        quest_item: item.map(|_| {
+                            mmorpg_core::ItemStack::new(mmorpg_core::ItemId::new(10), 1).unwrap()
+                        }),
                     },
                 });
                 with_loot.target_of_target = None;

@@ -779,8 +779,9 @@ export function decodeSnapshot(payload: Uint8Array): ZoneSnapshot {
     };
     const item = stack();
     const questItem = stack();
+    // A quest drop is always one unit.
     if (dead || target?.kind !== "creature" || target.id !== creatureId || diedAt > tick
-      || (money === 0 && item === null && questItem === null)) {
+      || (money === 0 && item === null && questItem === null) || (questItem !== null && questItem.quantity !== 1)) {
       throw new Error("Inconsistent corpse loot sheet");
     }
     loot = { creatureId, diedAt, money, item, questItem };
