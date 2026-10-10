@@ -6,6 +6,7 @@ use mmorpg_client::{
     ClientError,
     camera::OrbitCamera,
     graphics::render_offscreen,
+    hud::CombatHud,
     network::ClientSession,
     presentation::Presentation,
     session::{NetworkUpdate, PlayerInput, run_session},
@@ -124,11 +125,12 @@ fn main() -> Result<(), ClientError> {
             let snapshot = session.reconnect().await?;
             let connection_epoch = session.connection_epoch();
             let tick = snapshot.tick;
+            let hud = CombatHud::from_projection(&snapshot).rects();
             let mut presentation = Presentation::new(player_id, scenery, content, Instant::now())?;
             presentation.push(snapshot, Instant::now())?;
             let now = Instant::now();
             let view = OrbitCamera::default().view(presentation.camera_target(now));
-            let colors = render_offscreen(&world, &presentation.scene(now, view), view).await?;
+            let colors = render_offscreen(&world, &presentation.scene(now, view), &hud, view).await?;
             println!("{{\"event\":\"client_smoke_passed\",\"player_id\":{player_id},\"class\":\"{}\",\"tick\":{tick},\"connection_epoch\":{connection_epoch},\"rendered_colors\":{colors}}}", class.name());
             Ok(())
         });

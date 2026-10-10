@@ -1,9 +1,14 @@
 use mmorpg_client::session::{NetworkUpdate, PlayerInput};
 use mmorpg_client::{
-    ClientError, camera::OrbitCamera, graphics::WindowRenderer, presentation::Presentation,
+    ClientError,
+    camera::OrbitCamera,
+    controls::{ControlAction, NativeControls},
+    graphics::WindowRenderer,
+    hud::{CombatHud, class_kit},
+    presentation::Presentation,
     world::WorldScene,
 };
-use mmorpg_core::{AbilityUser, PlayerClass, ZoneContent};
+use mmorpg_core::{PlayerClass, ZoneContent};
 use mmorpg_scenery::Scenery;
 use std::{
     collections::HashSet,
@@ -51,7 +56,9 @@ pub fn run(
         frames,
         rendered: 0,
         next_frame: Instant::now(),
-        abilities: ability_slots(class),
+        abilities: class_kit(class),
+        controls: NativeControls::new(),
+        hud: None,
     };
     event_loop.run_app(&mut app)?;
     match app.error {
@@ -81,26 +88,13 @@ struct App {
     frames: Option<u32>,
     rendered: u32,
     next_frame: Instant,
-    /// Ability IDs on keys 1–4: the class kit in catalog order.
+    /// Ability IDs on action-bar slots 1–4: the class kit in catalog order.
     abilities: Vec<u8>,
+    /// Ability slots and cast cancelling through the shared input runtime.
+    controls: NativeControls,
+    /// The combat HUD of the latest projection.
+    hud: Option<CombatHud>,
 }
-
-/// The class abilities in catalog ID order; every class has four.
-fn ability_slots(class: PlayerClass) -> Vec<u8> {
-    mmorpg_core::ABILITY_CATALOG
-        .iter()
-        .filter(|ability| ability.user == AbilityUser::Class(class))
-        .map(|ability| ability.id.get())
-        .take(4)
-        .collect()
-}
-
-const SLOT_KEYS: [KeyCode; 4] = [
-    KeyCode::Digit1,
-    KeyCode::Digit2,
-    KeyCode::Digit3,
-    KeyCode::Digit4,
-];
 
 const FORWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyW, KeyCode::ArrowUp];
 const BACKWARD_KEYS: [KeyCode; 2] = [KeyCode::KeyS, KeyCode::ArrowDown];
@@ -212,17 +206,38 @@ impl App {
                 self.input
                     .send_modify(|input| input.releases = input.releases.wrapping_add(1));
             }
-            code if SLOT_KEYS.contains(&code) => {
-                let slot = SLOT_KEYS.iter().position(|key| *key == code).unwrap_or(0);
-                if let Some(&ability) = self.abilities.get(slot) {
+            _ => {}
+        }
+    }
+
+    /// A slot use or cast cancel is an intent; the zone decides what happens.
+    fn control(&self, action: ControlAction) {
+        match action {
+            ControlAction::AbilitySlot(slot) => {
+                let ability = usize::from(slot)
+                    .checked_sub(1)
+                    .and_then(|index| self.abilities.get(index));
+                if let Some(&ability) = ability {
                     self.input.send_modify(|input| {
                         input.ability = ability;
                         input.ability_uses = input.ability_uses.wrapping_add(1);
                     });
                 }
             }
-            _ => {}
+            ControlAction::CancelCast => {
+                self.input.send_modify(|input| {
+                    input.cancels = input.cancels.wrapping_add(1);
+                });
+            }
         }
+    }
+
+    /// The HUD and the `casting` control layer follow the latest projection.
+    fn follow_projection(&mut self) {
+        let latest = self.presentation.latest();
+        self.controls
+            .set_casting(latest.is_some_and(|latest| latest.viewer.cast.is_some()));
+        self.hud = latest.map(CombatHud::from_projection);
     }
 
     /// Shows the connection state or the player's health and target.
@@ -289,6 +304,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.controls.focus_lost();
                 self.keys.clear();
                 self.orbit_buttons.clear();
                 self.update_movement();
@@ -321,22 +337,22 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    if code == KeyCode::Escape && event.state == ElementState::Pressed {
-                        // Escape cancels the character's cast first, otherwise closes.
-                        let casting = self
-                            .presentation
-                            .latest()
-                            .is_some_and(|latest| latest.viewer.cast.is_some());
-                        if casting {
+                    if event.state == ElementState::Pressed {
+                        let actions = self.controls.key_down(code, event.repeat);
+                        // Escape cancels a cast through the controls, otherwise a
+                        // fresh press closes; a held Escape's repeats never close.
+                        if code == KeyCode::Escape && actions.is_empty() {
                             if !event.repeat {
-                                self.input.send_modify(|input| {
-                                    input.cancels = input.cancels.wrapping_add(1);
-                                });
+                                self.stop();
+                                event_loop.exit();
                             }
                             return;
                         }
-                        event_loop.exit();
-                        return;
+                        for action in actions {
+                            self.control(action);
+                        }
+                    } else {
+                        self.controls.key_up(code);
                     }
                     // Jump is edge-triggered: key repeat never queues more jumps.
                     if code == KeyCode::Space
@@ -379,6 +395,7 @@ impl ApplicationHandler for App {
                             self.fail(event_loop, error);
                             return;
                         }
+                        self.follow_projection();
                         // Dying lets go of held movement; living again resumes it.
                         self.update_movement();
                         self.show_title(now);
@@ -390,7 +407,11 @@ impl ApplicationHandler for App {
                 }
                 let view = self.camera.view(self.presentation.camera_target(now));
                 if let Some(renderer) = &mut self.renderer
-                    && let Err(error) = renderer.render(&self.presentation.scene(now, view), view)
+                    && let Err(error) = renderer.render(
+                        &self.presentation.scene(now, view),
+                        &self.hud.as_ref().map(CombatHud::rects).unwrap_or_default(),
+                        view,
+                    )
                 {
                     self.fail(event_loop, error);
                     return;
@@ -419,13 +440,6 @@ impl ApplicationHandler for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn keys_one_to_four_hold_each_class_kit_in_catalog_order() {
-        assert_eq!(ability_slots(PlayerClass::Warden), [1, 2, 3, 4]);
-        assert_eq!(ability_slots(PlayerClass::Ranger), [5, 6, 7, 8]);
-        assert_eq!(ability_slots(PlayerClass::Arcanist), [9, 10, 11, 12]);
-    }
 
     #[test]
     fn the_dead_hold_no_movement() {

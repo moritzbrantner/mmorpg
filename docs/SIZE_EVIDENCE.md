@@ -121,3 +121,13 @@ retains the observation. These are raw archive/metadata bytes, not a linked-code
 or runtime cost estimate. The explicit capture passed the unchanged 3 MiB
 absolute limit with 17,564 bytes to spare, so the next content step will need a
 deliberate budget decision.
+
+The #72 native ability input/HUD change adds the client-only
+`input-bindings-core` git dependency. That changes `Cargo.lock`, a declared build
+input, so the comparison against the #25 baseline was incomparable rather than a
+size change. `mmorpg-core` itself is untouched: the recaptured baseline is
+**3,128,246 bytes** (+82 against #25), SHA-256
+`194dd6bf2ac1d0c86710ee1b380a46e21641b33ffd07c1a42970a4e0fb99cbde`. Only the
+`Cargo.lock` input hash differs from the previous identity; target, profile,
+features, toolchain and the other inputs are unchanged. The explicit capture
+passed the unchanged 3 MiB absolute limit.

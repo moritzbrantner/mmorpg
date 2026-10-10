@@ -19,6 +19,7 @@ winit = "=0.30.13"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 three-d-core = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f484db8a3d2a7a555fa463eddf9c28790b240ce0" }
 three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f484db8a3d2a7a555fa463eddf9c28790b240ce0" }
+input-bindings-core = { git = "https://github.com/moritzbrantner/input-bindings.git", rev = "d5fcb81bb1eefde9e2f69d404a4d7e429fb2f12c" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

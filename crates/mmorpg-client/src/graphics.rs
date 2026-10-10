@@ -1,9 +1,11 @@
 //! Native GPU adapter for shared 3d-lab geometry/camera models. Two pipelines
 //! share one camera binding: indexed vertex-coloured meshes (terrain, water)
-//! and lit instanced boxes (static props uploaded once, units every frame).
+//! and lit instanced boxes (static props uploaded once, units every frame). A
+//! third draws the flat combat HUD rectangles over the world.
 use crate::{
     ClientError,
     camera::CameraView,
+    hud::{HudRect, MAX_HUD_RECTS},
     presentation::{MAX_SCENE_BOXES, SceneBox},
     world::{Mesh as WorldMesh, WorldScene},
 };
@@ -45,6 +47,24 @@ struct ColoredVertex {
     position: [f32; 3],
     normal: [f32; 3],
     color: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct HudInstance {
+    min: [f32; 2],
+    max: [f32; 2],
+    color: [f32; 3],
+}
+
+impl From<&HudRect> for HudInstance {
+    fn from(rect: &HudRect) -> Self {
+        Self {
+            min: rect.min,
+            max: rect.max,
+            color: rect.color,
+        }
+    }
 }
 
 impl From<&SceneBox> for Instance {
@@ -103,6 +123,8 @@ pub struct SceneRenderer {
     queue: wgpu::Queue,
     box_pipeline: wgpu::RenderPipeline,
     mesh_pipeline: wgpu::RenderPipeline,
+    hud_pipeline: wgpu::RenderPipeline,
+    hud_instances: wgpu::Buffer,
     cube: wgpu::Buffer,
     cube_vertex_count: u32,
     static_instances: wgpu::Buffer,
@@ -283,6 +305,59 @@ impl SceneRenderer {
             })],
             None,
         );
+        let hud_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hud layout"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+        let hud_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("hud shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("hud.wgsl").into()),
+        });
+        const HUD_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+            wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x3];
+        // Drawn last over everything: no depth test, no depth write.
+        let hud_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hud pipeline"),
+            layout: Some(&hud_layout),
+            vertex: wgpu::VertexState {
+                module: &hud_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<HudInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &HUD_ATTRIBUTES,
+                })],
+            },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &hud_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let hud_instances = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bounded hud rectangles"),
+            size: (MAX_HUD_RECTS * mem::size_of::<HudInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera binding"),
             layout: &camera_layout,
@@ -297,6 +372,8 @@ impl SceneRenderer {
             queue,
             box_pipeline,
             mesh_pipeline,
+            hud_pipeline,
+            hud_instances,
             cube,
             cube_vertex_count,
             static_instances,
@@ -315,11 +392,16 @@ impl SceneRenderer {
         &self,
         target: &wgpu::TextureView,
         scene: &[SceneBox],
+        hud: &[HudRect],
         view: CameraView,
     ) -> Result<(), ClientError> {
         if scene.len() > MAX_DYNAMIC_INSTANCES {
             return Err("scene exceeds instance capacity".into());
         }
+        if hud.len() > MAX_HUD_RECTS {
+            return Err("HUD exceeds rectangle capacity".into());
+        }
+        let hud_instances: Vec<_> = hud.iter().map(HudInstance::from).collect();
         let instances: Vec<_> = scene.iter().map(Instance::from).collect();
         let camera = PerspectiveCamera::new(
             Vec3::new(view.eye[0], view.eye[1], view.eye[2]),
@@ -338,6 +420,10 @@ impl SceneRenderer {
         if !instances.is_empty() {
             self.queue
                 .write_buffer(&self.dynamic_instances, 0, bytemuck::cast_slice(&instances));
+        }
+        if !hud_instances.is_empty() {
+            self.queue
+                .write_buffer(&self.hud_instances, 0, bytemuck::cast_slice(&hud_instances));
         }
         let mut encoder = self
             .device
@@ -381,6 +467,11 @@ impl SceneRenderer {
             pass.draw(0..self.cube_vertex_count, 0..self.static_count);
             pass.set_vertex_buffer(1, self.dynamic_instances.slice(..));
             pass.draw(0..self.cube_vertex_count, 0..u32::try_from(scene.len())?);
+            if !hud_instances.is_empty() {
+                pass.set_pipeline(&self.hud_pipeline);
+                pass.set_vertex_buffer(0, self.hud_instances.slice(..));
+                pass.draw(0..6, 0..u32::try_from(hud_instances.len())?);
+            }
         }
         self.queue.submit([encoder.finish()]);
         Ok(())
@@ -454,7 +545,12 @@ impl WindowRenderer {
         self.surface.configure(&self.renderer.device, &self.config);
     }
 
-    pub fn render(&mut self, scene: &[SceneBox], view: CameraView) -> Result<(), ClientError> {
+    pub fn render(
+        &mut self,
+        scene: &[SceneBox],
+        hud: &[HudRect],
+        view: CameraView,
+    ) -> Result<(), ClientError> {
         if self.suspended {
             return Ok(());
         }
@@ -475,8 +571,12 @@ impl WindowRenderer {
                 return Err("GPU surface validation failed".into());
             }
         };
-        self.renderer
-            .render(&frame.texture.create_view(&Default::default()), scene, view)?;
+        self.renderer.render(
+            &frame.texture.create_view(&Default::default()),
+            scene,
+            hud,
+            view,
+        )?;
         self.renderer.queue.present(frame);
         Ok(())
     }
@@ -487,9 +587,10 @@ impl WindowRenderer {
 pub async fn render_offscreen(
     world: &WorldScene,
     scene: &[SceneBox],
+    hud: &[HudRect],
     view: CameraView,
 ) -> Result<usize, ClientError> {
-    let bytes = offscreen_pixels(world, scene, view).await?;
+    let bytes = offscreen_pixels(world, scene, hud, view).await?;
     let mut colors = std::collections::BTreeMap::<[u8; 3], usize>::new();
     for pixel in bytes.as_chunks::<4>().0 {
         *colors.entry([pixel[0], pixel[1], pixel[2]]).or_default() += 1;
@@ -506,6 +607,7 @@ pub async fn render_offscreen(
 async fn offscreen_pixels(
     world: &WorldScene,
     scene: &[SceneBox],
+    hud: &[HudRect],
     view: CameraView,
 ) -> Result<Vec<u8>, ClientError> {
     const WIDTH: u32 = 640;
@@ -534,7 +636,7 @@ async fn offscreen_pixels(
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    renderer.render(&texture.create_view(&Default::default()), scene, view)?;
+    renderer.render(&texture.create_view(&Default::default()), scene, hud, view)?;
     let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("smoke readback"),
         size: u64::from(WIDTH * HEIGHT * 4),
@@ -617,7 +719,7 @@ mod tests {
                     },
                 ),
             ] {
-                let pixels = offscreen_pixels(&world, &[], view).await.unwrap();
+                let pixels = offscreen_pixels(&world, &[], &[], view).await.unwrap();
                 let colours: std::collections::BTreeSet<_> = pixels
                     .as_chunks::<4>()
                     .0
@@ -641,6 +743,60 @@ mod tests {
             }
             std::fs::write(directory.join(name), ppm).unwrap();
         }
+    }
+
+    #[test]
+    #[ignore = "requires a GPU; scripts/smoke-native.py runs this explicitly"]
+    fn the_projected_combat_hud_changes_gpu_pixels() {
+        use crate::hud::CombatHud;
+        use mmorpg_core::ZoneCommand;
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let content = greyhaven_vale::content();
+            let mut zone =
+                ZoneSimulation::with_content(ZoneId::new(1), Arc::clone(&content)).unwrap();
+            zone.add_player(1).unwrap();
+            zone.apply_command(1, 1, ZoneCommand::ChooseClass { class: 2, sex: 0 })
+                .unwrap();
+            zone.advance_tick().unwrap();
+            let projection = zone.snapshot_for_player(1).unwrap();
+            let hud = CombatHud::from_projection(&projection);
+            assert_eq!(hud.slots.len(), 4, "the Arcanist kit fills the bar");
+            let mut drained = hud.clone();
+            if let Some(resource) = &mut drained.resource {
+                resource.value /= 2;
+            }
+            let scenery = greyhaven_vale_scenery();
+            let world = WorldScene::new(&scenery);
+            let view = CameraView {
+                eye: [5.0, 8.5, 31.0],
+                target: [-14.0, 3.0, 4.0],
+            };
+            let mut frames = Vec::new();
+            for rects in [Vec::new(), hud.rects(), drained.rects()] {
+                frames.push(offscreen_pixels(&world, &[], &rects, view).await.unwrap());
+            }
+            save_smoke_frame("combat-hud.ppm", &frames[1]);
+            let changed = |left: &[u8], right: &[u8]| {
+                left.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(right.as_chunks::<4>().0)
+                    .filter(|(left, right)| left != right)
+                    .count()
+            };
+            let shown = changed(&frames[0], &frames[1]);
+            let drained = changed(&frames[1], &frames[2]);
+            assert!(
+                shown >= 1_000,
+                "the HUD must cover the frame: {shown} pixels"
+            );
+            assert!(
+                drained >= 100,
+                "a projected resource change must move the bar: {drained} pixels"
+            );
+            println!("combat HUD changed {shown} GPU pixels, half the mana {drained}");
+        });
     }
 
     #[test]
@@ -676,7 +832,7 @@ mod tests {
                     Presentation::new(1, scenery.clone(), Arc::clone(&content), now).unwrap();
                 presentation.push(projection, now).unwrap();
                 let view = OrbitCamera::default().view(presentation.camera_target(now));
-                let pixels = offscreen_pixels(&world, &presentation.scene(now, view), view)
+                let pixels = offscreen_pixels(&world, &presentation.scene(now, view), &[], view)
                     .await
                     .unwrap();
                 save_smoke_frame(if damaged { "damaged.ppm" } else { "full.ppm" }, &pixels);
