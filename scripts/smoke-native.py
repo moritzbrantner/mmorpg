@@ -72,6 +72,10 @@ def main():
                 ], cwd=root, check=True, timeout=120)
                 subprocess.run([
                     "cargo", "test", "--locked", "-p", "mmorpg-client", "--lib",
+                    "the_projected_combat_hud_changes_gpu_pixels", "--", "--ignored", "--nocapture",
+                ], cwd=root, check=True, timeout=120)
+                subprocess.run([
+                    "cargo", "test", "--locked", "-p", "mmorpg-client", "--lib",
                     "authored_outpost_relief_approaches_render_on_the_native_gpu", "--", "--ignored", "--nocapture",
                 ], cwd=root, check=True, timeout=120)
                 if args.window:
