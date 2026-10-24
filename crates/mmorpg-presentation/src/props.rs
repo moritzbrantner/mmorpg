@@ -1,5 +1,5 @@
 //! Greyhaven prop compositions: one low-poly model per scenery prop kind.
-use super::{Animated, Draw, Motion, batching::*, geometry::*, terrain::*};
+use super::{Animated, Draw, Kit, Motion, batching::*, geometry::*, terrain::*};
 use mmorpg_scenery::{Prop, PropKind, Scenery, TerrainGrid, TreeVariant};
 use std::{
     collections::BTreeMap,
@@ -1242,6 +1242,22 @@ pub fn build(b: &mut Batcher, s: &Scenery, g: &TerrainGrid) -> Vec<Animated> {
                 }
             }
         }
+        // An Outpost kit building (#420) keeps its blockout as the fallback while the kit is
+        // not drawn.
+        if let Some(id) = p
+            .collider
+            .filter(|&id| mmorpg_scenery::outpost_kit::adopts(id))
+        {
+            animations.push(animated(
+                m,
+                |part| format!("outpost-fallback-{id}-{part}"),
+                Motion::Fallback {
+                    frame: f,
+                    kit: Kit::Outpost,
+                },
+            ));
+            continue;
+        }
         let instance = matches!(
             p.kind,
             PropKind::Tree(_) | PropKind::Rock(_) | PropKind::GrassTuft
@@ -1265,6 +1281,29 @@ pub fn build(b: &mut Batcher, s: &Scenery, g: &TerrainGrid) -> Vec<Animated> {
             Motion::Reed {
                 phase: group as f64 * 2.1,
                 ground_y: 0.,
+            },
+        ));
+    }
+    // The market square's settlement props (#421) stand as boxes of their collision proxies
+    // while the client does not draw the props.
+    let square = crate::settlement_props::frames(s);
+    if !square.is_empty() {
+        let mut m = Model::new(Cull::Always);
+        for (entry, frame) in square {
+            for &([x, y, z], [hx, hy, hz], colour) in crate::settlement_props::fallback(entry) {
+                m.put(
+                    colour,
+                    box_shape(),
+                    compose(&[frame, translate(x, y, z), scale(hx, hy, hz)]),
+                );
+            }
+        }
+        animations.push(animated(
+            m,
+            |part| format!("settlement-fallback-{part}"),
+            Motion::Fallback {
+                frame: ID,
+                kit: Kit::SettlementProps,
             },
         ));
     }

@@ -1,6 +1,6 @@
 //! Behaviour of the shared static world both clients draw (#184).
 use mmorpg_core::greyhaven_vale_definition;
-use mmorpg_presentation::{Cull, Draw, StaticScene, geometry::V};
+use mmorpg_presentation::{Cull, Draw, Kits, StaticScene, geometry::V};
 use mmorpg_scenery::{Prop, PropKind, RockSize, Scenery, TreeVariant, greyhaven_vale_scenery};
 
 fn only(props: Vec<Prop>) -> StaticScene {
@@ -296,12 +296,16 @@ fn animated_parts_only_move_with_time() {
     assert_ne!(scene.motion(9., true), scene.motion(3., false));
     let ids = |draws: Vec<Draw>| draws.into_iter().map(|draw| draw.id).collect::<Vec<_>>();
     assert_eq!(
-        ids(scene.frame(9., true, [0., 5., 0.], None)),
-        ids(scene.frame(3., false, [0., 5., 0.], None))
+        ids(scene.frame(9., true, [0., 5., 0.], None, Kits::default())),
+        ids(scene.frame(3., false, [0., 5., 0.], None, Kits::default()))
     );
     assert!(
-        scene.frame(0., false, [5_000., 5., 5_000.], None).len()
-            < scene.frame(0., false, [0., 5., 0.], None).len()
+        scene
+            .frame(0., false, [5_000., 5., 5_000.], None, Kits::default())
+            .len()
+            < scene
+                .frame(0., false, [0., 5., 0.], None, Kits::default())
+                .len()
     );
 }
 
@@ -312,15 +316,118 @@ fn the_cave_roof_is_cut_away_while_the_viewer_stands_under_it() {
     let scene = only(vec![roof]);
     assert_eq!(scene.animated.len(), 1, "the roof is its own part");
     let [x, _, z] = roof.position.map(|units| f64::from(units) / 100.);
-    let shown = |viewer| scene.shown(viewer)[0];
+    let shown = |viewer| scene.shown(viewer, Kits::default())[0];
     assert!(shown(None));
     assert!(!shown(Some([x, 0., z])), "inside the cave");
     assert!(shown(Some([x, 6., z])), "standing on the roof");
     assert!(shown(Some([x, 0., z + 30.])), "outside");
     let drawn = |viewer| {
         scene
-            .frame(0., false, [x as f32, 5., z as f32], viewer)
+            .frame(0., false, [x as f32, 5., z as f32], viewer, Kits::default())
             .len()
     };
     assert!(drawn(Some([x, 0., z])) < drawn(None));
+}
+
+#[test]
+fn the_outpost_kit_buildings_keep_their_blockouts_only_as_the_fallback() {
+    let scenery = greyhaven_vale_scenery();
+    let scene = StaticScene::new(&scenery);
+    let fallback = |kit| {
+        scene
+            .frame(
+                0.,
+                false,
+                [0., 5., 20.],
+                None,
+                Kits {
+                    outpost: kit,
+                    ..Kits::default()
+                },
+            )
+            .iter()
+            .filter(|draw| draw.id.contains("outpost-fallback-"))
+            .count()
+    };
+    assert!(fallback(false) > 0);
+    assert_eq!(fallback(true), 0);
+    // Every wall module stands on its building's unchanged collider footprint.
+    let parts = mmorpg_presentation::outpost_kit::parts(&scenery);
+    assert_eq!(parts.len(), 29 + 28);
+    for collider in [102, 105] {
+        let prop = scenery
+            .props
+            .iter()
+            .find(|prop| prop.collider == Some(collider))
+            .unwrap();
+        let [cx, _, cz] = prop.position.map(|units| f64::from(units) / 100.);
+        let [hx, _, hz] = prop.half_extents.map(|units| f64::from(units) / 100.);
+        let walls = mmorpg_scenery::outpost_kit::placements(&scenery)
+            .into_iter()
+            .filter(|placement| {
+                placement.collider == collider && placement.entry.starts_with("outpost.kit.wall")
+            })
+            .collect::<Vec<_>>();
+        assert!(!walls.is_empty());
+        for wall in walls {
+            let [x, _, z] = wall.position.map(|units| f64::from(units) / 100.);
+            let on_edge = ((x - cx).abs() - hx).abs() < 1e-9 || ((z - cz).abs() - hz).abs() < 1e-9;
+            assert!(on_edge, "{} at {x}, {z} on collider {collider}", wall.entry);
+        }
+    }
+}
+
+#[test]
+fn the_market_square_dresses_the_outpost_without_touching_colliders_or_paths() {
+    use mmorpg_scenery::settlement_props;
+    let scenery = greyhaven_vale_scenery();
+    let scene = StaticScene::new(&scenery);
+    let fallback = |kit| {
+        scene
+            .frame(
+                0.,
+                false,
+                [24., 5., 27.],
+                None,
+                Kits {
+                    settlement_props: kit,
+                    ..Kits::default()
+                },
+            )
+            .iter()
+            .filter(|draw| draw.id.contains("settlement-fallback-"))
+            .count()
+    };
+    assert!(fallback(false) > 0);
+    assert_eq!(fallback(true), 0);
+    // One adopted prop or more from each family, shared by entry.
+    let parts = mmorpg_presentation::settlement_props::parts(&scenery);
+    assert_eq!(parts.len(), 21);
+    for family in [
+        ["stall", "cart", "crate"],
+        ["signpost", "lantern-post", "bench"],
+        ["fence", "planter", "firewood"],
+    ] {
+        for prop in family {
+            let entry = format!("settlement.props.{prop}");
+            assert!(parts.iter().any(|part| part.entry == entry), "{entry}");
+        }
+    }
+    // The square stays off the roads, the spawn plaza and every collider's footprint.
+    let [cx, cz] = settlement_props::centre(&scenery).unwrap();
+    let [hx, hz] = settlement_props::HALF_EXTENTS;
+    let square = mmorpg_core::StaticCollider {
+        id: 0,
+        position: [cx, 100, cz],
+        half_extents: [hx, 100, hz],
+    };
+    assert!(mmorpg_core::greyhaven_vale::clear_of_roads(&square));
+    let plaza = mmorpg_core::greyhaven_vale::SPAWN_PLAZA;
+    assert!(cx - hx > plaza.max[0] || cz - hz > plaza.max[1]);
+    for collider in greyhaven_vale_definition().colliders() {
+        let [px, _, pz] = collider.position;
+        let [phx, _, phz] = collider.half_extents;
+        let apart = (px - cx).abs() >= phx + hx || (pz - cz).abs() >= phz + hz;
+        assert!(apart || collider.id == 1, "collider {}", collider.id);
+    }
 }

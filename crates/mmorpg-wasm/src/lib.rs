@@ -451,10 +451,17 @@ pub fn static_scene_motion(seconds: f64, animate: bool) -> Vec<f32> {
 }
 
 /// Per animated part 1 (drawn) or 0 (a cave roof cut away over the viewer's feet, metres;
-/// `viewer` is empty without one).
+/// `viewer` is empty without one; or a kit's procedural fallback while the client draws that
+/// kit: the Outpost kit buildings, #420, or the market square's settlement props, #421).
 #[wasm_bindgen(js_name = staticSceneShown)]
-pub fn static_scene_shown(viewer: &[f64]) -> Vec<u8> {
-    static_scene::shown(viewer)
+pub fn static_scene_shown(viewer: &[f64], outpost_kit: bool, settlement_props: bool) -> Vec<u8> {
+    static_scene::shown(
+        viewer,
+        mmorpg_presentation::Kits {
+            outpost: outpost_kit,
+            settlement_props,
+        },
+    )
 }
 
 /// Rendered terrain height in metres at `(x, z)` metres.
@@ -639,6 +646,68 @@ pub fn shrine_kit_keys() -> Vec<String> {
 #[must_use]
 pub fn shrine_kit_models() -> Vec<f32> {
     mmorpg_presentation::shrine::parts(scenery::hosted_scenery())
+        .iter()
+        .flat_map(|part| part.model)
+        .collect()
+}
+
+/// The Outpost kit buildings' asset-tooling entries (#420), `outpost.kit.<part>` with
+/// `/<variant>` unless it is `default`, placed by the presentation the native client shares.
+#[wasm_bindgen(js_name = outpostKitEntries)]
+#[must_use]
+pub fn outpost_kit_entries() -> Vec<String> {
+    mmorpg_presentation::outpost_kit::entries(scenery::hosted_scenery())
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The kit entry of each placed Outpost kit module, in [`outpost_kit_models`] order.
+#[wasm_bindgen(js_name = outpostKitKeys)]
+#[must_use]
+pub fn outpost_kit_keys() -> Vec<String> {
+    mmorpg_presentation::outpost_kit::parts(scenery::hosted_scenery())
+        .iter()
+        .map(|part| part.entry.to_owned())
+        .collect()
+}
+
+/// 16 column-major model floats per placed Outpost kit module.
+#[wasm_bindgen(js_name = outpostKitModels)]
+#[must_use]
+pub fn outpost_kit_models() -> Vec<f32> {
+    mmorpg_presentation::outpost_kit::parts(scenery::hosted_scenery())
+        .iter()
+        .flat_map(|part| part.model)
+        .collect()
+}
+
+/// The market square's asset-tooling settlement-prop entries (#421), placed by the
+/// presentation the native client shares.
+#[wasm_bindgen(js_name = settlementPropEntries)]
+#[must_use]
+pub fn settlement_prop_entries() -> Vec<String> {
+    mmorpg_presentation::settlement_props::entries()
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The entry of each placed settlement prop, in [`settlement_prop_models`] order.
+#[wasm_bindgen(js_name = settlementPropKeys)]
+#[must_use]
+pub fn settlement_prop_keys() -> Vec<String> {
+    mmorpg_presentation::settlement_props::parts(scenery::hosted_scenery())
+        .iter()
+        .map(|part| part.entry.to_owned())
+        .collect()
+}
+
+/// 16 column-major model floats per placed settlement prop.
+#[wasm_bindgen(js_name = settlementPropModels)]
+#[must_use]
+pub fn settlement_prop_models() -> Vec<f32> {
+    mmorpg_presentation::settlement_props::parts(scenery::hosted_scenery())
         .iter()
         .flat_map(|part| part.model)
         .collect()
